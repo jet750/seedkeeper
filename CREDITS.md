@@ -46,3 +46,23 @@ Usage: [what it's used for in game]
 Built by Jaxon Travis  
 AI-assisted development using Claude (Anthropic)  
 All design decisions, creative direction, and product vision by the developer
+
+## Portfolio Embed
+
+The production build in `/dist/` is fully self-contained (relative asset paths via
+`base: './'`), so it runs from any static host or inside an iframe with no
+server-side dependencies. Embed code for the portfolio page:
+
+```html
+<iframe
+  src="https://seedkeeper.jaxontravis.com/"
+  width="100%"
+  height="600"
+  frameborder="0"
+  allowfullscreen
+  style="max-width: 1600px; aspect-ratio: 16/9; border: none;">
+</iframe>
+```
+
+Local verification: `npm run build` then `npx serve dist` and open in a browser —
+everything should load and play with no dev server running.

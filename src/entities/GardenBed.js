@@ -152,7 +152,7 @@ export default class GardenBed {
   harvest() {
     if (this.state !== STATE.READY) return null;
     const plantType = this.plantType;
-    EventBus.emit('plant:harvested', { plantType });
+    EventBus.emit('plant:harvested', { plantType, position: { x: this.x, y: this.y } });
     this.plantType = null;
     this.daysRemaining = 0;
     this.watered = false;

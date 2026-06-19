@@ -7,6 +7,9 @@
     "critChance": 0.05,
     "seedSlots": 3
   },
+  "newGamePlus": {
+    "enemyDensityMult": 1.2
+  },
   "enemies": {
     "green_slime": {
       "hp": 15,

@@ -99,6 +99,27 @@ export default class UIScene extends Phaser.Scene {
       })
       .setOrigin(1, 0.5);
 
+    // TOP RIGHT (under timer) — mute indicator, shown only while muted.
+    this.muteIndicator = this.add
+      .text(VIRTUAL_WIDTH - 40, 84, '🔇 MUTED', {
+        fontFamily: '"Courier New", monospace',
+        fontSize: '16px',
+        color: '#9B9389'
+      })
+      .setOrigin(1, 0.5)
+      .setVisible(false);
+
+    // TOP CENTER (under zone badge) — New Game+ indicator, shown only on NG+.
+    this.ngPlusIndicator = this.add
+      .text(VIRTUAL_WIDTH / 2, 96, '⭐ NG+', {
+        fontFamily: '"Courier New", monospace',
+        fontSize: '18px',
+        fontStyle: 'bold',
+        color: '#EDD49A'
+      })
+      .setOrigin(0.5, 0)
+      .setVisible(false);
+
     // TOP LEFT (under HP) — watering can indicator, shown only while carrying.
     this.waterIndicator = this.add
       .text(pad, 92, '💧 Water', {
@@ -243,6 +264,11 @@ export default class UIScene extends Phaser.Scene {
     });
     this.subscribe('ranged:equipped', (d) => this.refreshAmmo(d.ammo, d.max));
     this.subscribe('ranged:fired', (d) => this.refreshAmmo(d.ammo, d.max));
+
+    // --- Sprint 5 ---
+    this.subscribe('audio:muteChanged', (d) => this.muteIndicator.setVisible(!!d.muted));
+    this.subscribe('ngplus:status', (d) => this.ngPlusIndicator.setVisible(!!d.active));
+    this.subscribe('newGamePlus:activated', () => this.ngPlusIndicator.setVisible(true));
   }
 
   refreshBank(bank) {

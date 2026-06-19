@@ -107,6 +107,72 @@ export default class ParticleSystem {
     }
   }
 
+  // --- Event-driven feedback bursts (Sprint 5) ------------------------------
+  // All bursts fire on discrete gameplay events (never per-frame), so the
+  // create/destroy-per-particle pattern is cheap here. Geometry only — no
+  // external particle textures.
+
+  toTint(color) {
+    if (typeof color === 'number') return color;
+    if (typeof color === 'string') return Phaser.Display.Color.HexStringToColor(color).color;
+    return 0xffffff;
+  }
+
+  // Generic radial pop. `diamond` rotates square particles 45° for a sparkle
+  // look; `yBias` nudges the spread upward (negative = up).
+  burst(x, y, { count, color, radius, duration, size, diamond = false, yBias = 0 }) {
+    const tint = this.toTint(color);
+    for (let i = 0; i < count; i++) {
+      const angle = (i / count) * Math.PI * 2 + Math.random() * 0.4;
+      const dist = radius * (0.6 + Math.random() * 0.4);
+      const p = this.scene.add
+        .rectangle(x, y, size, size, tint)
+        .setDepth(BURST_DEPTH);
+      if (diamond) p.setRotation(Math.PI / 4);
+      this.scene.tweens.add({
+        targets: p,
+        x: x + Math.cos(angle) * dist,
+        y: y + Math.sin(angle) * dist + yBias,
+        alpha: 0,
+        scale: 0.2,
+        duration,
+        ease: 'Power2',
+        onComplete: () => p.destroy()
+      });
+    }
+  }
+
+  // 6 particles in the plant's colour, tight radial pop.
+  seedCollect(position, color) {
+    if (!position) return;
+    this.burst(position.x, position.y, {
+      count: 6, color, radius: 30, duration: 500, size: 5
+    });
+  }
+
+  // 8 green sparkles rising from a harvested bed.
+  harvestBurst(position) {
+    if (!position) return;
+    this.burst(position.x, position.y, {
+      count: 8, color: 0x8ab87e, radius: 40, duration: 700, size: 6, yBias: -24
+    });
+  }
+
+  // 10 plant-coloured diamonds from the workshop chest.
+  upgradeBurst(position, color) {
+    if (!position) return;
+    this.burst(position.x, position.y, {
+      count: 10, color, radius: 60, duration: 900, size: 7, diamond: true
+    });
+  }
+
+  // 8 grey particles where the player fell.
+  deathBurst(x, y) {
+    this.burst(x, y, {
+      count: 8, color: 0x9b9389, radius: 36, duration: 800, size: 6
+    });
+  }
+
   cleanup() {
     EventBus.off('ui:floatText', this._onFloatText);
   }

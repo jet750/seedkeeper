@@ -52,6 +52,8 @@ const SaveSystem = {
       ],
       plantsGrownEver: freshBank(),
       newGamePlus: false,
+      demoWinTriggered: false,
+      settings: { masterVolume: 1.0, sfxVolume: 0.8, musicVolume: 0.5, muted: false },
       savedAt: 0
     };
   },
@@ -82,6 +84,12 @@ const SaveSystem = {
     if (!data.version || data.version < 1) {
       data.newGamePlus = data.newGamePlus || false;
       data.version = 1;
+    }
+    // Backfill fields added after a save was first written so older slots load
+    // cleanly. Idempotent — only fills what is missing.
+    if (data.demoWinTriggered === undefined) data.demoWinTriggered = false;
+    if (!data.settings) {
+      data.settings = { masterVolume: 1.0, sfxVolume: 0.8, musicVolume: 0.5, muted: false };
     }
     // Future: if (data.version < 2) { ... data.version = 2; }
     return data;

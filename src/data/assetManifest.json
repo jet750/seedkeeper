@@ -27,6 +27,19 @@
   "audio": [
     { "key": "bgm_garden", "path": "assets/audio/bgm_garden.mp3" },
     { "key": "bgm_forest", "path": "assets/audio/bgm_forest.mp3" },
-    { "key": "sfx_gate", "path": "assets/audio/sfx_gate.wav" }
+    { "key": "sfx_gate", "path": "assets/audio/sfx_gate.wav" },
+    { "key": "sfx_collect", "path": "assets/audio/sfx_collect.wav" },
+    { "key": "sfx_harvest", "path": "assets/audio/sfx_harvest.wav" },
+    { "key": "sfx_upgrade", "path": "assets/audio/sfx_upgrade.wav" },
+    { "key": "sfx_swing", "path": "assets/audio/sfx_swing.wav" },
+    { "key": "sfx_hit_enemy", "path": "assets/audio/sfx_hit_enemy.wav" },
+    { "key": "sfx_hit_player", "path": "assets/audio/sfx_hit_player.wav" },
+    { "key": "sfx_death_enemy", "path": "assets/audio/sfx_death_enemy.wav" },
+    { "key": "sfx_death_player", "path": "assets/audio/sfx_death_player.wav" },
+    { "key": "sfx_sleep", "path": "assets/audio/sfx_sleep.wav" },
+    { "key": "sfx_water", "path": "assets/audio/sfx_water.wav" },
+    { "key": "sfx_warning_bell", "path": "assets/audio/sfx_warning_bell.wav" },
+    { "key": "sfx_urgent_pulse", "path": "assets/audio/sfx_urgent_pulse.wav" },
+    { "key": "sfx_achievement", "path": "assets/audio/sfx_achievement.wav" }
   ]
 }
