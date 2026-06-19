@@ -1,0 +1,144 @@
+{
+  "player": {
+    "maxHP": 100,
+    "speed": 160,
+    "attackDamage": 10,
+    "attackCooldown": 600,
+    "critChance": 0.05,
+    "seedSlots": 3
+  },
+  "newGamePlus": {
+    "enemyDensityMult": 1.2
+  },
+  "enemies": {
+    "green_slime": {
+      "hp": 15,
+      "damage": 8,
+      "wanderSpeed": 40,
+      "chaseSpeed": 90,
+      "detectRange": 80,
+      "loseRange": 200
+    },
+    "dark_slime": {
+      "hp": 35,
+      "damage": 15,
+      "wanderSpeed": 25,
+      "chaseSpeed": 70,
+      "detectRange": 150,
+      "loseRange": 300,
+      "bundleDropChance": 0.5
+    },
+    "skeleton": {
+      "hp": 50,
+      "damage": 20,
+      "patrolSpeed": 55,
+      "chaseSpeed": 110,
+      "detectRange": 120,
+      "loseRange": 400,
+      "bundleDropChance": 0.7
+    },
+    "scaling": {
+      "densityPerDay": 0.1,
+      "startDay_darkSlime": 3,
+      "startDay_skeleton": 5
+    }
+  },
+  "daySystem": {
+    "timerDuration": 180000,
+    "warningTime": 30000,
+    "urgentTime": 10000,
+    "postTimerSpeedMult": 1.5,
+    "postTimerDamageMult": 1.5
+  },
+  "plants": {
+    "red_mushroom": {
+      "name": "Red Mushroom",
+      "growthDays": 1,
+      "color": "#cc3333",
+      "foundNear": "dark_trees",
+      "seedRespawn": 90000
+    },
+    "blue_flower": {
+      "name": "Blue Flower",
+      "growthDays": 1,
+      "color": "#3366cc",
+      "foundNear": "water",
+      "seedRespawn": 90000
+    },
+    "golden_wheat": {
+      "name": "Golden Wheat",
+      "growthDays": 1,
+      "color": "#ccaa00",
+      "foundNear": "clearing",
+      "seedRespawn": 90000
+    },
+    "green_herb": {
+      "name": "Green Herb",
+      "growthDays": 3,
+      "color": "#33aa44",
+      "foundNear": "entrance",
+      "seedRespawn": 120000
+    },
+    "glowshroom": {
+      "name": "Glowshroom",
+      "growthDays": 2,
+      "color": "#aa44ff",
+      "foundNear": "deep_forest",
+      "seedRespawn": 150000
+    },
+    "sunflower": {
+      "name": "Sunflower",
+      "growthDays": 1,
+      "color": "#ffcc00",
+      "foundNear": "meadow",
+      "seedRespawn": 90000
+    }
+  },
+  "upgrades": {
+    "red_mushroom": {
+      "stat": { "name": "Attack Power", "statKey": "attackMult", "levels": 5, "perLevelBonus": 0.05, "costs": [1, 3, 6, 10, 15] },
+      "gear": { "tiers": [
+        { "id": "dagger", "name": "Dagger", "cost": 3,  "attackDamage": 3, "attackCooldown": 500, "arcDegrees": 90 },
+        { "id": "sword",  "name": "Sword",  "cost": 12, "attackDamage": 8, "attackCooldown": 550, "arcDegrees": 120 }
+      ]}
+    },
+    "blue_flower": {
+      "stat": { "name": "Max HP", "statKey": "hpMult", "levels": 5, "perLevelBonus": 0.08, "costs": [1, 3, 6, 10, 15] },
+      "gear": { "tiers": [
+        { "id": "tunic",     "name": "Tunic",     "cost": 3,  "damageReduction": 0.10 },
+        { "id": "leather",   "name": "Leather",   "cost": 8,  "damageReduction": 0.20 },
+        { "id": "chainmail", "name": "Chainmail", "cost": 18, "damageReduction": 0.35 }
+      ]}
+    },
+    "golden_wheat": {
+      "stat": { "name": "Move Speed", "statKey": "speedMult", "levels": 5, "perLevelBonus": 0.03, "costs": [1, 3, 6, 10, 15] },
+      "gear": { "tiers": [
+        { "id": "basic_boots", "name": "Boots",      "cost": 3,  "speedBonus": 0.05 },
+        { "id": "dash_boots",  "name": "Dash Boots", "cost": 10, "speedBonus": 0.05, "dashEnabled": true, "dashSpeed": 400, "dashDuration": 200, "dashCooldown": 2000 }
+      ]}
+    },
+    "green_herb": {
+      "stat": { "name": "Day Timer", "statKey": "timerBonus", "levels": 5, "perLevelBonus": 15000, "costs": [1, 2, 4, 7, 11] },
+      "gear": { "tiers": [
+        { "id": "satchel_1", "name": "Small Satchel",   "cost": 2,  "seedSlots": 4 },
+        { "id": "satchel_2", "name": "Satchel",         "cost": 4,  "seedSlots": 5 },
+        { "id": "satchel_3", "name": "Large Satchel",   "cost": 7,  "seedSlots": 6 },
+        { "id": "satchel_4", "name": "Explorer Satchel","cost": 11, "seedSlots": 7 }
+      ]}
+    },
+    "glowshroom": {
+      "stat": { "name": "Crit Chance", "statKey": "critBonus", "levels": 5, "perLevelBonus": 0.02, "costs": [1, 3, 6, 10, 15] },
+      "gear": { "tiers": [
+        { "id": "sling", "name": "Sling", "cost": 3,  "projDamage": 3, "projRange": 150, "projSpeed": 350, "ammo": 10 },
+        { "id": "bow",   "name": "Bow",   "cost": 10, "projDamage": 6, "projRange": 300, "projSpeed": 450, "ammo": 10 }
+      ]}
+    },
+    "sunflower": {
+      "stat": { "name": "Harvest Range", "statKey": "harvestRange", "levels": 5, "perLevelBonus": 0.05, "costs": [1, 3, 6, 10, 15] },
+      "gear": { "tiers": [
+        { "id": "copper_can", "name": "Copper Can", "cost": 3,  "bedsPerUse": 2 },
+        { "id": "golden_can", "name": "Golden Can", "cost": 10, "bedsPerUse": 99 }
+      ]}
+    }
+  }
+}

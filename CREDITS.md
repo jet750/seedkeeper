@@ -28,12 +28,19 @@ Usage: Weapon icons, item sprites
 
 ## Audio
 
-[Add each file as you download it:]
-**[filename].wav/mp3**  
-Creator: [username on freesound or Pixabay]  
-URL: [direct link]  
-License: CC0  
-Usage: [what it's used for in game]
+**Sprout Lands — "Sprout Sorry" SFX pack**
+Artist: Cup Nooble
+URL: https://cupnooble.itch.io/sprout-lands-asset-pack
+License: Per Sprout Lands asset license
+Usage (Sprint 8 — placeholder SFX, easily swapped): seed collect, harvest, upgrade,
+attack swing, enemy hit, player hit, enemy death, sleep, zone gate, watering.
+Mapped to game events in `/src/systems/AudioSystem.js`; source files renamed to the
+manifest keys in `/assets/audio/`.
+
+**Music — TODO**
+bgm_garden / bgm_forest not yet sourced (no music in the current asset packs).
+The crossfade + volume system is wired and will pick the tracks up automatically
+once `bgm_garden.mp3` / `bgm_forest.mp3` are dropped into `/assets/audio/`.
 
 ## Frameworks & Tools
 
@@ -46,3 +53,23 @@ Usage: [what it's used for in game]
 Built by Jaxon Travis  
 AI-assisted development using Claude (Anthropic)  
 All design decisions, creative direction, and product vision by the developer
+
+## Portfolio Embed
+
+The production build in `/dist/` is fully self-contained (relative asset paths via
+`base: './'`), so it runs from any static host or inside an iframe with no
+server-side dependencies. Embed code for the portfolio page:
+
+```html
+<iframe
+  src="https://seedkeeper.jaxontravis.com/"
+  width="100%"
+  height="600"
+  frameborder="0"
+  allowfullscreen
+  style="max-width: 1600px; aspect-ratio: 16/9; border: none;">
+</iframe>
+```
+
+Local verification: `npm run build` then `npx serve dist` and open in a browser —
+everything should load and play with no dev server running.
