@@ -72,7 +72,7 @@ export default class WinScene extends Phaser.Scene {
       : 'The forest is beginning to remember.';
     this.add
       .text(cx, 120, headline, {
-        fontFamily: '"Courier New", monospace',
+        fontFamily: '"SproutLands", "Courier New", monospace',
         fontSize: isFull ? '46px' : '40px',
         fontStyle: 'bold',
         color: COLOR_GOLD,
@@ -180,7 +180,7 @@ export default class WinScene extends Phaser.Scene {
 
     this.add
       .text(cx, y, `YOUR RUN — DAY ${s.daysSurvived ?? '—'}`, {
-        fontFamily: '"Courier New", monospace',
+        fontFamily: '"SproutLands", "Courier New", monospace',
         fontSize: '22px',
         fontStyle: 'bold',
         color: COLOR_GOLD
@@ -206,7 +206,7 @@ export default class WinScene extends Phaser.Scene {
 
     this.add
       .text(cx, y + 38, lines.join('\n'), {
-        fontFamily: '"Courier New", monospace',
+        fontFamily: '"SproutLands", "Courier New", monospace',
         fontSize: '19px',
         color: COLOR_TEXT,
         align: 'left',
@@ -217,7 +217,7 @@ export default class WinScene extends Phaser.Scene {
 
     this.add
       .text(cx, y + 38 + lines.length * 27 + 6, `${s.achievementsUnlocked ?? 0} / ${ACHIEVEMENT_COUNT} Achievements`, {
-        fontFamily: '"Courier New", monospace',
+        fontFamily: '"SproutLands", "Courier New", monospace',
         fontSize: '16px',
         color: COLOR_MUTED
       })
@@ -239,7 +239,7 @@ export default class WinScene extends Phaser.Scene {
       .setInteractive({ useHandCursor: true });
     this.add
       .text(cx, cy, label, {
-        fontFamily: '"Courier New", monospace',
+        fontFamily: '"SproutLands", "Courier New", monospace',
         fontSize: '22px',
         fontStyle: 'bold',
         color: COLOR_TEXT

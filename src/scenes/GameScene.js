@@ -49,6 +49,7 @@ const DEEP_FOREST_THRESHOLD = 0.7; // skeletons spawn below this fraction of WOR
 const SKELETON_PATROL_SPREAD = 220; // px between a skeleton's patrol waypoints
 const DEATH_DROP_SCATTER = 40; // spread of seeds dropped on player death
 const SEED_RECOVERY_MS = 30000; // recovery window before death-dropped seeds vanish
+const GATE_SCALE = 2; // closed-gate draw scale at the zone boundary (Sprint 10b)
 const RESPAWN_FADE_MS = 500;
 const RESPAWN_DELAY_MS = 1500;
 const SHAKE_DURATION_MS = 250;
@@ -430,9 +431,20 @@ export default class GameScene extends Phaser.Scene {
         .setDepth(1);
     }
 
+    // Fence gate at the garden⇄forest crossing — decorative marker that swings
+    // open while the player is in the forest and closes back in the garden
+    // (see animateGate, driven by player:zoneChanged).
+    if (this.textures.exists('fence_gate')) {
+      this.gateSprite = this.add
+        .sprite(WORLD_WIDTH / 2, forestY, 'fence_gate', 0)
+        .setOrigin(0.5, 0.5)
+        .setScale(GATE_SCALE)
+        .setDepth(2);
+    }
+
     this.add
       .text(WORLD_WIDTH / 2, GARDEN_ZONE_HEIGHT / 2, 'GARDEN', {
-        fontFamily: '"Courier New", monospace',
+        fontFamily: '"SproutLands", "Courier New", monospace',
         fontSize: '120px',
         fontStyle: 'bold',
         color: '#4f7344'
@@ -442,7 +454,7 @@ export default class GameScene extends Phaser.Scene {
       .setDepth(0);
     this.add
       .text(WORLD_WIDTH / 2, forestY + forestHeight / 2, 'FOREST', {
-        fontFamily: '"Courier New", monospace',
+        fontFamily: '"SproutLands", "Courier New", monospace',
         fontSize: '120px',
         fontStyle: 'bold',
         color: '#24412a'
@@ -795,13 +807,22 @@ export default class GameScene extends Phaser.Scene {
     }
     this.addStructureLabel(1050, 360, 1050, 320, 'WELL', '#ABC4DE');
 
-    // Sleep bed — advance the day.
-    // TODO(asset Sprint 10): no confidently-sliceable bed sprite in the Sprout
-    // Lands pack (Basic_Furniture.png layout is ambiguous) — placeholder kept.
-    this.sleepObject = this.add
-      .rectangle(2150, 360, 72, 48, 0x8a5a3a)
-      .setStrokeStyle(3, 0x5a3a22)
-      .setDepth(2);
+    // Sleep bed — advance the day. Uses a bed slice from the Sprout Lands
+    // Basic_Furniture sheet when present; the crop region is a best fit and can be
+    // nudged (x/y/w/h below) if it lands off the bed.
+    if (this.textures.exists('furniture_sheet')) {
+      const furnTex = this.textures.get('furniture_sheet');
+      if (!furnTex.has('bed')) furnTex.add('bed', 0, 0, 48, 64, 48);
+      this.sleepObject = this.add
+        .image(2150, 360, 'furniture_sheet', 'bed')
+        .setDisplaySize(96, 72)
+        .setDepth(2);
+    } else {
+      this.sleepObject = this.add
+        .rectangle(2150, 360, 72, 48, 0x8a5a3a)
+        .setStrokeStyle(3, 0x5a3a22)
+        .setDepth(2);
+    }
     this.addStructureLabel(2150, 360, 2150, 318, 'SLEEP  [F]', '#EDD49A');
 
     // Workshop chest — open the upgrade overlay. Real chest sprite (48x48 sheet
@@ -825,11 +846,16 @@ export default class GameScene extends Phaser.Scene {
     // outside its interaction radius so the two never overlap.
     const SIGN_X = 1480;
     const SIGN_Y = 560;
-    this.add.rectangle(SIGN_X, SIGN_Y + 14, 8, 40, 0x6e4a22).setDepth(2); // post
-    this.signpost = this.add
-      .rectangle(SIGN_X, SIGN_Y - 8, 48, 30, 0x8a6a3a)
-      .setStrokeStyle(2, 0x5a3a22)
-      .setDepth(2);
+    if (this.textures.exists('signs')) {
+      // Sprout Lands sign board (frame 0), scaled up from its 16px source.
+      this.signpost = this.add.sprite(SIGN_X, SIGN_Y, 'signs', 0).setScale(3).setDepth(2);
+    } else {
+      this.add.rectangle(SIGN_X, SIGN_Y + 14, 8, 40, 0x6e4a22).setDepth(2); // post
+      this.signpost = this.add
+        .rectangle(SIGN_X, SIGN_Y - 8, 48, 30, 0x8a6a3a)
+        .setStrokeStyle(2, 0x5a3a22)
+        .setDepth(2);
+    }
     this.addStructureLabel(SIGN_X, SIGN_Y, SIGN_X, SIGN_Y - 36, 'LOG  [F]', '#EDD49A');
 
     // Field Notes book (Sprint 11) — opens the Seed Dictionary. Distinct blue
@@ -849,7 +875,7 @@ export default class GameScene extends Phaser.Scene {
   addStructureLabel(sx, sy, lx, ly, text, color) {
     const t = this.add
       .text(lx, ly, text, {
-        fontFamily: '"Courier New", monospace',
+        fontFamily: '"SproutLands", "Courier New", monospace',
         fontSize: '14px',
         color,
         backgroundColor: 'rgba(20,18,16,0.7)',
@@ -1454,6 +1480,7 @@ export default class GameScene extends Phaser.Scene {
   onZoneChanged({ zone }) {
     this.currentZone = zone;
     this.applyDayTint();
+    this.animateGate(zone);
     // The gate chime is played by AudioSystem on 'player:zoneChanged'.
     this.crossfadeTo(zone === 'forest' ? 'bgm_forest' : 'bgm_garden');
     // Timer counts only in the forest, and never restarts once already expired.
@@ -1467,6 +1494,19 @@ export default class GameScene extends Phaser.Scene {
   onPlayerSlept() {
     this.player.restoreAmmo(); // refill ranged ammo each new day
     this.autoSave();
+  }
+
+  // Swing the boundary gate: edge-on (narrow) while in the forest, full width
+  // (closed) back in the garden. No-op until the fence_gate art is present.
+  animateGate(zone) {
+    if (!this.gateSprite) return;
+    this.tweens.killTweensOf(this.gateSprite);
+    this.tweens.add({
+      targets: this.gateSprite,
+      scaleX: zone === 'forest' ? GATE_SCALE * 0.2 : GATE_SCALE,
+      duration: 200,
+      ease: 'Quad.easeOut'
+    });
   }
 
   onTimerExpired() {

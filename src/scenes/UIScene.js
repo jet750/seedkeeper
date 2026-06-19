@@ -16,6 +16,10 @@ const HP_BAR_MAX_WIDTH = 240;
 const HP_BAR_HEIGHT = 22;
 const UI_SLOT_FRAME = 4; // frame index into ui_slot_frame.png (3x3 of 48px slots)
 
+// Weather id → frame in the small Sprout Lands weather sheet (32px, top row is a
+// sun→cloud→rain→…→swirl sequence). Best-fit indices — tune if an icon mismatches.
+const WEATHER_FRAMES = { clear: 0, sunny: 0, cloudy: 2, rain: 3, fog: 1, wind: 6 };
+
 function formatTime(ms) {
   const totalSec = Math.max(0, Math.ceil(ms / 1000));
   const m = Math.floor(totalSec / 60);
@@ -97,7 +101,7 @@ export default class UIScene extends Phaser.Scene {
       .setStrokeStyle(2, 0xffffff)
       .setFillStyle();
     this.hpText = this.add.text(pad, 60, '', {
-      fontFamily: '"Courier New", monospace',
+      fontFamily: '"SproutLands", "Courier New", monospace',
       fontSize: '18px',
       color: COLOR_NORMAL
     });
@@ -105,7 +109,7 @@ export default class UIScene extends Phaser.Scene {
     // TOP CENTER — Day + zone badge
     this.dayText = this.add
       .text(VIRTUAL_WIDTH / 2, 30, `Day ${this.dayNumber}`, {
-        fontFamily: '"Courier New", monospace',
+        fontFamily: '"SproutLands", "Courier New", monospace',
         fontSize: '26px',
         fontStyle: 'bold',
         color: COLOR_NORMAL
@@ -113,22 +117,32 @@ export default class UIScene extends Phaser.Scene {
       .setOrigin(0.5, 0);
     this.zoneBadge = this.add
       .text(VIRTUAL_WIDTH / 2, 66, 'GARDEN', {
-        fontFamily: '"Courier New", monospace',
+        fontFamily: '"SproutLands", "Courier New", monospace',
         fontSize: '20px',
         fontStyle: 'bold',
         color: '#8AB87E'
       })
       .setOrigin(0.5, 0);
 
-    // TOP CENTER (right of the day counter) — persistent weather icon (Sprint 11).
-    this.weatherIcon = this.add
-      .text(VIRTUAL_WIDTH / 2 + 92, 32, '', { fontSize: '24px' })
-      .setOrigin(0.5, 0);
+    // TOP CENTER (right of the day counter) — persistent weather icon. Real
+    // sprite from the Sprout Lands weather sheet when present, else emoji text.
+    if (this.textures.exists('weather_icons')) {
+      this.weatherIcon = this.add
+        .sprite(VIRTUAL_WIDTH / 2 + 96, 46, 'weather_icons', 0)
+        .setOrigin(0.5, 0.5)
+        .setScale(1.4);
+      this._weatherIsSprite = true;
+    } else {
+      this.weatherIcon = this.add
+        .text(VIRTUAL_WIDTH / 2 + 92, 32, '', { fontSize: '24px' })
+        .setOrigin(0.5, 0);
+      this._weatherIsSprite = false;
+    }
 
     // TOP RIGHT — Timer (forest only)
     this.timerText = this.add
       .text(VIRTUAL_WIDTH - 40, 40, formatTime(this.remaining), {
-        fontFamily: '"Courier New", monospace',
+        fontFamily: '"SproutLands", "Courier New", monospace',
         fontSize: '40px',
         fontStyle: 'bold',
         color: COLOR_NORMAL
@@ -138,7 +152,7 @@ export default class UIScene extends Phaser.Scene {
     // TOP RIGHT (under timer) — mute indicator, shown only while muted.
     this.muteIndicator = this.add
       .text(VIRTUAL_WIDTH - 40, 84, '🔇 MUTED', {
-        fontFamily: '"Courier New", monospace',
+        fontFamily: '"SproutLands", "Courier New", monospace',
         fontSize: '16px',
         color: '#9B9389'
       })
@@ -148,7 +162,7 @@ export default class UIScene extends Phaser.Scene {
     // TOP CENTER (under zone badge) — New Game+ indicator, shown only on NG+.
     this.ngPlusIndicator = this.add
       .text(VIRTUAL_WIDTH / 2, 96, '⭐ NG+', {
-        fontFamily: '"Courier New", monospace',
+        fontFamily: '"SproutLands", "Courier New", monospace',
         fontSize: '18px',
         fontStyle: 'bold',
         color: '#EDD49A'
@@ -160,7 +174,7 @@ export default class UIScene extends Phaser.Scene {
     // Replaces the old binary "has water" flag with current / capacity charges.
     this.waterIndicator = this.add
       .text(pad, 92, '💧 0/1', {
-        fontFamily: '"Courier New", monospace',
+        fontFamily: '"SproutLands", "Courier New", monospace',
         fontSize: '18px',
         color: '#9B9389'
       })
@@ -176,7 +190,7 @@ export default class UIScene extends Phaser.Scene {
 
     this.add
       .text(pad, this._slotBaseY + 28, 'SEEDS', {
-        fontFamily: '"Courier New", monospace',
+        fontFamily: '"SproutLands", "Courier New", monospace',
         fontSize: '12px',
         color: '#9B9389'
       })
@@ -187,7 +201,7 @@ export default class UIScene extends Phaser.Scene {
     // actionable [F] prompt. White-on-dark for legibility over any background.
     this.interactPrompt = this.add
       .text(VIRTUAL_WIDTH / 2, VIRTUAL_HEIGHT - 112, '', {
-        fontFamily: '"Courier New", monospace',
+        fontFamily: '"SproutLands", "Courier New", monospace',
         fontSize: '20px',
         fontStyle: 'bold',
         color: COLOR_NORMAL,
@@ -202,7 +216,7 @@ export default class UIScene extends Phaser.Scene {
     // BOTTOM RIGHT — plant bank readout (chest UI proper arrives in Sprint 4).
     this.bankText = this.add
       .text(VIRTUAL_WIDTH - pad, VIRTUAL_HEIGHT - 40, 'Bank: empty', {
-        fontFamily: '"Courier New", monospace',
+        fontFamily: '"SproutLands", "Courier New", monospace',
         fontSize: '16px',
         color: '#9B9389',
         align: 'right'
@@ -212,7 +226,7 @@ export default class UIScene extends Phaser.Scene {
     // BOTTOM RIGHT (above bank) — ranged ammo counter, hidden until equipped.
     this.ammoText = this.add
       .text(VIRTUAL_WIDTH - pad, VIRTUAL_HEIGHT - 72, '', {
-        fontFamily: '"Courier New", monospace',
+        fontFamily: '"SproutLands", "Courier New", monospace',
         fontSize: '18px',
         fontStyle: 'bold',
         color: '#EDD49A',
@@ -391,7 +405,12 @@ export default class UIScene extends Phaser.Scene {
 
   onWeather({ weather, isNewDay }) {
     if (!weather) return;
-    this.weatherIcon.setText(weather.icon || '');
+    if (this._weatherIsSprite) {
+      this.weatherIcon.setFrame(WEATHER_FRAMES[weather.id] ?? 0);
+      this.weatherIcon.setVisible(true);
+    } else {
+      this.weatherIcon.setText(weather.icon || '');
+    }
     if (isNewDay) {
       this.showBanner(`${weather.icon} ${weather.name}\n"${weather.description}"`, 5000, '#EDD49A');
     }
@@ -414,7 +433,7 @@ export default class UIScene extends Phaser.Scene {
     }
     const t = this.add
       .text(VIRTUAL_WIDTH / 2, 150, text, {
-        fontFamily: '"Courier New", monospace',
+        fontFamily: '"SproutLands", "Courier New", monospace',
         fontSize: '20px',
         color: color || COLOR_NORMAL,
         align: 'center',
@@ -453,7 +472,7 @@ export default class UIScene extends Phaser.Scene {
       .setDepth(310);
     const titleT = this.add
       .text(cx, cy - h / 2 + 22, title, {
-        fontFamily: '"Courier New", monospace',
+        fontFamily: '"SproutLands", "Courier New", monospace',
         fontSize: '22px',
         fontStyle: 'bold',
         color: '#EDD49A'
@@ -463,7 +482,7 @@ export default class UIScene extends Phaser.Scene {
     const divider = this.add.rectangle(cx, cy - h / 2 + 58, w - 60, 2, 0x4d4843).setDepth(311);
     const body = this.add
       .text(cx, cy - h / 2 + 76, text, {
-        fontFamily: '"Courier New", monospace',
+        fontFamily: '"SproutLands", "Courier New", monospace',
         fontSize: '16px',
         fontStyle: 'italic',
         color: '#D1CCC6',
@@ -475,7 +494,7 @@ export default class UIScene extends Phaser.Scene {
       .setDepth(311);
     const hint = this.add
       .text(cx, cy + h / 2 - 26, '[Esc] Close', {
-        fontFamily: '"Courier New", monospace',
+        fontFamily: '"SproutLands", "Courier New", monospace',
         fontSize: '14px',
         color: '#9B9389'
       })
@@ -532,7 +551,7 @@ export default class UIScene extends Phaser.Scene {
     const icon = this.add.text(-w / 2 + 30, 0, a.icon, { fontSize: '34px' }).setOrigin(0.5);
     const title = this.add
       .text(-w / 2 + 60, -28, 'ACHIEVEMENT UNLOCKED', {
-        fontFamily: '"Courier New", monospace',
+        fontFamily: '"SproutLands", "Courier New", monospace',
         fontSize: '12px',
         fontStyle: 'bold',
         color: '#D4A83F'
@@ -540,7 +559,7 @@ export default class UIScene extends Phaser.Scene {
       .setOrigin(0, 0.5);
     const name = this.add
       .text(-w / 2 + 60, -6, a.name, {
-        fontFamily: '"Courier New", monospace',
+        fontFamily: '"SproutLands", "Courier New", monospace',
         fontSize: '18px',
         fontStyle: 'bold',
         color: '#F5EFE6'
@@ -548,7 +567,7 @@ export default class UIScene extends Phaser.Scene {
       .setOrigin(0, 0.5);
     const flavor = this.add
       .text(-w / 2 + 60, 22, `"${a.flavor}"`, {
-        fontFamily: '"Courier New", monospace',
+        fontFamily: '"SproutLands", "Courier New", monospace',
         fontSize: '12px',
         color: '#9B9389',
         wordWrap: { width: w - 80 }
@@ -609,7 +628,7 @@ export default class UIScene extends Phaser.Scene {
     this._swapObjects.push(
       this.add
         .text(cx, panelY - panelH / 2 + 16, 'Swap which seed?', {
-          fontFamily: '"Courier New", monospace',
+          fontFamily: '"SproutLands", "Courier New", monospace',
           fontSize: '18px',
           fontStyle: 'bold',
           color: '#EDD49A'
@@ -624,7 +643,7 @@ export default class UIScene extends Phaser.Scene {
     this._swapObjects.push(
       this.add
         .text(cx, panelY - panelH / 2 + 44, `Picking up: ${newName}`, {
-          fontFamily: '"Courier New", monospace',
+          fontFamily: '"SproutLands", "Courier New", monospace',
           fontSize: '14px',
           color: '#D1CCC6'
         })
@@ -646,7 +665,7 @@ export default class UIScene extends Phaser.Scene {
       const dot = this.add.circle(x - btnW / 2 + 18, rowY, 9, color).setDepth(252);
       const label = this.add
         .text(x - btnW / 2 + 34, rowY, `${f.i + 1}. ${name}`, {
-          fontFamily: '"Courier New", monospace',
+          fontFamily: '"SproutLands", "Courier New", monospace',
           fontSize: '13px',
           color: '#F5EFE6'
         })
@@ -666,7 +685,7 @@ export default class UIScene extends Phaser.Scene {
       .setInteractive({ useHandCursor: true });
     const cancelLabel = this.add
       .text(cx, cancelY, 'Cancel (Esc)', {
-        fontFamily: '"Courier New", monospace',
+        fontFamily: '"SproutLands", "Courier New", monospace',
         fontSize: '14px',
         fontStyle: 'bold',
         color: '#F5EFE6'
@@ -717,7 +736,7 @@ export default class UIScene extends Phaser.Scene {
     const cy = VIRTUAL_HEIGHT / 2;
     const headline = this.add
       .text(cx, cy - 52, 'Day lost.', {
-        fontFamily: '"Courier New", monospace',
+        fontFamily: '"SproutLands", "Courier New", monospace',
         fontSize: '40px',
         fontStyle: 'bold',
         color: '#ff3333',
@@ -728,7 +747,7 @@ export default class UIScene extends Phaser.Scene {
       .setDepth(260);
     const sub = this.add
       .text(cx, cy + 4, 'Seeds dropped — 30 seconds to recover', {
-        fontFamily: '"Courier New", monospace',
+        fontFamily: '"SproutLands", "Courier New", monospace',
         fontSize: '20px',
         color: '#EDD49A',
         backgroundColor: 'rgba(20,18,16,0.85)',

@@ -39,7 +39,7 @@ export default class MenuScene extends Phaser.Scene {
     // Title
     this.add
       .text(cx, 170, 'SEEDKEEPER', {
-        fontFamily: '"Courier New", monospace',
+        fontFamily: '"SproutLands", "Courier New", monospace',
         fontSize: '108px',
         fontStyle: 'bold',
         color: '#8AB87E'
@@ -48,7 +48,7 @@ export default class MenuScene extends Phaser.Scene {
 
     this.add
       .text(cx, 260, 'Tend the garden. Brave the forest. Beat the day.', {
-        fontFamily: '"Courier New", monospace',
+        fontFamily: '"SproutLands", "Courier New", monospace',
         fontSize: '22px',
         color: '#9B9389'
       })
@@ -64,7 +64,7 @@ export default class MenuScene extends Phaser.Scene {
 
     this.add
       .text(cx, VIRTUAL_HEIGHT - 44, 'Click a slot to begin · WASD move · Space attack · F interact', {
-        fontFamily: '"Courier New", monospace',
+        fontFamily: '"SproutLands", "Courier New", monospace',
         fontSize: '17px',
         color: '#4D4843'
       })
@@ -87,7 +87,7 @@ export default class MenuScene extends Phaser.Scene {
 
     const label = this.add
       .text(x, y, `${slotName}    ${detail}`, {
-        fontFamily: '"Courier New", monospace',
+        fontFamily: '"SproutLands", "Courier New", monospace',
         fontSize: '24px',
         color: slot.isEmpty ? '#9B9389' : '#D1CCC6'
       })

@@ -20,6 +20,12 @@ const ACCELERATE_PER_TIER = 0.1;
 const DOUBLE_BASE_CHANCE = 0.08; // +0.04 per can tier → 8 / 12 / 16%
 const DOUBLE_PER_TIER = 0.04;
 
+// Farming-plant growth frames (Sprint 10b) from the Sprout Lands farming sheet:
+// [sprout, growing, mature]. The sheet holds many crops; these are a readable
+// generic set tinted per plant — tune the indices if a nicer crop row is found.
+const PLANT_STAGE_FRAMES = [0, 2, 4];
+const PLANT_STAGE_SCALE = [1.6, 2.4, 3.0]; // grows as it matures (16px source)
+
 function hexToNumber(hex) {
   return parseInt(hex.replace('#', ''), 16);
 }
@@ -50,9 +56,18 @@ export default class GardenBed {
       .setDepth(3)
       .setVisible(false);
 
+    // Real plant growth sprites (Sprint 10b) when the farming sheet is present;
+    // otherwise the colored rectangle above stays the growth visual.
+    this.usePlantSprite = scene.textures.exists('farming_plants');
+    this.plantSprite = this.usePlantSprite
+      ? scene.add.image(x, y, 'farming_plants', PLANT_STAGE_FRAMES[0]).setDepth(3).setVisible(false)
+      : null;
+    // The object the pulse/scale animates — sprite when available, else rectangle.
+    this.growthVisual = this.plantSprite || this.plantShape;
+
     this.daysText = scene.add
       .text(x, y - 42, '', {
-        fontFamily: '"Courier New", monospace',
+        fontFamily: '"SproutLands", "Courier New", monospace',
         fontSize: '14px',
         color: '#F5EFE6',
         backgroundColor: 'rgba(20,18,16,0.7)',
@@ -65,7 +80,7 @@ export default class GardenBed {
     // Persistent ×2 badge — visible while doubleHarvest is armed (Sprint 9).
     this.doubleBadge = scene.add
       .text(x + BED_SIZE / 2 - 2, y - BED_SIZE / 2 + 2, '×2', {
-        fontFamily: '"Courier New", monospace',
+        fontFamily: '"SproutLands", "Courier New", monospace',
         fontSize: '15px',
         fontStyle: 'bold',
         color: '#ffaa00',
@@ -94,31 +109,52 @@ export default class GardenBed {
     this.state = newState;
     this.stopPulse();
 
+    // Day counter shows only while the plant is still growing.
+    this.daysText.setVisible(newState === STATE.PLANTED || newState === STATE.GROWING);
+
+    if (this.usePlantSprite) this.applyPlantSprite(newState);
+    else this.applyPlantShape(newState);
+
+    if (newState === STATE.READY) this.startPulse();
+    this.refreshSoil();
+  }
+
+  // Sprite growth visual (real farming art): pick the stage frame, tint by plant
+  // colour so types stay readable, and scale up as it matures.
+  applyPlantSprite(newState) {
+    const s = this.plantSprite;
+    if (newState === STATE.EMPTY) {
+      s.setVisible(false);
+      return;
+    }
+    const stage = newState === STATE.READY ? 2 : newState === STATE.GROWING ? 1 : 0;
+    s.setFrame(PLANT_STAGE_FRAMES[stage]);
+    s.setTint(this.plantColorNum);
+    s.setScale(PLANT_STAGE_SCALE[stage]);
+    s.setVisible(true);
+  }
+
+  // Fallback rectangle growth visual (no farming sheet present).
+  applyPlantShape(newState) {
     switch (newState) {
       case STATE.EMPTY:
         this.plantShape.setVisible(false);
-        this.daysText.setVisible(false);
         break;
       case STATE.PLANTED:
         this.plantShape.setVisible(true).setFillStyle(0x6fbf4f).setDisplaySize(12, 12);
-        this.daysText.setVisible(true);
         break;
       case STATE.GROWING:
         this.plantShape.setVisible(true).setFillStyle(0x5fae3f).setDisplaySize(18, 30);
-        this.daysText.setVisible(true);
         break;
       case STATE.READY:
         this.plantShape
           .setVisible(true)
           .setFillStyle(this.plantColorNum)
           .setDisplaySize(BED_SIZE - 12, BED_SIZE - 12);
-        this.daysText.setVisible(false);
-        this.startPulse();
         break;
       default:
         break;
     }
-    this.refreshSoil();
   }
 
   refreshSoil() {
@@ -133,10 +169,11 @@ export default class GardenBed {
 
   startPulse() {
     if (this._pulseTween) return;
+    const t = this.growthVisual;
     this._pulseTween = this.scene.tweens.add({
-      targets: this.plantShape,
-      scaleX: { from: this.plantShape.scaleX, to: this.plantShape.scaleX * 1.05 },
-      scaleY: { from: this.plantShape.scaleY, to: this.plantShape.scaleY * 1.05 },
+      targets: t,
+      scaleX: { from: t.scaleX, to: t.scaleX * 1.05 },
+      scaleY: { from: t.scaleY, to: t.scaleY * 1.05 },
       duration: 500,
       ease: 'Sine.easeInOut',
       yoyo: true,

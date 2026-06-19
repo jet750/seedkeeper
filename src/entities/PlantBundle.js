@@ -52,7 +52,7 @@ export default class PlantBundle extends Phaser.Physics.Arcade.Image {
     // "×1" quantity tag above the bundle.
     this.label = scene.add
       .text(x, y - 16, '×1', {
-        fontFamily: '"Courier New", monospace',
+        fontFamily: '"SproutLands", "Courier New", monospace',
         fontSize: '13px',
         fontStyle: 'bold',
         color: '#F5EFE6',

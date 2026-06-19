@@ -78,7 +78,7 @@ export default class Seed extends Phaser.GameObjects.Image {
     // Name tag — hidden until the player is close.
     this.nameTag = scene.add
       .text(x, this.baseY - 18, this.plantData.name, {
-        fontFamily: '"Courier New", monospace',
+        fontFamily: '"SproutLands", "Courier New", monospace',
         fontSize: '14px',
         color: '#F5EFE6',
         backgroundColor: 'rgba(20,18,16,0.7)',

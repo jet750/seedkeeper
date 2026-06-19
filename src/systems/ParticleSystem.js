@@ -31,7 +31,7 @@ export default class ParticleSystem {
     for (let i = 0; i < POOL_SIZE; i++) {
       const t = scene.add
         .text(0, 0, '', {
-          fontFamily: '"Courier New", monospace',
+          fontFamily: '"SproutLands", "Courier New", monospace',
           fontSize: '20px',
           fontStyle: 'bold',
           color: '#ffffff',

@@ -33,22 +33,24 @@ const BODY_RADIUS = 8;
 
 export default class Skeleton extends Phaser.Physics.Arcade.Sprite {
   constructor(scene, x, y, waypoints, gameData) {
+    // Prefer the Anokolisa animated sheets (run + death, 64x64). Fall back to the
+    // legacy 16x16 skeleton_sheet, then to a generated bone placeholder.
+    const useReal = scene.textures.exists('skeleton_run');
     const hasSheet = scene.textures.exists('skeleton_sheet');
-    if (!hasSheet) ensurePlaceholderTexture(scene);
-    super(scene, x, y, hasSheet ? 'skeleton_sheet' : 'px_skeleton');
+    if (!useReal && !hasSheet) ensurePlaceholderTexture(scene);
+    super(scene, x, y, useReal ? 'skeleton_run' : hasSheet ? 'skeleton_sheet' : 'px_skeleton');
 
+    this.useReal = useReal;
     this.hasSheet = hasSheet;
-    if (!hasSheet) {
-      // TODO(asset): drop skeleton_sheet.png (16x16 frames) into /assets/images
-      // for an animated skeleton. Bone-colored placeholder in use until then.
-    }
 
     scene.add.existing(this);
     scene.physics.add.existing(this);
 
     // Visual draw scale for zoom visibility (set before the body below; the
-    // collider radius derives from this.width, the unscaled source size).
+    // collider radius derives from this.width, the unscaled source size). The
+    // real 64x64 frames carry transparent padding, so 2x reads as a tanky enemy.
     this.setScale(SPRITE_SCALE);
+    if (useReal) this.setupRealAnimations();
 
     this.enemyType = 'skeleton';
 
@@ -78,6 +80,31 @@ export default class Skeleton extends Phaser.Physics.Arcade.Sprite {
     this.waypoints = waypoints && waypoints.length ? waypoints : [{ x, y }];
     this._wpIndex = 0;
     this.state = STATE.PATROL;
+  }
+
+  // Create the shared walk/death animations from the Anokolisa sheets once, then
+  // start walking. Frame counts are derived from each sheet's frameTotal so a
+  // miscount can never reference a non-existent frame.
+  setupRealAnimations() {
+    const a = this.scene.anims;
+    const lastFrame = (key) => Math.max(0, this.scene.textures.get(key).frameTotal - 2);
+    if (!a.exists('skeleton_walk')) {
+      a.create({
+        key: 'skeleton_walk',
+        frames: a.generateFrameNumbers('skeleton_run', { start: 0, end: lastFrame('skeleton_run') }),
+        frameRate: 10,
+        repeat: -1
+      });
+    }
+    if (!a.exists('skeleton_die') && this.scene.textures.exists('skeleton_death')) {
+      a.create({
+        key: 'skeleton_die',
+        frames: a.generateFrameNumbers('skeleton_death', { start: 0, end: lastFrame('skeleton_death') }),
+        frameRate: 14,
+        repeat: 0
+      });
+    }
+    this.play('skeleton_walk');
   }
 
   update(dt, player) {
@@ -193,6 +220,12 @@ export default class Skeleton extends Phaser.Physics.Arcade.Sprite {
     this.isDead = true;
     this.body.enable = false;
     this.setVelocity(0, 0);
+
+    // Play the crumble-to-bones death animation while the sprite fades out.
+    if (this.useReal && this.scene.textures.exists('skeleton_death')) {
+      this.setTexture('skeleton_death');
+      this.play('skeleton_die');
+    }
 
     this.scene.tweens.add({
       targets: this,

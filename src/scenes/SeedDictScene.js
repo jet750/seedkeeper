@@ -56,7 +56,7 @@ export default class SeedDictScene extends Phaser.Scene {
 
     this.add
       .text(48, 30, 'SEED DICTIONARY', {
-        fontFamily: '"Courier New", monospace',
+        fontFamily: '"SproutLands", "Courier New", monospace',
         fontSize: '32px',
         fontStyle: 'bold',
         color: '#8AB87E'
@@ -65,7 +65,7 @@ export default class SeedDictScene extends Phaser.Scene {
 
     this.add
       .text(48, 72, `${this.discovered.size} / ${PLANT_ORDER.length} Discovered`, {
-        fontFamily: '"Courier New", monospace',
+        fontFamily: '"SproutLands", "Courier New", monospace',
         fontSize: '18px',
         color: '#9B9389'
       })
@@ -113,7 +113,7 @@ export default class SeedDictScene extends Phaser.Scene {
       this.add.circle(iconX, iconY, 24, 0x3a3531).setStrokeStyle(2, 0x4d4843).setDepth(102);
       this.add
         .text(iconX, iconY, '?', {
-          fontFamily: '"Courier New", monospace',
+          fontFamily: '"SproutLands", "Courier New", monospace',
           fontSize: '28px',
           fontStyle: 'bold',
           color: '#57514b'
@@ -124,7 +124,7 @@ export default class SeedDictScene extends Phaser.Scene {
 
     this.add
       .text(x + 86, y + 30, known ? plant.name : '???', {
-        fontFamily: '"Courier New", monospace',
+        fontFamily: '"SproutLands", "Courier New", monospace',
         fontSize: '22px',
         fontStyle: 'bold',
         color: known ? '#F5EFE6' : '#7a746c'
@@ -134,7 +134,7 @@ export default class SeedDictScene extends Phaser.Scene {
     if (!known) {
       this.add
         .text(x + 86, y + 64, 'Collect this seed to\nunlock its entry.', {
-          fontFamily: '"Courier New", monospace',
+          fontFamily: '"SproutLands", "Courier New", monospace',
           fontSize: '15px',
           color: '#57514b',
           lineSpacing: 6
@@ -151,7 +151,7 @@ export default class SeedDictScene extends Phaser.Scene {
     ];
     this.add
       .text(x + 24, y + 92, lines.join('\n'), {
-        fontFamily: '"Courier New", monospace',
+        fontFamily: '"SproutLands", "Courier New", monospace',
         fontSize: '16px',
         color: '#D1CCC6',
         lineSpacing: 8
@@ -167,7 +167,7 @@ export default class SeedDictScene extends Phaser.Scene {
       .setInteractive({ useHandCursor: true });
     this.add
       .text(cx, cy, label, {
-        fontFamily: '"Courier New", monospace',
+        fontFamily: '"SproutLands", "Courier New", monospace',
         fontSize: '15px',
         fontStyle: 'bold',
         color: '#F5EFE6'
