@@ -175,6 +175,7 @@ export default class GameScene extends Phaser.Scene {
     // --- Camera ---
     this.cameras.main.setBounds(0, 0, WORLD_WIDTH, WORLD_HEIGHT);
     this.cameras.main.startFollow(this.player, true, 0.1, 0.1);
+    this.cameras.main.setZoom(2.0);
 
     // --- Day/night atmosphere tint (Sprint 9) ---
     // A screen-fixed colour wash over the world (below the HUD scene). Garden
