@@ -23,6 +23,11 @@ const STEP_VOLUME = 0.3;
 // Visual scale only — the physics body is configured independently below. The
 // idle squash + stopIdle reset use this as their baseline so the 2x holds.
 const SPRITE_SCALE = 2;
+// Fixed collider radius (source px). Pinned to a constant so the 2x sprite scale
+// doesn't inflate the hitbox: Phaser's effective collision radius is halfWidth
+// (= BODY_RADIUS * scaleX), so this lands ~16px in-world — close to the original
+// pre-zoom collider on the 48px frame.
+const BODY_RADIUS = 8;
 
 // --- Melee attack (Sprint 3) ---
 const ATTACK_ARC_RADIUS = 50; // px reach of the swing
@@ -138,9 +143,12 @@ export default class Player extends Phaser.Physics.Arcade.Sprite {
     this._invEndEvent = null;
     this._flashOn = false;
 
-    // --- Physics body: circular collider centred in the sprite ---
+    // --- Physics body: fixed-radius circular collider, centred in the sprite ---
+    // Re-asserted to BODY_RADIUS (not width*ratio) so the 2x sprite scale doesn't
+    // double the hitbox. updateBounds() leaves `radius` alone, so the offset below
+    // (width/2 - radius) keeps the circle centred on the 48px frame at any scale.
     this.setCollideWorldBounds(true);
-    const radius = this.width * 0.32;
+    const radius = BODY_RADIUS;
     this.body.setCircle(
       radius,
       this.width / 2 - radius,
@@ -309,11 +317,12 @@ export default class Player extends Phaser.Physics.Arcade.Sprite {
 
   stopIdle() {
     this.isIdling = false;
+    this.idleTimer = 0;
     if (this._idleTween) {
       this._idleTween.stop();
       this._idleTween = null;
     }
-    this.setScale(SPRITE_SCALE);
+    this.setScale(SPRITE_SCALE); // restore the 2x baseline, not 1x
   }
 
   // --- Footsteps (Sprint 9) -------------------------------------------------

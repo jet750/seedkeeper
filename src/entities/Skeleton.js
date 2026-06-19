@@ -27,6 +27,9 @@ const DROP_SCATTER = 30;
 // Drawn at 2x for zoom visibility. Visual only — the physics body is set up
 // separately below.
 const SPRITE_SCALE = 2;
+// Fixed collider radius (source px), pinned so the 2x sprite scale doesn't double
+// the hitbox. Effective in-world radius is halfWidth (= BODY_RADIUS * scaleX).
+const BODY_RADIUS = 8;
 
 export default class Skeleton extends Phaser.Physics.Arcade.Sprite {
   constructor(scene, x, y, waypoints, gameData) {
@@ -63,9 +66,11 @@ export default class Skeleton extends Phaser.Physics.Arcade.Sprite {
     this.isDead = false;
     this._knockbackUntil = 0;
 
-    // --- Physics: circular collider centred in the sprite ---
+    // --- Physics: fixed-radius collider, centred in the sprite ---
+    // Pinned to BODY_RADIUS (not width*ratio) so the 2x sprite scale doesn't
+    // inflate the hitbox. Offset stays centred on the 16px frame.
     this.setCollideWorldBounds(true);
-    const radius = this.width * 0.42;
+    const radius = BODY_RADIUS;
     this.body.setCircle(radius, this.width / 2 - radius, this.height / 2 - radius);
     this.setDepth(9);
 

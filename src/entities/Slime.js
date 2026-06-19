@@ -24,6 +24,9 @@ const ANTICIPATE_PULSE_SCALE = 1.3;
 // separately below. The anticipation pulse multiplies this so the tell still
 // reads as a grow, not a shrink, against the larger baseline.
 const SPRITE_SCALE = 2;
+// Fixed collider radius (source px), pinned so the 2x sprite scale doesn't double
+// the hitbox. Effective in-world radius is halfWidth (= BODY_RADIUS * scaleX).
+const BODY_RADIUS = 6;
 
 // Wander personality per type (Sprint 9). Greens hold a heading for a long lazy
 // stretch and occasionally stop; darks move in short twitchy bursts with a pause
@@ -80,9 +83,11 @@ export default class Slime extends Phaser.Physics.Arcade.Sprite {
     this.currentChaseSpeed = this.baseChaseSpeed;
 
     // --- Physics ---
+    // Fixed-radius collider (BODY_RADIUS, not width*ratio) so the 2x sprite scale
+    // doesn't inflate the hitbox. Offset stays centred on the 16px frame.
     this.setCollideWorldBounds(true);
     this.setBounce(1, 1);
-    const radius = this.width * 0.42;
+    const radius = BODY_RADIUS;
     this.body.setCircle(
       radius,
       this.width / 2 - radius,

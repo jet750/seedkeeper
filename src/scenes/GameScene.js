@@ -583,6 +583,14 @@ export default class GameScene extends Phaser.Scene {
     this.seeds.push(seed);
   }
 
+  // Drop a seed from the tracked list when it's destroyed for good (death-drop
+  // despawn, daily-special pickup). World seeds respawn in place and are never
+  // destroyed mid-run, so they stay registered.
+  unregisterSeed(seed) {
+    const i = this.seeds.indexOf(seed);
+    if (i > -1) this.seeds.splice(i, 1);
+  }
+
   spawnSeeds() {
     // Geographic grouping per design — each entry is a fixed world position and
     // the zone reason it lives there.
@@ -1637,6 +1645,30 @@ export default class GameScene extends Phaser.Scene {
     if (this.runStats.killsByType[type] !== undefined) this.runStats.killsByType[type]++;
     const color = ENEMY_DEATH_COLORS[type] || '#ffffff';
     this.particleSystem.showDeathBurst(position.x, position.y, color);
+    this.scheduleGreenSlimeRespawn();
+  }
+
+  // Keep the forest populated. Green slimes only spawn once at world setup, so
+  // without this they thin out and never return as the player clears them. After
+  // any enemy dies, top green slimes back up to the day-scaled target after a
+  // delay. Dark slimes and skeletons have their own day-based scaling.
+  scheduleGreenSlimeRespawn() {
+    const respawnMs = this.gameData.enemies.scaling.greenSlimeRespawnMs;
+    this.time.delayedCall(respawnMs, () => {
+      if (!this.enemies) return;
+      const greens = this.enemies.filter((e) => e.slimeType === 'green_slime').length;
+      if (greens < this.getTargetGreenSlimeCount()) this.spawnSlime('green_slime');
+    });
+  }
+
+  // Base green-slime count plus a slow per-day ramp, capped, so deeper runs stay
+  // dense without overwhelming early days.
+  getTargetGreenSlimeCount() {
+    const s = this.gameData.enemies.scaling;
+    return Math.min(
+      s.greenSlimeBaseCount + Math.floor(this.daySystem.dayNumber * s.greenSlimePerDay),
+      s.greenSlimeMaxCount
+    );
   }
 
   // --- Upgrade economy (Sprint 4) -------------------------------------------

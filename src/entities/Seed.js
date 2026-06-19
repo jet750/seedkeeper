@@ -215,6 +215,11 @@ export default class Seed extends Phaser.GameObjects.Image {
   destroy(fromScene) {
     if (this.bobTween) this.bobTween.remove();
     if (this.nameTag) this.nameTag.destroy();
+    // Stop GameScene from scanning a dead seed forever (death-drops despawn and
+    // are destroyed, but otherwise linger in scene.seeds across a run).
+    if (this.scene && typeof this.scene.unregisterSeed === 'function') {
+      this.scene.unregisterSeed(this);
+    }
     super.destroy(fromScene);
   }
 }

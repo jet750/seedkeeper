@@ -40,7 +40,11 @@
     "scaling": {
       "densityPerDay": 0.1,
       "startDay_darkSlime": 3,
-      "startDay_skeleton": 5
+      "startDay_skeleton": 5,
+      "greenSlimeBaseCount": 5,
+      "greenSlimePerDay": 0.5,
+      "greenSlimeMaxCount": 12,
+      "greenSlimeRespawnMs": 30000
     }
   },
   "daySystem": {
