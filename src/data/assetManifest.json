@@ -1,0 +1,32 @@
+{
+  "spritesheets": [
+    {
+      "key": "player_sheet",
+      "path": "assets/images/player_sheet.png",
+      "frameWidth": 48,
+      "frameHeight": 48
+    },
+    {
+      "key": "slime_sheet",
+      "path": "assets/images/slime_sheet.png",
+      "frameWidth": 16,
+      "frameHeight": 16
+    },
+    {
+      "key": "skeleton_sheet",
+      "path": "assets/images/skeleton_sheet.png",
+      "frameWidth": 16,
+      "frameHeight": 16
+    }
+  ],
+  "images": [
+    { "key": "tileset_garden", "path": "assets/images/tileset_garden.png" },
+    { "key": "tileset_forest", "path": "assets/images/tileset_forest.png" },
+    { "key": "tileset_fence", "path": "assets/images/tileset_fence.png" }
+  ],
+  "audio": [
+    { "key": "bgm_garden", "path": "assets/audio/bgm_garden.mp3" },
+    { "key": "bgm_forest", "path": "assets/audio/bgm_forest.mp3" },
+    { "key": "sfx_gate", "path": "assets/audio/sfx_gate.wav" }
+  ]
+}

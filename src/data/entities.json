@@ -1,0 +1,35 @@
+{
+  "player": {
+    "maxHP": 100,
+    "speed": 160,
+    "attackDamage": 10,
+    "attackCooldown": 600,
+    "critChance": 0.05,
+    "seedSlots": 3
+  },
+  "enemies": {
+    "green_slime": {
+      "hp": 15,
+      "damage": 8,
+      "wanderSpeed": 40,
+      "chaseSpeed": 90,
+      "detectRange": 80,
+      "loseRange": 200
+    },
+    "dark_slime": {
+      "hp": 35,
+      "damage": 15,
+      "wanderSpeed": 25,
+      "chaseSpeed": 70,
+      "detectRange": 150,
+      "loseRange": 300
+    }
+  },
+  "daySystem": {
+    "timerDuration": 180000,
+    "warningTime": 30000,
+    "urgentTime": 10000,
+    "postTimerSpeedMult": 1.5,
+    "postTimerDamageMult": 1.5
+  }
+}
