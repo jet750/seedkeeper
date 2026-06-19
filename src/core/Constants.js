@@ -24,3 +24,17 @@ export const SLIME_WANDER_SPEED = 40;
 export const SLIME_CHASE_SPEED = 90;
 export const SLIME_DETECT_RANGE = 80;
 export const SLIME_LOSE_RANGE = 200;
+
+// --- Developer tools (dev cheat menu) ---
+// Master switch for the in-game dev cheat menu. Set to false before shipping to
+// disable the menu entirely. The menu also activates when the page URL contains
+// ?dev=true, regardless of this flag.
+export const DEV_MODE = true;
+
+// True when the dev menu should be available. Browser-only (guards window so the
+// build/SSR never touches location). Called at runtime, never at module load.
+export function isDevModeActive() {
+  if (DEV_MODE) return true;
+  if (typeof window === 'undefined' || !window.location) return false;
+  return new URLSearchParams(window.location.search).has('dev');
+}

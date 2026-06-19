@@ -14,7 +14,8 @@ import {
   WORLD_WIDTH,
   WORLD_HEIGHT,
   GARDEN_ZONE_HEIGHT,
-  TILE_SIZE
+  TILE_SIZE,
+  isDevModeActive
 } from '../core/Constants.js';
 import Player from '../entities/Player.js';
 import Slime from '../entities/Slime.js';
@@ -207,6 +208,10 @@ export default class GameScene extends Phaser.Scene {
     // Push the full restored HUD state once UIScene has booted and subscribed.
     this.time.delayedCall(0, () => this.syncHud());
 
+    // --- Developer cheat menu (parallel scene; inert unless dev mode active) ---
+    this.scene.launch('DevMenuScene');
+    if (isDevModeActive()) this.setupDevHandlers();
+
     this.events.once('shutdown', this.shutdown, this);
     this.events.once('destroy', this.shutdown, this);
   }
@@ -350,16 +355,21 @@ export default class GameScene extends Phaser.Scene {
     return slime;
   }
 
-  spawnSkeleton() {
+  // Normal calls (no args) place a skeleton at a random deep-forest spot. The
+  // dev menu passes an explicit position to spawn one at the player.
+  spawnSkeleton(devX, devY) {
     const margin = ENEMY_SPAWN_MARGIN;
     const deepMinY = Math.ceil(WORLD_HEIGHT * DEEP_FOREST_THRESHOLD);
-    const baseX = Phaser.Math.Between(margin, WORLD_WIDTH - margin);
-    const baseY = Phaser.Math.Between(deepMinY, WORLD_HEIGHT - margin);
+    const devSpawn = devX !== undefined && devY !== undefined;
+    const baseX = devSpawn ? devX : Phaser.Math.Between(margin, WORLD_WIDTH - margin);
+    const baseY = devSpawn ? devY : Phaser.Math.Between(deepMinY, WORLD_HEIGHT - margin);
 
-    // Three patrol waypoints fanned around the spawn point, clamped to the deep
-    // forest band and world bounds.
+    // Three patrol waypoints fanned around the spawn point. Normal skeletons keep
+    // their patrol in the deep forest; dev-placed ones may patrol the whole
+    // forest band around where they were dropped.
+    const minY = devSpawn ? GARDEN_ZONE_HEIGHT + margin : deepMinY;
     const clampX = (v) => Phaser.Math.Clamp(v, margin, WORLD_WIDTH - margin);
-    const clampY = (v) => Phaser.Math.Clamp(v, deepMinY, WORLD_HEIGHT - margin);
+    const clampY = (v) => Phaser.Math.Clamp(v, minY, WORLD_HEIGHT - margin);
     const s = SKELETON_PATROL_SPREAD;
     const waypoints = [
       { x: clampX(baseX - s), y: clampY(baseY) },
@@ -973,6 +983,120 @@ export default class GameScene extends Phaser.Scene {
   getHarvestRange() {
     // Base pickup radius widened by the sunflower Harvest Range stat.
     return SEED_COLLECT_RANGE * (1 + this.player.statBonuses.harvestRange);
+  }
+
+  // --- Developer cheats (Sprint 4.5 dev tools) ------------------------------
+  //
+  // Executors for the dev cheat menu. The DevMenuScene only emits `dev:*`
+  // intents; GameScene (the state owner) performs the mutation here and
+  // re-broadcasts the canonical events so the HUD stays in sync. All of this is
+  // only wired up when isDevModeActive() — see create().
+
+  setupDevHandlers() {
+    this.subscribe('dev:fillBank', () => this.devFillBank());
+    this.subscribe('dev:addBank', (d) => this.devAddBank(d));
+    this.subscribe('dev:day', (d) => this.devDay(d));
+    this.subscribe('dev:unlockGear', () => this.devUnlockAllGear());
+    this.subscribe('dev:maxStats', () => this.devMaxAllStats());
+    this.subscribe('dev:nextTier', (d) => this.devNextTier(d));
+    this.subscribe('dev:fullHeal', () => this.player.healToFull());
+    this.subscribe('dev:restoreAmmo', () => this.player.restoreAmmo());
+    this.subscribe('dev:spawnEnemy', (d) => this.devSpawnEnemy(d));
+    this.subscribe('dev:clearEnemies', () => this.devClearEnemies());
+    this.subscribe('dev:clearSave', () => this.devClearSave());
+    this.subscribe('dev:forceSave', () => this.devForceSave());
+  }
+
+  devFillBank() {
+    Object.keys(this.plantBank).forEach((k) => {
+      this.plantBank[k] = 20;
+    });
+    EventBus.emit('bank:updated', { bank: { ...this.plantBank } });
+  }
+
+  devAddBank({ plantType, amount }) {
+    if (this.plantBank[plantType] === undefined) this.plantBank[plantType] = 0;
+    this.plantBank[plantType] += amount;
+    EventBus.emit('bank:updated', { bank: { ...this.plantBank } });
+  }
+
+  devDay({ delta }) {
+    if (delta > 0) {
+      // Forward: advance for real so bed growth, enemy scaling and bank events fire.
+      for (let i = 0; i < delta; i++) this.daySystem.advanceDay();
+    } else if (delta < 0) {
+      // Backward: counter + timer only — do not reverse growth or un-spawn enemies.
+      this.daySystem.dayNumber = Math.max(1, this.daySystem.dayNumber + delta);
+      this.daySystem.resetTimer();
+      EventBus.emit('day:dayChanged', { day: this.daySystem.dayNumber });
+    }
+  }
+
+  devUnlockAllGear() {
+    Object.keys(this.gameData.upgrades).forEach((pt) => {
+      const tiers = this.gameData.upgrades[pt].gear.tiers;
+      const lastIndex = tiers.length - 1;
+      const oldIndex = this.upgradeLevels[pt].gear;
+      if (oldIndex >= lastIndex) return;
+      this.upgradeLevels[pt].gear = lastIndex;
+      this.applyGearEffect(pt, lastIndex);
+      // Each satchel tier also adds a garden bed (mirrors live purchases).
+      if (GEAR_SLOT_BY_PLANT[pt] === 'satchel') {
+        for (let i = oldIndex; i < lastIndex; i++) this.addGardenBed();
+      }
+    });
+    this.player.recalculateStats();
+    this.syncHud();
+  }
+
+  devMaxAllStats() {
+    Object.keys(this.gameData.upgrades).forEach((pt) => {
+      const levels = this.gameData.upgrades[pt].stat.levels;
+      this.upgradeLevels[pt].stat = levels;
+      this.applyStatEffect(pt, levels);
+    });
+    this.player.recalculateStats();
+    this.daySystem.setTimerBonus(this.player.statBonuses.timerBonus);
+    this.syncHud();
+  }
+
+  devNextTier({ plantType }) {
+    const tiers = this.gameData.upgrades[plantType].gear.tiers;
+    const lv = this.upgradeLevels[plantType];
+    const next = lv.gear + 1;
+    if (next >= tiers.length) return;
+    lv.gear = next;
+    this.applyGearEffect(plantType, next);
+    if (GEAR_SLOT_BY_PLANT[plantType] === 'satchel') this.addGardenBed();
+    this.player.recalculateStats();
+    this.syncHud();
+  }
+
+  devSpawnEnemy({ type }) {
+    const x = this.player.x;
+    const y = this.player.y;
+    if (type === 'skeleton') this.spawnSkeleton(x, y);
+    else this.spawnSlime(type, x, y);
+  }
+
+  devClearEnemies() {
+    // Instant removal — no death fade, drops, or events.
+    this.enemies.forEach((e) => {
+      e.isDead = true;
+      if (e.body) e.body.enable = false;
+      e.destroy();
+    });
+    this.enemies = [];
+  }
+
+  devClearSave() {
+    SaveSystem.clear(this.currentSlot);
+    console.log(`[dev] cleared save slot ${this.currentSlot}`);
+  }
+
+  devForceSave() {
+    this.autoSave();
+    console.log(`[dev] force-saved slot ${this.currentSlot}`);
   }
 
   // --- Main loop ------------------------------------------------------------
