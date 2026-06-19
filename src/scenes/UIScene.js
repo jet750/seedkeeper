@@ -14,6 +14,7 @@ const COLOR_WARNING = '#ffaa00';
 const COLOR_URGENT = '#ff3333';
 const HP_BAR_MAX_WIDTH = 240;
 const HP_BAR_HEIGHT = 22;
+const UI_SLOT_FRAME = 4; // frame index into ui_slot_frame.png (3x3 of 48px slots)
 
 function formatTime(ms) {
   const totalSec = Math.max(0, Math.ceil(ms / 1000));
@@ -255,13 +256,23 @@ export default class UIScene extends Phaser.Scene {
     }
     this.seedSlots = [];
     this.slotCount = count;
+    // Sprout Lands UI slot frame (48x48 sheet) replaces the grey rectangle when
+    // present (Sprint 10); the plant-colour circle renders on top of the frame.
+    const hasFrame = this.textures.exists('ui_slot_frame');
     for (let i = 0; i < count; i++) {
       const cx = this._slotBaseX + i * (this._slotSize + this._slotGap) + this._slotSize / 2;
-      const box = this.add
-        .rectangle(cx, this._slotBaseY, this._slotSize, this._slotSize, 0x3a3531)
-        .setStrokeStyle(2, 0x57514b);
+      let box;
+      if (hasFrame) {
+        box = this.add
+          .image(cx, this._slotBaseY, 'ui_slot_frame', UI_SLOT_FRAME)
+          .setDisplaySize(this._slotSize, this._slotSize);
+      } else {
+        box = this.add
+          .rectangle(cx, this._slotBaseY, this._slotSize, this._slotSize, 0x3a3531)
+          .setStrokeStyle(2, 0x57514b);
+      }
       const fill = this.add
-        .circle(cx, this._slotBaseY, this._slotSize / 2 - 6, 0xffffff)
+        .circle(cx, this._slotBaseY, this._slotSize / 2 - 8, 0xffffff)
         .setVisible(false);
       this.seedSlots.push({ box, fill });
     }

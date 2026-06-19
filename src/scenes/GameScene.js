@@ -85,6 +85,9 @@ const BED_ROW_GAP = 150;
 const BEDS_PER_ROW = 4;
 const CHEST_X = 1600;
 const CHEST_Y = 560;
+// obj_chest.png is a 48x48 sheet: row 0 is a closed→open progression.
+const CHEST_CLOSED_FRAME = 0;
+const CHEST_OPEN_FRAME = 4;
 
 export default class GameScene extends Phaser.Scene {
   constructor() {
@@ -215,6 +218,7 @@ export default class GameScene extends Phaser.Scene {
     this.spawnGardenBeds();
     this.spawnGardenStructures();
     this.spawnProps();
+    this.createForestAmbience();
 
     // --- Day timer (extracted system) ---
     this.daySystem = new DaySystem(this, this.gameData);
@@ -722,25 +726,42 @@ export default class GameScene extends Phaser.Scene {
     // polish) — registered here and toggled by updateStructureLabels().
     this._structureLabels = [];
 
-    // Well — fill the watering can here.
-    this.well = this.add
-      .rectangle(1050, 360, 50, 50, 0x3b6ea5)
-      .setStrokeStyle(3, 0x244a6e)
-      .setDepth(2);
+    // Well — fill the watering can here. Real Sprout Lands well sprite when the
+    // art is present (Sprint 10), else the Sprint 2 placeholder rectangle.
+    if (this.textures.exists('obj_well')) {
+      this.well = this.add.image(1050, 360, 'obj_well').setScale(2).setDepth(2);
+    } else {
+      this.well = this.add
+        .rectangle(1050, 360, 50, 50, 0x3b6ea5)
+        .setStrokeStyle(3, 0x244a6e)
+        .setDepth(2);
+    }
     this.addStructureLabel(1050, 360, 1050, 320, 'WELL', '#ABC4DE');
 
     // Sleep bed — advance the day.
+    // TODO(asset Sprint 10): no confidently-sliceable bed sprite in the Sprout
+    // Lands pack (Basic_Furniture.png layout is ambiguous) — placeholder kept.
     this.sleepObject = this.add
       .rectangle(2150, 360, 72, 48, 0x8a5a3a)
       .setStrokeStyle(3, 0x5a3a22)
       .setDepth(2);
     this.addStructureLabel(2150, 360, 2150, 318, 'SLEEP  [F]', '#EDD49A');
 
-    // Workshop chest — open the upgrade overlay.
-    this.chest = this.add
-      .rectangle(CHEST_X, CHEST_Y, 64, 48, 0x6e4a22)
-      .setStrokeStyle(3, 0xd4a83f)
-      .setDepth(2);
+    // Workshop chest — open the upgrade overlay. Real chest sprite (48x48 sheet
+    // with open frames) when present; the Sprint 9 open animation frame-swaps
+    // instead of the scaleY tween in that case.
+    this._chestIsSprite = this.textures.exists('obj_chest');
+    if (this._chestIsSprite) {
+      this.chest = this.add
+        .sprite(CHEST_X, CHEST_Y, 'obj_chest', CHEST_CLOSED_FRAME)
+        .setScale(1.5)
+        .setDepth(2);
+    } else {
+      this.chest = this.add
+        .rectangle(CHEST_X, CHEST_Y, 64, 48, 0x6e4a22)
+        .setStrokeStyle(3, 0xd4a83f)
+        .setDepth(2);
+    }
     this.addStructureLabel(CHEST_X, CHEST_Y, CHEST_X, CHEST_Y - 38, 'WORKSHOP  [F]', '#EDD49A');
 
     // Signpost — open the achievement log. Placed near the chest but well
@@ -875,11 +896,17 @@ export default class GameScene extends Phaser.Scene {
       this.add.image(x, y, 'props_decor', frameAt(i)).setScale(SCALE).setDepth(2);
     });
 
-    // Forest decor — skip any spot within 40px of a seed spawn.
+    // Forest decor (Sprint 10 enrichment) — denser scatter across the whole
+    // forest band. Skip any spot within 40px of a seed spawn.
     const forestSpots = [
+      // shallow forest, near the gate
       [1100, 1100], [1500, 1200], [2000, 1150], [2600, 1050], [450, 1300],
+      // mid forest
       [900, 1700], [1300, 1450], [2300, 1300], [2800, 1500], [500, 1900],
-      [1700, 2000], [2150, 2150], [2550, 1900], [1000, 2350], [1400, 2250]
+      [1900, 1600], [2450, 1700], [700, 1600], [1600, 1900], [2150, 1450],
+      // deep forest
+      [1700, 2000], [2150, 2150], [2550, 1900], [1000, 2350], [1400, 2250],
+      [600, 2200], [2750, 2100], [1850, 2300], [2400, 2300]
     ];
     forestSpots.forEach(([x, y], i) => {
       const tooClose = this.seeds.some(
@@ -888,6 +915,44 @@ export default class GameScene extends Phaser.Scene {
       if (tooClose) return;
       this.add.image(x, y, 'props_decor', frameAt(i + 3)).setScale(SCALE).setDepth(2);
     });
+
+    // Mushroom clusters as a geographic hint near the glowshroom seed spawns
+    // (deep forest, bottom-right). Tight rings of the small-mushroom frames.
+    const glowshroomZones = [[2900, 2250], [2680, 2360]];
+    glowshroomZones.forEach(([cx, cy]) => {
+      for (let i = 0; i < 4; i++) {
+        const a = (i / 4) * Math.PI * 2;
+        const mx = cx + Math.cos(a) * 70;
+        const my = cy + Math.sin(a) * 55;
+        const tooClose = this.seeds.some(
+          (s) => Phaser.Math.Distance.Between(mx, my, s.x, s.y) < 40
+        );
+        if (tooClose) continue;
+        this.add.image(mx, my, 'props_decor', frameAt(i)).setScale(SCALE).setDepth(2);
+      }
+    });
+  }
+
+  // --- Forest ambience (Sprint 10) ------------------------------------------
+  // Sparse drifting motes over the forest, using the Mystic Woods dust particle
+  // sheet. Pure atmosphere — barely noticeable. No-op if the sheet is absent.
+  // (No far/parallax background art shipped in the packs, so 3A is skipped.)
+  createForestAmbience() {
+    if (!this.textures.exists('fx_dust')) return;
+    this.add.particles(0, 0, 'fx_dust', {
+      frame: [0, 1, 2, 3],
+      x: { min: 0, max: WORLD_WIDTH },
+      y: GARDEN_ZONE_HEIGHT,
+      speedY: { min: 15, max: 35 },
+      speedX: { min: -15, max: 15 },
+      angle: { min: 0, max: 360 },
+      rotate: { min: 0, max: 360 },
+      scale: { min: 0.6, max: 1.2 },
+      alpha: { start: 0.6, end: 0 },
+      lifespan: { min: 4000, max: 7000 },
+      frequency: 700, // ~one mote at a time — very sparse
+      quantity: 1
+    }).setDepth(8);
   }
 
   // --- Interaction (F key) --------------------------------------------------
@@ -1261,27 +1326,43 @@ export default class GameScene extends Phaser.Scene {
     this.animateChestOpen(() => this.scene.launch('UpgradeScene'));
   }
 
-  // Lid opens: squash the chest's height briefly before the overlay appears.
-  // Works on the rectangle placeholder; a real chest sprite would tween a lid
-  // frame here instead. Falls through immediately if the chest is missing.
+  // Lid opens before the overlay appears. Real chest sprite → swap to the open
+  // frame with a small pop; placeholder rectangle → the Sprint 9 scaleY squash.
   animateChestOpen(done) {
     if (!this.chest) {
       done();
       return;
     }
-    this.tweens.add({
-      targets: this.chest,
-      scaleY: 0.85,
-      duration: 120,
-      ease: 'Quad.easeOut',
-      onComplete: () => this.time.delayedCall(200, done)
-    });
+    if (this._chestIsSprite) {
+      this.chest.setFrame(CHEST_OPEN_FRAME);
+      this.tweens.add({
+        targets: this.chest,
+        scaleX: 1.65,
+        scaleY: 1.65,
+        duration: 110,
+        yoyo: true,
+        ease: 'Quad.easeOut',
+        onComplete: () => this.time.delayedCall(120, done)
+      });
+    } else {
+      this.tweens.add({
+        targets: this.chest,
+        scaleY: 0.85,
+        duration: 120,
+        ease: 'Quad.easeOut',
+        onComplete: () => this.time.delayedCall(200, done)
+      });
+    }
   }
 
   onUpgradeClosed() {
     this._upgradeOpen = false;
-    // Lid closes: reverse the open tween.
-    if (this.chest) {
+    if (!this.chest) return;
+    // Lid closes: reset to the closed frame, or reverse the squash tween.
+    if (this._chestIsSprite) {
+      this.chest.setScale(1.5);
+      this.chest.setFrame(CHEST_CLOSED_FRAME);
+    } else {
       this.tweens.add({ targets: this.chest, scaleY: 1, duration: 150, ease: 'Quad.easeOut' });
     }
   }

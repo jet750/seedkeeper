@@ -14,11 +14,31 @@ URL: https://cupnooble.itch.io/sprout-lands-ui-pack
 License: [check purchase page]  
 Usage: UI panels, buttons, inventory icons
 
-**Mystic Woods (Paid)**  
+**Mystic Woods (Free pack on disk)**  
 Artist: Game Endeavor  
 URL: https://game-endeavor.itch.io/mystic-woods  
-License: Commercial license purchased  
-Usage: Forest environment tiles, slime enemies, skeleton enemy
+License: Commercial license purchased (free pack present locally; most decor/object
+sheets are "Premium Version" watermarked placeholders)  
+Usage: Forest environment tiles, slime enemies, skeleton enemy. Sprint 10: dust
+particle sheet (`dust_particles_01.png` → `fx_dust.png`) reused for sparse forest
+ambient motes.
+
+**Sprout Lands — Sprint 10 object/UI integration**  
+- `Water well.png` → `obj_well.png` (garden well sprite)  
+- `Tilesets/Building parts/Chest.png` → `obj_chest.png` (workshop chest, 48x48 sheet
+  with open/closed frames; drives the Sprint 9 chest-open animation)  
+- UI Pack `Inventory_Blocks_Spritesheet.png` → `ui_slot_frame.png` (HUD seed-slot frames)
+
+**Sprint 10 TODOs (assets present but not yet wired — kept placeholders to avoid
+regressions):**  
+- Sleep bed sprite — `Basic_Furniture.png` layout ambiguous; placeholder rectangle kept.  
+- Garden fence gate — `Fence gates animation sprites .png` frame geometry unverified.  
+- Upgrade panel / BUY buttons — Sprout Lands dialog box + button sheets exist
+  (`dialog box.png`, `Square Buttons 26x26.png`); reskin deferred to avoid breaking the
+  working purchase layout.  
+- Watering-can HUD icon — `tools and meterials.png`; emoji 💧 kept for now.  
+- Parallax forest background — no far/sky/background art shipped in any pack; skipped.  
+- Anokolisa spider/crawler enemy visual variant — deferred (no mechanic change intended).
 
 **Anokolisa Top-Down RPG Pack**  
 Artist: Anokolisa  

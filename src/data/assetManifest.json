@@ -23,12 +23,31 @@
       "path": "assets/images/props_decor.png",
       "frameWidth": 16,
       "frameHeight": 16
+    },
+    {
+      "key": "obj_chest",
+      "path": "assets/images/obj_chest.png",
+      "frameWidth": 48,
+      "frameHeight": 48
+    },
+    {
+      "key": "ui_slot_frame",
+      "path": "assets/images/ui_slot_frame.png",
+      "frameWidth": 48,
+      "frameHeight": 48
+    },
+    {
+      "key": "fx_dust",
+      "path": "assets/images/fx_dust.png",
+      "frameWidth": 12,
+      "frameHeight": 12
     }
   ],
   "images": [
     { "key": "tileset_garden", "path": "assets/images/tileset_garden.png" },
     { "key": "tileset_forest", "path": "assets/images/tileset_forest.png" },
-    { "key": "tileset_fence", "path": "assets/images/tileset_fence.png" }
+    { "key": "tileset_fence", "path": "assets/images/tileset_fence.png" },
+    { "key": "obj_well", "path": "assets/images/obj_well.png" }
   ],
   "audio": [
     { "key": "bgm_garden", "path": "assets/audio/bgm_garden.mp3" },
