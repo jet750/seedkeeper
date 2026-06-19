@@ -25,7 +25,8 @@
       "wanderSpeed": 25,
       "chaseSpeed": 70,
       "detectRange": 150,
-      "loseRange": 300
+      "loseRange": 300,
+      "bundleDropChance": 0.5
     },
     "skeleton": {
       "hp": 50,
@@ -33,7 +34,8 @@
       "patrolSpeed": 55,
       "chaseSpeed": 110,
       "detectRange": 120,
-      "loseRange": 400
+      "loseRange": 400,
+      "bundleDropChance": 0.7
     },
     "scaling": {
       "densityPerDay": 0.1,

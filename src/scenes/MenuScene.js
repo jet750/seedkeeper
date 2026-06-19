@@ -9,6 +9,16 @@ import Phaser from 'phaser';
 import GameState from '../core/GameState.js';
 import SaveSystem from '../core/SaveSystem.js';
 import { VIRTUAL_WIDTH, VIRTUAL_HEIGHT } from '../core/Constants.js';
+import entitiesData from '../data/entities.json';
+
+const PLANT_ORDER = [
+  'red_mushroom',
+  'blue_flower',
+  'golden_wheat',
+  'green_herb',
+  'glowshroom',
+  'sunflower'
+];
 
 export default class MenuScene extends Phaser.Scene {
   constructor() {
@@ -94,6 +104,24 @@ export default class MenuScene extends Phaser.Scene {
       label.setColor(slot.isEmpty ? '#9B9389' : '#D1CCC6');
     });
     bg.on('pointerup', () => this.startGame(slot.slotIndex));
+
+    // Plant-progress dots for occupied slots (Sprint 7) — one per plant type,
+    // filled in its colour once grown at least once, hollow grey otherwise.
+    if (!slot.isEmpty && slot.plantsGrownEver) {
+      const dotGap = 22;
+      const rowW = (PLANT_ORDER.length - 1) * dotGap;
+      const startX = x - rowW / 2;
+      const dotY = y + height / 2 + 14;
+      PLANT_ORDER.forEach((pt, i) => {
+        const grown = (slot.plantsGrownEver[pt] || 0) >= 1;
+        const color = grown
+          ? parseInt(entitiesData.plants[pt].color.replace('#', ''), 16)
+          : 0x3a3531;
+        this.add
+          .circle(startX + i * dotGap, dotY, 6, color)
+          .setStrokeStyle(1, 0x57514b);
+      });
+    }
   }
 
   formatTime(seconds) {

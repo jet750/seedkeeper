@@ -8,7 +8,8 @@ import Phaser from 'phaser';
 import EventBus from '../core/EventBus.js';
 import { GARDEN_ZONE_HEIGHT } from '../core/Constants.js';
 import Seed from './Seed.js';
-import { getRandomSeedDrop } from '../systems/lootTable.js';
+import PlantBundle from './PlantBundle.js';
+import { getRandomSeedDrop, getRandomBundleDrop } from '../systems/lootTable.js';
 
 const STATE = { WANDER: 'WANDER', CHASE: 'CHASE' };
 const RETARGET_MIN_MS = 2000;
@@ -186,6 +187,7 @@ export default class Slime extends Phaser.Physics.Arcade.Sprite {
       alpha: 0,
       duration: DEATH_FADE_MS,
       onComplete: () => {
+        this.dropBundle();
         this.dropSeeds();
         EventBus.emit('enemy:died', {
           type: this.slimeType,
@@ -196,6 +198,16 @@ export default class Slime extends Phaser.Physics.Arcade.Sprite {
         this.destroy();
       }
     });
+  }
+
+  // Dark slimes have a chance to drop a pre-grown plant bundle (Sprint 7).
+  // Green slimes never do.
+  dropBundle() {
+    if (this.slimeType !== 'dark_slime') return;
+    const threshold = this.scene.gameData.enemies.dark_slime.bundleDropChance || 0;
+    if (Math.random() > threshold) return;
+    const plantType = getRandomBundleDrop();
+    new PlantBundle(this.scene, this.x, this.y, plantType, this.scene.gameData);
   }
 
   dropSeeds() {
