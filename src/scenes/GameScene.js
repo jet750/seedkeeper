@@ -26,6 +26,7 @@ import DaySystem from '../systems/DaySystem.js';
 import CombatSystem from '../systems/CombatSystem.js';
 import ParticleSystem from '../systems/ParticleSystem.js';
 import AudioSystem from '../systems/AudioSystem.js';
+import AchievementSystem from '../systems/AchievementSystem.js';
 import SaveSystem from '../core/SaveSystem.js';
 import entitiesData from '../data/entities.json';
 
@@ -100,6 +101,7 @@ export default class GameScene extends Phaser.Scene {
     this._swapCandidate = null;
     this._upgradeOpen = false;
     this._winOpen = false;
+    this._signpostOpen = false;
     this._busHandlers = [];
 
     // --- Win / New Game+ / run-stats state (Sprint 5) ---
@@ -183,6 +185,10 @@ export default class GameScene extends Phaser.Scene {
     this.daySystem = new DaySystem(this, this.gameData);
     this.daySystem.dayNumber = this.saveData.dayNumber || 1;
 
+    // --- Achievements (Sprint 6) — mounted after daySystem so unlocks can
+    // stamp the current day. Driven purely by EventBus events. ---
+    this.achievementSystem = new AchievementSystem(this, this.saveData);
+
     // --- Apply saved upgrades to the freshly-built player ---
     this.applyAllUpgrades();
 
@@ -227,6 +233,10 @@ export default class GameScene extends Phaser.Scene {
     this.subscribe('win:full', () => this.openWin('full'));
     this.subscribe('win:closed', () => this.closeWin());
     this.subscribe('newGamePlus:activated', () => this.onNewGamePlusActivated());
+
+    // --- Achievements & signpost (Sprint 6) ---
+    this.subscribe('save:requested', () => this.autoSave());
+    this.subscribe('signpost:closed', () => this.onSignpostClosed());
 
     // --- HUD scene ---
     this.scene.launch('UIScene', { dayNumber: this.daySystem.dayNumber });
@@ -477,11 +487,13 @@ export default class GameScene extends Phaser.Scene {
 
       if (this.player.hasEmptySlot()) {
         if (this.player.addSeed(seed.plantType)) {
+          const recovered = seed.isDespawning;
           seed.collect();
           EventBus.emit('seed:collected', {
             plantType: seed.plantType,
             position: { x: seed.x, y: seed.y }
           });
+          if (recovered) EventBus.emit('seed:recovered', { plantType: seed.plantType });
         }
       } else if (d < candidateDist) {
         candidateDist = d;
@@ -506,6 +518,7 @@ export default class GameScene extends Phaser.Scene {
   performSwap(seed) {
     const oldest = this.player.getOldestSeed();
     if (oldest === -1) return;
+    const recovered = seed.isDespawning;
     this.player.dropSeed(oldest); // spawns world seed at feet, frees a slot
     this.player.addSeed(seed.plantType); // fills the freed slot
     seed.collect();
@@ -513,6 +526,7 @@ export default class GameScene extends Phaser.Scene {
       plantType: seed.plantType,
       position: { x: seed.x, y: seed.y }
     });
+    if (recovered) EventBus.emit('seed:recovered', { plantType: seed.plantType });
     this._swapCandidate = null;
     this.swapPrompt.setVisible(false);
   }
@@ -596,6 +610,32 @@ export default class GameScene extends Phaser.Scene {
       })
       .setOrigin(0.5, 0)
       .setDepth(20);
+
+    // Signpost — open the achievement log. Placed near the chest but well
+    // outside its interaction radius so the two never overlap.
+    const SIGN_X = 1480;
+    const SIGN_Y = 560;
+    this.add.rectangle(SIGN_X, SIGN_Y + 14, 8, 40, 0x6e4a22).setDepth(2); // post
+    this.signpost = this.add
+      .rectangle(SIGN_X, SIGN_Y - 8, 48, 30, 0x8a6a3a)
+      .setStrokeStyle(2, 0x5a3a22)
+      .setDepth(2);
+    this.add
+      .text(SIGN_X, SIGN_Y - 36, 'LOG', {
+        fontFamily: '"Courier New", monospace',
+        fontSize: '14px',
+        color: '#EDD49A'
+      })
+      .setOrigin(0.5, 1)
+      .setDepth(20);
+    this.add
+      .text(SIGN_X, SIGN_Y + 38, '[F] Achievements', {
+        fontFamily: '"Courier New", monospace',
+        fontSize: '12px',
+        color: '#9B9389'
+      })
+      .setOrigin(0.5, 0)
+      .setDepth(20);
   }
 
   // --- Interaction (F key) --------------------------------------------------
@@ -631,6 +671,10 @@ export default class GameScene extends Phaser.Scene {
     // deterministic.
     if (this.chest && this.within(this.chest, INTERACT_RANGE)) {
       this.openUpgrade();
+      return;
+    }
+    if (this.signpost && this.within(this.signpost, INTERACT_RANGE)) {
+      this.openSignpost();
       return;
     }
     if (this.sleepObject && this.within(this.sleepObject, INTERACT_RANGE)) {
@@ -985,6 +1029,22 @@ export default class GameScene extends Phaser.Scene {
     this.autoSave();
   }
 
+  // --- Signpost / achievement log (Sprint 6) --------------------------------
+
+  openSignpost() {
+    if (this._signpostOpen) return;
+    this._signpostOpen = true;
+    this.player.setVelocity(0, 0);
+    this.swapPrompt.setVisible(false);
+    EventBus.emit('signpost:opened', {});
+    this.scene.launch('SignpostScene');
+    this.scene.bringToTop('SignpostScene');
+  }
+
+  onSignpostClosed() {
+    this._signpostOpen = false;
+  }
+
   // Called by UpgradeScene. Validates affordability, deducts the cost, applies
   // the effect to the player, bumps the saved level, and broadcasts the change.
   purchaseUpgrade(plantType, track) {
@@ -1079,7 +1139,8 @@ export default class GameScene extends Phaser.Scene {
       plantsGrownEver: { ...this.plantsGrownEver },
       newGamePlus: this.newGamePlus,
       demoWinTriggered: this._demoWinTriggered,
-      settings: { ...this.audioSettings }
+      settings: { ...this.audioSettings },
+      ...(this.achievementSystem ? this.achievementSystem.serialize() : {})
     };
   }
 
@@ -1120,8 +1181,9 @@ export default class GameScene extends Phaser.Scene {
 
   update(time, delta) {
     if (!GameState.is('PLAYING')) return;
-    // Freeze the world (but keep rendering) while the workshop or win overlay is open.
-    if (this._upgradeOpen || this._winOpen) return;
+    // Freeze the world (but keep rendering) while an overlay (workshop, win, or
+    // achievement log) is open.
+    if (this._upgradeOpen || this._winOpen || this._signpostOpen) return;
 
     const dt = delta / 1000;
     this._playtimeMs += delta;

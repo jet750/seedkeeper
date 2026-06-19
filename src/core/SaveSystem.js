@@ -54,6 +54,9 @@ const SaveSystem = {
       newGamePlus: false,
       demoWinTriggered: false,
       settings: { masterVolume: 1.0, sfxVolume: 0.8, musicVolume: 0.5, muted: false },
+      achievements: [],
+      achievementDays: {},
+      stats: { killCount: 0, deathCount: 0, timerExpiredCount: 0, darkSlimeKills: 0 },
       savedAt: 0
     };
   },
@@ -90,6 +93,11 @@ const SaveSystem = {
     if (data.demoWinTriggered === undefined) data.demoWinTriggered = false;
     if (!data.settings) {
       data.settings = { masterVolume: 1.0, sfxVolume: 0.8, musicVolume: 0.5, muted: false };
+    }
+    if (!Array.isArray(data.achievements)) data.achievements = [];
+    if (!data.achievementDays) data.achievementDays = {};
+    if (!data.stats) {
+      data.stats = { killCount: 0, deathCount: 0, timerExpiredCount: 0, darkSlimeKills: 0 };
     }
     // Future: if (data.version < 2) { ... data.version = 2; }
     return data;

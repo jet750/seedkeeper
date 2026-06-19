@@ -11,6 +11,7 @@ import GameScene from './scenes/GameScene.js';
 import UIScene from './scenes/UIScene.js';
 import UpgradeScene from './scenes/UpgradeScene.js';
 import WinScene from './scenes/WinScene.js';
+import SignpostScene from './scenes/SignpostScene.js';
 
 const config = {
   type: Phaser.AUTO,
@@ -31,7 +32,7 @@ const config = {
       debug: false
     }
   },
-  scene: [BootScene, MenuScene, GameScene, UIScene, UpgradeScene, WinScene]
+  scene: [BootScene, MenuScene, GameScene, UIScene, UpgradeScene, WinScene, SignpostScene]
 };
 
 // eslint-disable-next-line no-new

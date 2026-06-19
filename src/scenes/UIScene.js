@@ -38,6 +38,8 @@ export default class UIScene extends Phaser.Scene {
     this.urgentTime = entitiesData.daySystem.urgentTime;
     this._busHandlers = [];
     this._pulseTween = null;
+    this._toastQueue = [];
+    this._toastActive = false;
   }
 
   create() {
@@ -269,6 +271,84 @@ export default class UIScene extends Phaser.Scene {
     this.subscribe('audio:muteChanged', (d) => this.muteIndicator.setVisible(!!d.muted));
     this.subscribe('ngplus:status', (d) => this.ngPlusIndicator.setVisible(!!d.active));
     this.subscribe('newGamePlus:activated', () => this.ngPlusIndicator.setVisible(true));
+
+    // --- Sprint 6 — achievement toasts ---
+    this.subscribe('achievement:unlocked', (d) => this.enqueueToast(d.achievement));
+  }
+
+  // --- Achievement toasts (Sprint 6) ----------------------------------------
+  // Slide in from the top-right, hold 4s, fade out. Concurrent unlocks queue
+  // and play one at a time (max depth 5 — oldest dropped on overflow).
+
+  enqueueToast(achievement) {
+    if (!achievement) return;
+    this._toastQueue.push(achievement);
+    if (this._toastQueue.length > 5) this._toastQueue.shift();
+    if (!this._toastActive) this.showNextToast();
+  }
+
+  showNextToast() {
+    if (this._toastQueue.length === 0) {
+      this._toastActive = false;
+      return;
+    }
+    this._toastActive = true;
+    this.buildToast(this._toastQueue.shift());
+  }
+
+  buildToast(a) {
+    const w = 380;
+    const h = 96;
+    const pad = 24;
+    const y = 160; // below the timer / mute / NG+ indicators
+    const xHidden = VIRTUAL_WIDTH + w;
+    const xShown = VIRTUAL_WIDTH - pad - w / 2;
+
+    const container = this.add.container(xHidden, y).setDepth(300);
+    const bg = this.add
+      .rectangle(0, 0, w, h, 0x221e1b, 0.97)
+      .setStrokeStyle(2, 0xd4a83f);
+    const icon = this.add.text(-w / 2 + 30, 0, a.icon, { fontSize: '34px' }).setOrigin(0.5);
+    const title = this.add
+      .text(-w / 2 + 60, -28, 'ACHIEVEMENT UNLOCKED', {
+        fontFamily: '"Courier New", monospace',
+        fontSize: '12px',
+        fontStyle: 'bold',
+        color: '#D4A83F'
+      })
+      .setOrigin(0, 0.5);
+    const name = this.add
+      .text(-w / 2 + 60, -6, a.name, {
+        fontFamily: '"Courier New", monospace',
+        fontSize: '18px',
+        fontStyle: 'bold',
+        color: '#F5EFE6'
+      })
+      .setOrigin(0, 0.5);
+    const flavor = this.add
+      .text(-w / 2 + 60, 22, `"${a.flavor}"`, {
+        fontFamily: '"Courier New", monospace',
+        fontSize: '12px',
+        color: '#9B9389',
+        wordWrap: { width: w - 80 }
+      })
+      .setOrigin(0, 0.5);
+
+    container.add([bg, icon, title, name, flavor]);
+
+    this.tweens.add({ targets: container, x: xShown, duration: 350, ease: 'Back.easeOut' });
+    this.time.delayedCall(4000, () => {
+      this.tweens.add({
+        targets: container,
+        x: xHidden,
+        alpha: 0,
+        duration: 400,
+        onComplete: () => {
+          container.destroy();
+          this.showNextToast();
+        }
+      });
+    });
   }
 
   refreshBank(bank) {

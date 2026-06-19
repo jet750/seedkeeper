@@ -407,6 +407,7 @@ export default class Player extends Phaser.Physics.Arcade.Sprite {
     this.setVelocity(dir.x * d.dashSpeed, dir.y * d.dashSpeed);
     this.isDashing = true;
     this.dashCooldownRemaining = d.dashCooldown;
+    EventBus.emit('player:dashed', {});
 
     this.scene.time.delayedCall(d.dashDuration, () => {
       this.isDashing = false; // normal movement resumes next frame
