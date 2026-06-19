@@ -9,12 +9,18 @@
     {
       "key": "slime_sheet",
       "path": "assets/images/slime_sheet.png",
-      "frameWidth": 16,
-      "frameHeight": 16
+      "frameWidth": 32,
+      "frameHeight": 32
     },
     {
       "key": "skeleton_sheet",
       "path": "assets/images/skeleton_sheet.png",
+      "frameWidth": 16,
+      "frameHeight": 16
+    },
+    {
+      "key": "props_decor",
+      "path": "assets/images/props_decor.png",
       "frameWidth": 16,
       "frameHeight": 16
     }

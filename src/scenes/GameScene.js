@@ -34,6 +34,7 @@ import entitiesData from '../data/entities.json';
 const INTERACT_RANGE = 48; // px — F-key reach for beds, well, sleep
 const SEED_COLLECT_RANGE = 26; // px — player must be this close to pick up a seed
 const DEMO_WIN_PER_PLANT = 10; // grow this many of EVERY plant type to trigger the demo win
+const PROXIMITY_LABEL_DIST = 80; // px — interactive-structure labels reveal within this range
 const SLEEP_FADE_MS = 500;
 const SWAP_TIMEOUT_DIST = 80; // px — walking this far from a seed cancels the swap picker
 
@@ -198,6 +199,7 @@ export default class GameScene extends Phaser.Scene {
     this.spawnSeeds();
     this.spawnGardenBeds();
     this.spawnGardenStructures();
+    this.spawnProps();
 
     // --- Day timer (extracted system) ---
     this.daySystem = new DaySystem(this, this.gameData);
@@ -327,9 +329,12 @@ export default class GameScene extends Phaser.Scene {
     }
 
     if (this.textures.exists('tileset_forest')) {
+      // Same grass tile as the garden, tinted darker/cooler so the dangerous
+      // forest reads distinctly from the safe garden at a glance.
       this.add
         .tileSprite(0, forestY, WORLD_WIDTH, forestHeight, 'tileset_forest')
         .setOrigin(0, 0)
+        .setTint(0x5f7a5a)
         .setDepth(0);
     } else {
       // TODO(asset): tileset_forest.png — solid fill placeholder in use.
@@ -676,55 +681,30 @@ export default class GameScene extends Phaser.Scene {
   }
 
   spawnGardenStructures() {
+    // Interactive-structure labels are hidden until the player is close (Sprint 8
+    // polish) — registered here and toggled by updateStructureLabels().
+    this._structureLabels = [];
+
     // Well — fill the watering can here.
     this.well = this.add
       .rectangle(1050, 360, 50, 50, 0x3b6ea5)
       .setStrokeStyle(3, 0x244a6e)
       .setDepth(2);
-    this.add
-      .text(1050, 320, 'WELL', {
-        fontFamily: '"Courier New", monospace',
-        fontSize: '14px',
-        color: '#ABC4DE'
-      })
-      .setOrigin(0.5, 1)
-      .setDepth(20);
+    this.addStructureLabel(1050, 360, 1050, 320, 'WELL', '#ABC4DE');
 
     // Sleep bed — advance the day.
     this.sleepObject = this.add
       .rectangle(2150, 360, 72, 48, 0x8a5a3a)
       .setStrokeStyle(3, 0x5a3a22)
       .setDepth(2);
-    this.add
-      .text(2150, 318, 'SLEEP', {
-        fontFamily: '"Courier New", monospace',
-        fontSize: '14px',
-        color: '#EDD49A'
-      })
-      .setOrigin(0.5, 1)
-      .setDepth(20);
+    this.addStructureLabel(2150, 360, 2150, 318, 'SLEEP  [F]', '#EDD49A');
 
     // Workshop chest — open the upgrade overlay.
     this.chest = this.add
       .rectangle(CHEST_X, CHEST_Y, 64, 48, 0x6e4a22)
       .setStrokeStyle(3, 0xd4a83f)
       .setDepth(2);
-    this.add
-      .text(CHEST_X, CHEST_Y - 38, 'WORKSHOP', {
-        fontFamily: '"Courier New", monospace',
-        fontSize: '14px',
-        color: '#EDD49A'
-      })
-      .setOrigin(0.5, 1)
-      .setDepth(20);
-    this.add
-      .text(CHEST_X, CHEST_Y + 34, '[F] Upgrades', {
-        fontFamily: '"Courier New", monospace',
-        fontSize: '12px',
-        color: '#9B9389'
-      })
-      .setOrigin(0.5, 0)
-      .setDepth(20);
+    this.addStructureLabel(CHEST_X, CHEST_Y, CHEST_X, CHEST_Y - 38, 'WORKSHOP  [F]', '#EDD49A');
 
     // Signpost — open the achievement log. Placed near the chest but well
     // outside its interaction radius so the two never overlap.
@@ -735,22 +715,69 @@ export default class GameScene extends Phaser.Scene {
       .rectangle(SIGN_X, SIGN_Y - 8, 48, 30, 0x8a6a3a)
       .setStrokeStyle(2, 0x5a3a22)
       .setDepth(2);
-    this.add
-      .text(SIGN_X, SIGN_Y - 36, 'LOG', {
+    this.addStructureLabel(SIGN_X, SIGN_Y, SIGN_X, SIGN_Y - 36, 'LOG  [F]', '#EDD49A');
+  }
+
+  // Register a structure label (hidden by default; revealed within
+  // PROXIMITY_LABEL_DIST of the structure at (sx, sy)).
+  addStructureLabel(sx, sy, lx, ly, text, color) {
+    const t = this.add
+      .text(lx, ly, text, {
         fontFamily: '"Courier New", monospace',
         fontSize: '14px',
-        color: '#EDD49A'
+        color,
+        backgroundColor: 'rgba(20,18,16,0.7)',
+        padding: { x: 4, y: 2 }
       })
       .setOrigin(0.5, 1)
-      .setDepth(20);
-    this.add
-      .text(SIGN_X, SIGN_Y + 38, '[F] Achievements', {
-        fontFamily: '"Courier New", monospace',
-        fontSize: '12px',
-        color: '#9B9389'
-      })
-      .setOrigin(0.5, 0)
-      .setDepth(20);
+      .setDepth(20)
+      .setVisible(false);
+    this._structureLabels.push({ t, sx, sy });
+  }
+
+  updateStructureLabels() {
+    if (!this._structureLabels) return;
+    for (const { t, sx, sy } of this._structureLabels) {
+      const near =
+        Phaser.Math.Distance.Between(this.player.x, this.player.y, sx, sy) <=
+        PROXIMITY_LABEL_DIST;
+      if (t.visible !== near) t.setVisible(near);
+    }
+  }
+
+  // --- Decorative props (Sprint 8) ------------------------------------------
+  // Static, non-interactive decor scattered across both zones. Drawn above the
+  // ground/fence (depth 2) but below seeds, enemies and the player. No-op until
+  // props_decor.png is present (BootScene only loads files that exist on disk).
+  spawnProps() {
+    if (!this.textures.exists('props_decor')) return;
+    const FRAMES = [0, 1, 2, 3, 4, 5]; // row 0 of the sheet — small mushrooms
+    const SCALE = 2;
+    const frameAt = (i) => FRAMES[i % FRAMES.length];
+
+    // Garden decor — positions kept clear of beds, well, sleep, chest, signpost
+    // and the player's spawn point.
+    const gardenSpots = [
+      [250, 180], [420, 520], [700, 250], [900, 620], [180, 660],
+      [2500, 200], [2750, 480], [2950, 660], [2400, 640], [320, 400]
+    ];
+    gardenSpots.forEach(([x, y], i) => {
+      this.add.image(x, y, 'props_decor', frameAt(i)).setScale(SCALE).setDepth(2);
+    });
+
+    // Forest decor — skip any spot within 40px of a seed spawn.
+    const forestSpots = [
+      [1100, 1100], [1500, 1200], [2000, 1150], [2600, 1050], [450, 1300],
+      [900, 1700], [1300, 1450], [2300, 1300], [2800, 1500], [500, 1900],
+      [1700, 2000], [2150, 2150], [2550, 1900], [1000, 2350], [1400, 2250]
+    ];
+    forestSpots.forEach(([x, y], i) => {
+      const tooClose = this.seeds.some(
+        (s) => Phaser.Math.Distance.Between(x, y, s.x, s.y) < 40
+      );
+      if (tooClose) return;
+      this.add.image(x, y, 'props_decor', frameAt(i + 3)).setScale(SCALE).setDepth(2);
+    });
   }
 
   // --- Interaction (F key) --------------------------------------------------
@@ -1422,6 +1449,7 @@ export default class GameScene extends Phaser.Scene {
     this.enemies.forEach((e) => e.update(dt, this.player));
     this.daySystem.update(delta);
     this.updateSeeds();
+    this.updateStructureLabels();
 
     if (Phaser.Input.Keyboard.JustDown(this.fKey)) {
       this.handleInteract();

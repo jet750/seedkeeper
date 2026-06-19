@@ -28,12 +28,19 @@ Usage: Weapon icons, item sprites
 
 ## Audio
 
-[Add each file as you download it:]
-**[filename].wav/mp3**  
-Creator: [username on freesound or Pixabay]  
-URL: [direct link]  
-License: CC0  
-Usage: [what it's used for in game]
+**Sprout Lands — "Sprout Sorry" SFX pack**
+Artist: Cup Nooble
+URL: https://cupnooble.itch.io/sprout-lands-asset-pack
+License: Per Sprout Lands asset license
+Usage (Sprint 8 — placeholder SFX, easily swapped): seed collect, harvest, upgrade,
+attack swing, enemy hit, player hit, enemy death, sleep, zone gate, watering.
+Mapped to game events in `/src/systems/AudioSystem.js`; source files renamed to the
+manifest keys in `/assets/audio/`.
+
+**Music — TODO**
+bgm_garden / bgm_forest not yet sourced (no music in the current asset packs).
+The crossfade + volume system is wired and will pick the tracks up automatically
+once `bgm_garden.mp3` / `bgm_forest.mp3` are dropped into `/assets/audio/`.
 
 ## Frameworks & Tools
 

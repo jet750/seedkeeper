@@ -65,6 +65,18 @@ export default class UIScene extends Phaser.Scene {
   buildHud() {
     const pad = 32;
 
+    // Semi-transparent dark bars behind the top and bottom HUD clusters so the
+    // text reads clearly over any garden/forest background (Sprint 8 polish).
+    // Created first so every HUD element draws on top of them.
+    this.add
+      .rectangle(0, 0, VIRTUAL_WIDTH, 80, 0x000000, 0.42)
+      .setOrigin(0, 0)
+      .setDepth(-1);
+    this.add
+      .rectangle(0, VIRTUAL_HEIGHT - 80, VIRTUAL_WIDTH, 80, 0x000000, 0.42)
+      .setOrigin(0, 0)
+      .setDepth(-1);
+
     // TOP LEFT — HP bar
     this.hpFill = this.add
       .rectangle(pad, 40, HP_BAR_MAX_WIDTH, HP_BAR_HEIGHT, 0xff3333)
