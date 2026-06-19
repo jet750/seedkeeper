@@ -20,6 +20,11 @@ const RETARGET_MAX_MS = 3000;
 const ANTICIPATE_PULSE_MS = 75;
 const ANTICIPATE_PULSE_SCALE = 1.3;
 
+// Drawn at 2x for zoom visibility. Visual only — the physics body is set up
+// separately below. The anticipation pulse multiplies this so the tell still
+// reads as a grow, not a shrink, against the larger baseline.
+const SPRITE_SCALE = 2;
+
 // Wander personality per type (Sprint 9). Greens hold a heading for a long lazy
 // stretch and occasionally stop; darks move in short twitchy bursts with a pause
 // between each. Falls back to the generic window for any other type.
@@ -53,6 +58,10 @@ export default class Slime extends Phaser.Physics.Arcade.Sprite {
 
     scene.add.existing(this);
     scene.physics.add.existing(this);
+
+    // Visual draw scale for zoom visibility (set before the body below; the
+    // collider radius derives from this.width, the unscaled source size).
+    this.setScale(SPRITE_SCALE);
 
     this.slimeType = slimeType;
 
@@ -182,8 +191,8 @@ export default class Slime extends Phaser.Physics.Arcade.Sprite {
     this.setVelocity(0, 0);
     this.scene.tweens.add({
       targets: this,
-      scaleX: ANTICIPATE_PULSE_SCALE,
-      scaleY: ANTICIPATE_PULSE_SCALE,
+      scaleX: SPRITE_SCALE * ANTICIPATE_PULSE_SCALE,
+      scaleY: SPRITE_SCALE * ANTICIPATE_PULSE_SCALE,
       duration: ANTICIPATE_PULSE_MS,
       yoyo: true,
       onComplete: () => {

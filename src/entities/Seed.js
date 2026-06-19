@@ -14,6 +14,11 @@ const ARM_DELAY_MS = 500; // brief delay before a (re)spawned seed is collectibl
 const RESPAWN_FADE_MS = 1000;
 const MAGNET_ARC_MS = 150; // Sprint 9 — seed arcs to the player before collecting
 
+// World seeds (14px) are drawn 1.5x so they don't read as tiny at the current
+// camera zoom alongside the 2x player/enemies. Exported so callers that want a
+// seed to stand out (e.g. the daily-special gift) can scale relative to it.
+export const SEED_SCALE = 1.5;
+
 function hexToNumber(hex) {
   return parseInt(hex.replace('#', ''), 16);
 }
@@ -32,6 +37,7 @@ export default class Seed extends Phaser.GameObjects.Image {
 
     super(scene, x, y, 'px_seed');
     scene.add.existing(this);
+    this.setScale(SEED_SCALE); // zoom visibility (no physics body — Seed is a plain Image)
 
     this.plantType = plantType;
     this.plantData = gameData.plants[plantType];

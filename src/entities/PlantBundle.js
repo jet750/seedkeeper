@@ -14,6 +14,11 @@ const DESPAWN_MS = 45000;
 const SHRINK_WARNING_MS = 10000; // final stretch shrinks as a warning
 const MAGNET_ARC_MS = 150; // Sprint 9 — bundle arcs to the player before banking
 
+// Drawn 1.5x for zoom visibility. The glow pulse and despawn-shrink tweens below
+// multiply this so they animate relative to the larger baseline instead of
+// snapping back to 1x.
+const SPRITE_SCALE = 1.5;
+
 function hexToNumber(hex) {
   return parseInt(hex.replace('#', ''), 16);
 }
@@ -31,6 +36,7 @@ export default class PlantBundle extends Phaser.Physics.Arcade.Image {
     super(scene, x, y, 'px_bundle');
     scene.add.existing(this);
     scene.physics.add.existing(this);
+    this.setScale(SPRITE_SCALE); // zoom visibility — visual only; body set below
 
     this.plantType = plantType;
     this.plantData = gameData.plants[plantType];
@@ -59,8 +65,8 @@ export default class PlantBundle extends Phaser.Physics.Arcade.Image {
     // Glowing pulse so it reads as special, not a seed.
     this.pulse = scene.tweens.add({
       targets: this,
-      scaleX: { from: 1, to: 1.35 },
-      scaleY: { from: 1, to: 1.35 },
+      scaleX: { from: SPRITE_SCALE, to: SPRITE_SCALE * 1.35 },
+      scaleY: { from: SPRITE_SCALE, to: SPRITE_SCALE * 1.35 },
       duration: 600,
       ease: 'Sine.easeInOut',
       yoyo: true,
@@ -86,8 +92,8 @@ export default class PlantBundle extends Phaser.Physics.Arcade.Image {
     }
     this.scene.tweens.add({
       targets: this,
-      scaleX: 0.2,
-      scaleY: 0.2,
+      scaleX: SPRITE_SCALE * 0.2,
+      scaleY: SPRITE_SCALE * 0.2,
       alpha: 0.5,
       duration: SHRINK_WARNING_MS,
       ease: 'Linear'

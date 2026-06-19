@@ -22,7 +22,7 @@ import {
 import Player from '../entities/Player.js';
 import Slime from '../entities/Slime.js';
 import Skeleton from '../entities/Skeleton.js';
-import Seed from '../entities/Seed.js';
+import Seed, { SEED_SCALE } from '../entities/Seed.js';
 import GardenBed from '../entities/GardenBed.js';
 import WorldDetail from '../entities/WorldDetail.js';
 import Projectile from '../entities/Projectile.js';
@@ -1301,7 +1301,7 @@ export default class GameScene extends Phaser.Scene {
     const plantType = rarePlants[hash % rarePlants.length];
 
     const seed = new Seed(this, x, y, plantType, this.gameData);
-    seed.setScale(1.4);
+    seed.setScale(SEED_SCALE * 1.4); // 1.4x bigger than a normal seed so the daily gift stands out
     seed.isDailySpecial = true;
     seed.nameTagOverride = "✨ Today's Gift";
     this._dailySeed = seed;

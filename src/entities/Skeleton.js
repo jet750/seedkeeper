@@ -24,6 +24,10 @@ const DAMAGE_TEXT_OFFSET = 24;
 const DEATH_FADE_MS = 400;
 const DROP_SCATTER = 30;
 
+// Drawn at 2x for zoom visibility. Visual only — the physics body is set up
+// separately below.
+const SPRITE_SCALE = 2;
+
 export default class Skeleton extends Phaser.Physics.Arcade.Sprite {
   constructor(scene, x, y, waypoints, gameData) {
     const hasSheet = scene.textures.exists('skeleton_sheet');
@@ -38,6 +42,10 @@ export default class Skeleton extends Phaser.Physics.Arcade.Sprite {
 
     scene.add.existing(this);
     scene.physics.add.existing(this);
+
+    // Visual draw scale for zoom visibility (set before the body below; the
+    // collider radius derives from this.width, the unscaled source size).
+    this.setScale(SPRITE_SCALE);
 
     this.enemyType = 'skeleton';
 

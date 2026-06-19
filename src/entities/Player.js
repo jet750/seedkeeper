@@ -19,6 +19,11 @@ const IDLE_BOB_MS = 600;
 const STEP_INTERVAL_BASE_MS = 320; // footstep cadence at base speed
 const STEP_VOLUME = 0.3;
 
+// Drawn at 2x so the Seedkeeper reads clearly at the current camera zoom.
+// Visual scale only — the physics body is configured independently below. The
+// idle squash + stopIdle reset use this as their baseline so the 2x holds.
+const SPRITE_SCALE = 2;
+
 // --- Melee attack (Sprint 3) ---
 const ATTACK_ARC_RADIUS = 50; // px reach of the swing
 const ATTACK_ARC_DEGREES = 90; // cone width, centred on facing
@@ -58,6 +63,11 @@ export default class Player extends Phaser.Physics.Arcade.Sprite {
 
     scene.add.existing(this);
     scene.physics.add.existing(this);
+
+    // Visual draw scale for zoom visibility. Set before the physics body below;
+    // the circle radius is derived from this.width (source frame size, unaffected
+    // by scale), so the collider math is unchanged.
+    this.setScale(SPRITE_SCALE);
 
     // --- Stats (from data, never hardcoded) ---
     const stats = gameData.player;
@@ -289,7 +299,7 @@ export default class Player extends Phaser.Physics.Arcade.Sprite {
     }
     this._idleTween = this.scene.tweens.add({
       targets: this,
-      scaleY: IDLE_BOB_SCALE_Y,
+      scaleY: SPRITE_SCALE * IDLE_BOB_SCALE_Y,
       duration: IDLE_BOB_MS,
       yoyo: true,
       repeat: -1,
@@ -303,7 +313,7 @@ export default class Player extends Phaser.Physics.Arcade.Sprite {
       this._idleTween.stop();
       this._idleTween = null;
     }
-    this.setScale(1);
+    this.setScale(SPRITE_SCALE);
   }
 
   // --- Footsteps (Sprint 9) -------------------------------------------------
@@ -537,7 +547,7 @@ export default class Player extends Phaser.Physics.Arcade.Sprite {
         if (this.hasSheet && this.anims.currentFrame) {
           ghost.setFrame(this.anims.currentFrame.index);
         }
-        ghost.setAlpha(0.35).setTint(DASH_TRAIL_TINT).setDepth(9);
+        ghost.setScale(SPRITE_SCALE).setAlpha(0.35).setTint(DASH_TRAIL_TINT).setDepth(9);
         this.scene.tweens.add({
           targets: ghost,
           alpha: 0,
