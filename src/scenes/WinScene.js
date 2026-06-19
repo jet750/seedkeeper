@@ -1,12 +1,12 @@
 // WinScene.js
 //
-// Victory overlay (Sprint 5), launched on top of a paused GameScene by
-// 'win:demo' (grew one of every plant) or 'win:full' (every upgrade maxed).
-// Receives a stats payload from GameScene. The demo win offers New Game+ via
-// [Continue Playing]; the full win is the true ending. Returning to the menu
-// goes through the GameState machine (PLAYING → WIN, then MenuScene settles
-// WIN → MENU). [Continue Playing] never leaves PLAYING — it just closes this
-// overlay and re-emits a resume signal.
+// Victory overlay (Sprint 5; rebalanced in the death/win fix), launched over a
+// paused GameScene by 'win:demo' (grew 10 of every plant) or 'win:full' (every
+// upgrade maxed). Receives a stats payload from GameScene. The demo win is a
+// mid-game milestone — [Continue Playing] just resumes, with NO New Game+. The
+// full win is the true ending and the ONLY path to New Game+ ([New Game+]
+// activates it and resumes the harder run). Returning to the menu goes through
+// the GameState machine (PLAYING → WIN, then MenuScene settles WIN → MENU).
 
 import Phaser from 'phaser';
 import EventBus from '../core/EventBus.js';
@@ -56,7 +56,9 @@ export default class WinScene extends Phaser.Scene {
     if (isFull) this.playBloom();
 
     // --- Headline ---
-    const headline = isFull ? 'You have become the Seedkeeper.' : 'The forest stirs.';
+    const headline = isFull
+      ? 'You have become the Seedkeeper.'
+      : 'The forest is beginning to remember.';
     this.add
       .text(cx, 120, headline, {
         fontFamily: '"Courier New", monospace',
@@ -76,9 +78,13 @@ export default class WinScene extends Phaser.Scene {
     this.buildStats(cx, isFull ? 340 : 360);
 
     // --- Buttons ---
+    // Demo win is a mid-game milestone: it only says "keep going" (no New Game+).
+    // The full win is the true completion and the ONLY path to New Game+.
     const btnY = VIRTUAL_HEIGHT - 110;
     if (isFull) {
-      this.makeButton(cx - 170, btnY, 300, 56, 'New Game', 0x3a7d44, () => this.toMenu());
+      this.makeButton(cx - 170, btnY, 300, 56, 'New Game+', 0x3a7d44, () =>
+        this.startNewGamePlus()
+      );
       this.makeButton(cx + 170, btnY, 300, 56, 'Return to Menu', 0x36322e, () => this.toMenu());
     } else {
       this.makeButton(cx - 170, btnY, 300, 56, 'Continue Playing', 0x3a7d44, () =>
@@ -203,8 +209,16 @@ export default class WinScene extends Phaser.Scene {
     return rect;
   }
 
-  // Demo win → enable New Game+ and resume the same run.
+  // Demo win → just close and resume the run normally (NO New Game+ here).
   continuePlaying() {
+    EventBus.emit('win:closed', {});
+    this.scene.stop();
+  }
+
+  // Full win → activate New Game+ (the only place it triggers) and resume the
+  // run with the harder NG+ enemy density. newGamePlus:activated persists the
+  // flag, bumps density, lights the HUD indicator, and unlocks the achievement.
+  startNewGamePlus() {
     EventBus.emit('newGamePlus:activated', {});
     EventBus.emit('win:closed', {});
     this.scene.stop();

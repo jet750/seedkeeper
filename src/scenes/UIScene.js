@@ -497,26 +497,43 @@ export default class UIScene extends Phaser.Scene {
     this.closeSwapPicker();
   }
 
-  // --- Death recovery message (Sprint 7) ------------------------------------
+  // --- Death message (Sprint 7 + death-fix) ---------------------------------
+  // Death now costs a day, so the headline is "Day lost." with the seed-recovery
+  // window as a secondary line. Both fade out together with the respawn fade.
 
   showDeathMessage() {
-    const msg = this.add
-      .text(VIRTUAL_WIDTH / 2, VIRTUAL_HEIGHT / 2 - 40, 'Seeds dropped — 30 seconds to recover', {
+    const cx = VIRTUAL_WIDTH / 2;
+    const cy = VIRTUAL_HEIGHT / 2;
+    const headline = this.add
+      .text(cx, cy - 52, 'Day lost.', {
         fontFamily: '"Courier New", monospace',
-        fontSize: '26px',
+        fontSize: '40px',
         fontStyle: 'bold',
-        color: '#ff6b6b',
+        color: '#ff3333',
         backgroundColor: 'rgba(20,18,16,0.85)',
-        padding: { x: 14, y: 8 }
+        padding: { x: 16, y: 8 }
+      })
+      .setOrigin(0.5)
+      .setDepth(260);
+    const sub = this.add
+      .text(cx, cy + 4, 'Seeds dropped — 30 seconds to recover', {
+        fontFamily: '"Courier New", monospace',
+        fontSize: '20px',
+        color: '#EDD49A',
+        backgroundColor: 'rgba(20,18,16,0.85)',
+        padding: { x: 12, y: 6 }
       })
       .setOrigin(0.5)
       .setDepth(260);
     this.tweens.add({
-      targets: msg,
+      targets: [headline, sub],
       alpha: 0,
       delay: 2000,
       duration: 1000,
-      onComplete: () => msg.destroy()
+      onComplete: () => {
+        headline.destroy();
+        sub.destroy();
+      }
     });
   }
 

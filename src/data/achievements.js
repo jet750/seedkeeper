@@ -17,7 +17,7 @@ export const ACHIEVEMENTS = [
   // TIER 2 — Finding Your Footing
   { id: 'mycologist',      tier: 2, icon: '🍄', name: 'Mycologist',         flavor: 'It grows where light does not reach.',         hidden: false },
   { id: 'blue_thumb',      tier: 2, icon: '💧', name: 'Blue Thumb',         flavor: 'Patience measured in petals.',                 hidden: false },
-  { id: 'harvest_begins',  tier: 2, icon: '🌾', name: 'The Harvest Begins', flavor: 'Six seeds. Six paths. One forest to restore.', hidden: false },
+  { id: 'harvest_begins',  tier: 2, icon: '🌾', name: 'The Harvest Begins', flavor: 'Ten of each. The forest stirs at last.', hidden: false },
   { id: 'armed',           tier: 2, icon: '🗡️', name: 'Armed',              flavor: 'A proper blade changes the conversation.',     hidden: false },
   { id: 'layered',         tier: 2, icon: '🛡️', name: 'Layered',            flavor: 'The forest hits harder than you remember.',    hidden: false },
   { id: 'blur',            tier: 2, icon: '💨', name: 'Blur',               flavor: 'Here, then not.',                              hidden: false },

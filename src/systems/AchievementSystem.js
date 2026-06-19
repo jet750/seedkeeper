@@ -23,6 +23,7 @@ const NATURALIST_DAYS = 5;
 const PUSHING_IT_DELAY_MS = 60000;
 const SPEED_RUNNER_WINDOW_MS = 15000;
 const FULL_BLOOM_MIN_BEDS = 8;
+const HARVEST_BEGINS_PER_PLANT = 10; // matches the demo-win threshold (10 of each)
 const MASTER_STAT_LEVEL = 5;
 
 export default class AchievementSystem {
@@ -161,7 +162,9 @@ export default class AchievementSystem {
     if (plantType === 'glowshroom') this.unlock('mycologist');
     if (plantType === 'blue_flower') this.unlock('blue_thumb');
     const grown = this.scene.plantsGrownEver || {};
-    const all = Object.keys(this.scene.gameData.plants).every((pt) => (grown[pt] || 0) >= 1);
+    const all = Object.keys(this.scene.gameData.plants).every(
+      (pt) => (grown[pt] || 0) >= HARVEST_BEGINS_PER_PLANT
+    );
     if (all) this.unlock('harvest_begins');
   }
 

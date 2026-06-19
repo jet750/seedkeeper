@@ -33,6 +33,7 @@ import entitiesData from '../data/entities.json';
 
 const INTERACT_RANGE = 48; // px — F-key reach for beds, well, sleep
 const SEED_COLLECT_RANGE = 26; // px — player must be this close to pick up a seed
+const DEMO_WIN_PER_PLANT = 10; // grow this many of EVERY plant type to trigger the demo win
 const SLEEP_FADE_MS = 500;
 const SWAP_TIMEOUT_DIST = 80; // px — walking this far from a seed cancels the swap picker
 
@@ -1022,7 +1023,7 @@ export default class GameScene extends Phaser.Scene {
   checkDemoWin() {
     if (this._demoWinTriggered) return;
     const allGrown = Object.keys(this.gameData.plants).every(
-      (pt) => (this.plantsGrownEver[pt] || 0) >= 1
+      (pt) => (this.plantsGrownEver[pt] || 0) >= DEMO_WIN_PER_PLANT
     );
     if (!allGrown) return;
     this._demoWinTriggered = true;
@@ -1061,6 +1062,11 @@ export default class GameScene extends Phaser.Scene {
       this.player.seedSlots[i] = null;
     });
     EventBus.emit('inventory:changed', { slots: [...this.player.seedSlots] });
+
+    // Death costs a day (Fix): advance like a forced sleep — increments the day,
+    // ticks garden-bed growth, and resets the day timer. day:advanced is what
+    // UIScene reads to update the day counter after respawn.
+    this.daySystem.advanceDay();
 
     // Respawn sequence: fade out, teleport to the garden centre, fade back in.
     this.cameras.main.fadeOut(RESPAWN_FADE_MS);
