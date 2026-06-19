@@ -12,6 +12,18 @@ import Seed from './Seed.js';
 const FLASH_INTERVAL_MS = 100;
 const INVINCIBILITY_MS = 1000;
 
+// --- Melee attack (Sprint 3) ---
+const ATTACK_ARC_RADIUS = 50; // px reach of the swing
+const ATTACK_ARC_DEGREES = 90; // cone width, centred on facing
+const ATTACK_VISUAL_MS = 150; // how long the swing graphic stays on screen
+const ATTACK_ARC_ALPHA = 0.35;
+const DIRECTION_ANGLES = {
+  right: 0,
+  down: Math.PI / 2,
+  left: Math.PI,
+  up: -Math.PI / 2
+};
+
 export default class Player extends Phaser.Physics.Arcade.Sprite {
   constructor(scene, x, y, gameData) {
     const hasSheet = scene.textures.exists('player_sheet');
@@ -31,6 +43,13 @@ export default class Player extends Phaser.Physics.Arcade.Sprite {
     this.maxHP = stats.maxHP;
     this.speed = stats.speed;
     this.currentHP = this.maxHP;
+
+    // --- Combat (Sprint 3) ---
+    this.attackDamage = stats.attackDamage;
+    this.attackCooldown = stats.attackCooldown; // ms between swings
+    this.attackCooldownRemaining = 0;
+    this.equippedWeapon = null; // bare hands; weapon slot wired up in Sprint 4
+    this.statBonuses = { attackMult: 0 }; // stays 0 until Sprint 4 upgrades
 
     // --- Inventory (Sprint 2) ---
     this.gameData = gameData;
@@ -68,7 +87,8 @@ export default class Player extends Phaser.Physics.Arcade.Sprite {
       upArrow: Phaser.Input.Keyboard.KeyCodes.UP,
       downArrow: Phaser.Input.Keyboard.KeyCodes.DOWN,
       leftArrow: Phaser.Input.Keyboard.KeyCodes.LEFT,
-      rightArrow: Phaser.Input.Keyboard.KeyCodes.RIGHT
+      rightArrow: Phaser.Input.Keyboard.KeyCodes.RIGHT,
+      attack: Phaser.Input.Keyboard.KeyCodes.SPACE
     });
 
     // --- Damage requests arrive via EventBus (slimes never call us directly) ---
@@ -114,6 +134,14 @@ export default class Player extends Phaser.Physics.Arcade.Sprite {
       return;
     }
 
+    // Tick the melee cooldown down (dt is seconds; cooldown is tracked in ms).
+    if (this.attackCooldownRemaining > 0) {
+      this.attackCooldownRemaining = Math.max(0, this.attackCooldownRemaining - dt * 1000);
+    }
+    if (Phaser.Input.Keyboard.JustDown(this.keys.attack)) {
+      this.attack();
+    }
+
     // dt is provided for frame-rate independence; Arcade Physics integrates
     // velocity * dt internally each step, so we drive movement via velocity.
     let dx = 0;
@@ -155,6 +183,40 @@ export default class Player extends Phaser.Physics.Arcade.Sprite {
 
   playIdle() {
     if (this.hasSheet) this.anims.play(`idle_${this.facing}`, true);
+  }
+
+  // --- Melee attack (Sprint 3) ----------------------------------------------
+
+  attack() {
+    if (this.attackCooldownRemaining > 0) return;
+    this.attackCooldownRemaining = this.attackCooldown;
+
+    // CombatSystem resolves the actual hits from this event — Player never
+    // touches enemies directly.
+    EventBus.emit('player:attacked', {
+      direction: this.facing,
+      damage: this.getAttackDamage(),
+      position: { x: this.x, y: this.y },
+      arcRadius: ATTACK_ARC_RADIUS
+    });
+
+    this.showAttackArc();
+  }
+
+  getAttackDamage() {
+    return this.attackDamage * (1 + this.statBonuses.attackMult);
+  }
+
+  // Brief semi-transparent swing wedge in the facing direction.
+  showAttackArc() {
+    const facingAngle = DIRECTION_ANGLES[this.facing] ?? 0;
+    const half = Phaser.Math.DegToRad(ATTACK_ARC_DEGREES / 2);
+    const g = this.scene.add.graphics();
+    g.fillStyle(0xffffff, ATTACK_ARC_ALPHA);
+    g.slice(this.x, this.y, ATTACK_ARC_RADIUS, facingAngle - half, facingAngle + half, false);
+    g.fillPath();
+    g.setDepth(11);
+    this.scene.time.delayedCall(ATTACK_VISUAL_MS, () => g.destroy());
   }
 
   // --- Zone tracking --------------------------------------------------------
@@ -286,6 +348,38 @@ export default class Player extends Phaser.Physics.Arcade.Sprite {
     this.clearTint();
     this.setTint(0x666666);
     EventBus.emit('player:died', {});
+  }
+
+  // Brought back to life by GameScene after the death/respawn sequence. Clears
+  // every death/invincibility artefact and refills HP. (Sprint 3 — death is no
+  // longer game-over; the player respawns at the garden centre.)
+  respawn(x, y) {
+    this.isDead = false;
+    this.invincible = false;
+    if (this._flashEvent) {
+      this._flashEvent.remove(false);
+      this._flashEvent = null;
+    }
+    if (this._invEndEvent) {
+      this._invEndEvent.remove(false);
+      this._invEndEvent = null;
+    }
+    this.clearTint();
+    this.setPosition(x, y);
+    this.currentHP = this.maxHP;
+    this.attackCooldownRemaining = 0;
+    this.body.enable = true;
+    this.setVelocity(0, 0);
+
+    EventBus.emit('player:healed', {
+      amount: this.maxHP,
+      currentHP: this.maxHP,
+      maxHP: this.maxHP
+    });
+
+    // Recompute and broadcast the zone from the respawn point (garden = safe).
+    this.currentZone = this.computeZone();
+    EventBus.emit('player:zoneChanged', { zone: this.currentZone });
   }
 
   cleanup() {

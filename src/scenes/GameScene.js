@@ -18,14 +18,35 @@ import {
 } from '../core/Constants.js';
 import Player from '../entities/Player.js';
 import Slime from '../entities/Slime.js';
+import Skeleton from '../entities/Skeleton.js';
 import Seed from '../entities/Seed.js';
 import GardenBed from '../entities/GardenBed.js';
 import DaySystem from '../systems/DaySystem.js';
+import CombatSystem from '../systems/CombatSystem.js';
+import ParticleSystem from '../systems/ParticleSystem.js';
 import entitiesData from '../data/entities.json';
 
 const INTERACT_RANGE = 48; // px — F-key reach for beds, well, sleep
 const SEED_COLLECT_RANGE = 26; // px — player must be this close to pick up a seed
 const SLEEP_FADE_MS = 500;
+
+// --- Combat & enemy spawning (Sprint 3) ---
+const DARK_SLIME_TINT = 0x8833cc;
+const MAX_DARK_SLIMES = 4;
+const ENEMY_SPAWN_MARGIN = 80; // keep spawns off the world edges
+const DEEP_FOREST_THRESHOLD = 0.7; // skeletons spawn below this fraction of WORLD_HEIGHT
+const SKELETON_PATROL_SPREAD = 220; // px between a skeleton's patrol waypoints
+const DEATH_DROP_SCATTER = 40; // spread of seeds dropped on player death
+const SEED_RECOVERY_MS = 30000; // recovery window before death-dropped seeds vanish
+const RESPAWN_FADE_MS = 500;
+const RESPAWN_DELAY_MS = 1500;
+const SHAKE_DURATION_MS = 250;
+const SHAKE_INTENSITY = 0.004;
+const ENEMY_DEATH_COLORS = {
+  green_slime: '#8AB87E',
+  dark_slime: '#8833cc',
+  skeleton: '#E8E2D0'
+};
 
 export default class GameScene extends Phaser.Scene {
   constructor() {
@@ -35,11 +56,15 @@ export default class GameScene extends Phaser.Scene {
   create() {
     this.gameData = entitiesData;
     this.currentZone = 'garden';
-    this._gameOverScheduled = false;
+    this._respawning = false;
     this._postTimerApplied = false;
     this._sleeping = false;
     this._swapCandidate = null;
     this._busHandlers = [];
+
+    // Single source of truth for all active enemies (slimes + skeletons). The
+    // CombatSystem and enemy-scaling logic both read this array.
+    this.enemies = [];
 
     this.ensurePlaceholderTextures();
     this.buildWorld();
@@ -67,6 +92,22 @@ export default class GameScene extends Phaser.Scene {
       null,
       this
     );
+
+    // --- Skeletons (spawn from day 5; group + overlap set up empty now so
+    // dynamically-added skeletons damage the player on contact) ---
+    this.skeletonGroup = this.physics.add.group();
+    this.physics.add.collider(this.skeletonGroup, this.slimeGroup);
+    this.physics.add.overlap(
+      this.player,
+      this.skeletonGroup,
+      (player, skeleton) => skeleton.touchPlayer(),
+      null,
+      this
+    );
+
+    // --- Combat systems ---
+    this.combatSystem = new CombatSystem(this);
+    this.particleSystem = new ParticleSystem(this);
 
     // --- Sprint 2 world objects ---
     this.seeds = [];
@@ -107,9 +148,11 @@ export default class GameScene extends Phaser.Scene {
     // --- EventBus wiring ---
     this.subscribe('player:zoneChanged', (d) => this.onZoneChanged(d));
     this.subscribe('player:died', () => this.onPlayerDied());
+    this.subscribe('player:damaged', (d) => this.onPlayerDamaged(d));
     this.subscribe('day:timerExpired', () => this.onTimerExpired());
-    this.subscribe('day:advanced', () => this.onDayAdvanced());
+    this.subscribe('day:advanced', (d) => this.onDayAdvanced(d));
     this.subscribe('plant:harvested', (d) => this.onPlantHarvested(d));
+    this.subscribe('enemy:died', (d) => this.onEnemyDied(d));
 
     // --- HUD scene ---
     this.scene.launch('UIScene', { dayNumber: this.daySystem.dayNumber });
@@ -206,7 +249,6 @@ export default class GameScene extends Phaser.Scene {
 
   spawnSlimes() {
     this.slimeGroup = this.physics.add.group();
-    this.slimes = [];
 
     const spots = [
       { x: 620, y: 1120 },
@@ -215,11 +257,57 @@ export default class GameScene extends Phaser.Scene {
       { x: 1040, y: 1900 },
       { x: 2240, y: 2040 }
     ];
-    spots.forEach((p) => {
-      const slime = new Slime(this, p.x, p.y, 'green_slime', this.gameData);
-      this.slimeGroup.add(slime);
-      this.slimes.push(slime);
-    });
+    spots.forEach((p) => this.spawnSlime('green_slime', p.x, p.y));
+  }
+
+  // Spawn a single slime, optionally at a given position (random forest spot
+  // otherwise). Registers it in both the physics group and the unified enemies
+  // array. Used by the initial placement and by day-based dark-slime scaling.
+  spawnSlime(type, x, y) {
+    if (x === undefined || y === undefined) {
+      const pos = this.randomForestPosition();
+      x = pos.x;
+      y = pos.y;
+    }
+    const slime = new Slime(this, x, y, type, this.gameData);
+    if (type === 'dark_slime') {
+      slime.setTint(DARK_SLIME_TINT);
+      slime._baseTint = DARK_SLIME_TINT; // restored after each white hit-flash
+    }
+    this.slimeGroup.add(slime);
+    this.enemies.push(slime);
+    return slime;
+  }
+
+  spawnSkeleton() {
+    const margin = ENEMY_SPAWN_MARGIN;
+    const deepMinY = Math.ceil(WORLD_HEIGHT * DEEP_FOREST_THRESHOLD);
+    const baseX = Phaser.Math.Between(margin, WORLD_WIDTH - margin);
+    const baseY = Phaser.Math.Between(deepMinY, WORLD_HEIGHT - margin);
+
+    // Three patrol waypoints fanned around the spawn point, clamped to the deep
+    // forest band and world bounds.
+    const clampX = (v) => Phaser.Math.Clamp(v, margin, WORLD_WIDTH - margin);
+    const clampY = (v) => Phaser.Math.Clamp(v, deepMinY, WORLD_HEIGHT - margin);
+    const s = SKELETON_PATROL_SPREAD;
+    const waypoints = [
+      { x: clampX(baseX - s), y: clampY(baseY) },
+      { x: clampX(baseX + s), y: clampY(baseY - s / 2) },
+      { x: clampX(baseX), y: clampY(baseY + s / 2) }
+    ];
+
+    const skeleton = new Skeleton(this, baseX, baseY, waypoints, this.gameData);
+    this.skeletonGroup.add(skeleton);
+    this.enemies.push(skeleton);
+    return skeleton;
+  }
+
+  randomForestPosition() {
+    const margin = ENEMY_SPAWN_MARGIN;
+    return {
+      x: Phaser.Math.Between(margin, WORLD_WIDTH - margin),
+      y: Phaser.Math.Between(GARDEN_ZONE_HEIGHT + margin, WORLD_HEIGHT - margin)
+    };
   }
 
   // --- Seeds ----------------------------------------------------------------
@@ -522,14 +610,43 @@ export default class GameScene extends Phaser.Scene {
     if (this._postTimerApplied) return;
     this._postTimerApplied = true;
     const { postTimerSpeedMult, postTimerDamageMult } = this.gameData.daySystem;
-    this.slimes.forEach((s) => s.applyPostTimer(postTimerSpeedMult, postTimerDamageMult));
+    // Only slimes carry the day-timer buff (skeletons skip applyPostTimer).
+    this.enemies.forEach((e) => {
+      if (e.applyPostTimer) e.applyPostTimer(postTimerSpeedMult, postTimerDamageMult);
+    });
   }
 
-  onDayAdvanced() {
+  onDayAdvanced(d) {
     // A fresh day clears the post-timer slime buffs.
     if (this._postTimerApplied) {
-      this.slimes.forEach((s) => s.resetPostTimer());
+      this.enemies.forEach((e) => {
+        if (e.resetPostTimer) e.resetPostTimer();
+      });
       this._postTimerApplied = false;
+    }
+    this.handleEnemyScaling(d ? d.dayNumber : this.daySystem.dayNumber);
+  }
+
+  // Day-based enemy scaling: dark slimes ramp in from day 3 (one more every two
+  // days, capped); a single skeleton patrols the deep forest from day 5 on.
+  handleEnemyScaling(dayNumber) {
+    const scaling = this.gameData.enemies.scaling;
+
+    if (dayNumber >= scaling.startDay_darkSlime) {
+      const wantCount = Math.min(
+        MAX_DARK_SLIMES,
+        Math.floor((dayNumber - scaling.startDay_darkSlime) / 2) + 1
+      );
+      const have = this.enemies.filter((e) => e.slimeType === 'dark_slime').length;
+      for (let i = 0; i < wantCount - have; i++) {
+        this.spawnSlime('dark_slime');
+      }
+    }
+
+    if (dayNumber >= scaling.startDay_skeleton) {
+      if (!this.enemies.some((e) => e instanceof Skeleton)) {
+        this.spawnSkeleton();
+      }
     }
   }
 
@@ -540,13 +657,40 @@ export default class GameScene extends Phaser.Scene {
   }
 
   onPlayerDied() {
-    if (this._gameOverScheduled) return;
-    this._gameOverScheduled = true;
-    this.time.delayedCall(1500, () => {
-      GameState.transition('GAME_OVER');
-      this.scene.stop('UIScene');
-      this.scene.start('MenuScene');
+    if (this._respawning) return;
+    this._respawning = true;
+
+    // Drop every carried seed at the death position with a recovery timer — the
+    // plant bank is untouched, so only seeds in hand are at risk.
+    this.player.seedSlots.forEach((plantType, i) => {
+      if (!plantType) return;
+      const sx = this.player.x + (Math.random() - 0.5) * DEATH_DROP_SCATTER;
+      const sy = this.player.y + (Math.random() - 0.5) * DEATH_DROP_SCATTER;
+      const seed = new Seed(this, sx, sy, plantType, this.gameData);
+      seed.setDespawnTimer(SEED_RECOVERY_MS);
+      this.player.seedSlots[i] = null;
     });
+    EventBus.emit('inventory:changed', { slots: [...this.player.seedSlots] });
+
+    // Respawn sequence: fade out, teleport to the garden centre, fade back in.
+    this.cameras.main.fadeOut(RESPAWN_FADE_MS);
+    this.time.delayedCall(RESPAWN_DELAY_MS, () => {
+      this.player.respawn(WORLD_WIDTH / 2, GARDEN_ZONE_HEIGHT / 2);
+      this.cameras.main.fadeIn(RESPAWN_FADE_MS);
+      this._respawning = false;
+    });
+  }
+
+  onPlayerDamaged(d) {
+    // Only react to applied-damage notifications (which carry currentHP), not
+    // the raw per-frame damage requests slimes emit on overlap.
+    if (d.currentHP === undefined) return;
+    this.cameras.main.shake(SHAKE_DURATION_MS, SHAKE_INTENSITY);
+  }
+
+  onEnemyDied({ type, position }) {
+    const color = ENEMY_DEATH_COLORS[type] || '#ffffff';
+    this.particleSystem.showDeathBurst(position.x, position.y, color);
   }
 
   // --- Main loop ------------------------------------------------------------
@@ -556,7 +700,7 @@ export default class GameScene extends Phaser.Scene {
     const dt = delta / 1000;
 
     this.player.update(dt);
-    this.slimes.forEach((s) => s.update(dt, this.player));
+    this.enemies.forEach((e) => e.update(dt, this.player));
     this.daySystem.update(delta);
     this.updateSeeds();
 

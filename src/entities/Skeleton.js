@@ -1,0 +1,217 @@
+// Skeleton.js
+//
+// Deep-forest patrolling enemy introduced in Sprint 3. Walks a fixed 3-waypoint
+// loop until the player enters detectRange, chases until the player escapes
+// loseRange, then navigates back to the nearest waypoint and resumes patrol.
+// Tankier and harder-hitting than slimes; drops a guaranteed Glowshroom plus one
+// weighted-random seed on death. Damage to the player and death notifications go
+// out via EventBus only — the skeleton never calls Player methods directly.
+
+import Phaser from 'phaser';
+import EventBus from '../core/EventBus.js';
+import { GARDEN_ZONE_HEIGHT } from '../core/Constants.js';
+import Seed from './Seed.js';
+import { getRandomSeedDrop } from '../systems/lootTable.js';
+
+const STATE = { PATROL: 'PATROL', CHASE: 'CHASE' };
+const WAYPOINT_REACHED = 12; // px — close enough to advance to the next waypoint
+const HIT_FLASH_MS = 100;
+const KNOCKBACK_VELOCITY = 160; // heavier than a slime — takes less of a shove
+const KNOCKBACK_MS = 250;
+const DAMAGE_TEXT_OFFSET = 24;
+const DEATH_FADE_MS = 400;
+const DROP_SCATTER = 30;
+
+export default class Skeleton extends Phaser.Physics.Arcade.Sprite {
+  constructor(scene, x, y, waypoints, gameData) {
+    const hasSheet = scene.textures.exists('skeleton_sheet');
+    if (!hasSheet) ensurePlaceholderTexture(scene);
+    super(scene, x, y, hasSheet ? 'skeleton_sheet' : 'px_skeleton');
+
+    this.hasSheet = hasSheet;
+    if (!hasSheet) {
+      // TODO(asset): drop skeleton_sheet.png (16x16 frames) into /assets/images
+      // for an animated skeleton. Bone-colored placeholder in use until then.
+    }
+
+    scene.add.existing(this);
+    scene.physics.add.existing(this);
+
+    this.enemyType = 'skeleton';
+
+    // --- Stats (from data, never hardcoded) ---
+    const stats = gameData.enemies.skeleton;
+    this.hp = stats.hp;
+    this.maxHP = stats.hp;
+    this.damage = stats.damage;
+    this.patrolSpeed = stats.patrolSpeed;
+    this.chaseSpeed = stats.chaseSpeed;
+    this.detectRange = stats.detectRange;
+    this.loseRange = stats.loseRange;
+
+    // --- Combat state ---
+    this.isDead = false;
+    this._knockbackUntil = 0;
+
+    // --- Physics: circular collider centred in the sprite ---
+    this.setCollideWorldBounds(true);
+    const radius = this.width * 0.42;
+    this.body.setCircle(radius, this.width / 2 - radius, this.height / 2 - radius);
+    this.setDepth(9);
+
+    // --- Patrol route ---
+    this.waypoints = waypoints && waypoints.length ? waypoints : [{ x, y }];
+    this._wpIndex = 0;
+    this.state = STATE.PATROL;
+  }
+
+  update(dt, player) {
+    if (this.isDead) return;
+
+    // While being knocked back, let the impulse play out — skip AI steering so
+    // the velocity we set in takeDamage() is not immediately overwritten.
+    if (this.scene.time.now < this._knockbackUntil) {
+      this.confineToForest();
+      return;
+    }
+
+    const dist = Phaser.Math.Distance.Between(this.x, this.y, player.x, player.y);
+
+    // --- Transitions ---
+    if (this.state === STATE.PATROL && dist < this.detectRange) {
+      this.state = STATE.CHASE;
+    } else if (this.state === STATE.CHASE && dist > this.loseRange) {
+      this.state = STATE.PATROL;
+      this._wpIndex = this.nearestWaypointIndex();
+    }
+
+    // --- Behaviour ---
+    if (this.state === STATE.CHASE) {
+      this.moveToward(player.x, player.y, this.chaseSpeed);
+    } else {
+      this.patrol();
+    }
+
+    this.confineToForest();
+  }
+
+  patrol() {
+    const wp = this.waypoints[this._wpIndex];
+    const d = Phaser.Math.Distance.Between(this.x, this.y, wp.x, wp.y);
+    if (d <= WAYPOINT_REACHED) {
+      this._wpIndex = (this._wpIndex + 1) % this.waypoints.length;
+      return;
+    }
+    this.moveToward(wp.x, wp.y, this.patrolSpeed);
+  }
+
+  moveToward(tx, ty, speed) {
+    const angle = Math.atan2(ty - this.y, tx - this.x);
+    this.setVelocity(Math.cos(angle) * speed, Math.sin(angle) * speed);
+  }
+
+  nearestWaypointIndex() {
+    let best = 0;
+    let bestDist = Infinity;
+    this.waypoints.forEach((wp, i) => {
+      const d = Phaser.Math.Distance.Between(this.x, this.y, wp.x, wp.y);
+      if (d < bestDist) {
+        bestDist = d;
+        best = i;
+      }
+    });
+    return best;
+  }
+
+  // Keep skeletons out of the safe garden — they stop at the fence line.
+  confineToForest() {
+    const minY = GARDEN_ZONE_HEIGHT + this.body.height / 2;
+    if (this.y < minY) {
+      this.y = minY;
+      if (this.body.velocity.y < 0) this.setVelocityY(Math.abs(this.body.velocity.y));
+    }
+  }
+
+  // Requested by GameScene on body overlap. Player owns the invincibility
+  // window, so emitting every overlap frame is safe.
+  touchPlayer() {
+    EventBus.emit('player:damaged', { amount: this.damage });
+  }
+
+  // --- Combat ---------------------------------------------------------------
+
+  takeDamage(amount, sourcePosition) {
+    if (this.isDead) return;
+    this.hp -= amount;
+
+    // Hit flash.
+    this.setTint(0xffffff);
+    this.scene.time.delayedCall(HIT_FLASH_MS, () => {
+      if (!this.isDead) this.clearTint();
+    });
+
+    // Knockback away from the hit source.
+    const angle = Phaser.Math.Angle.Between(sourcePosition.x, sourcePosition.y, this.x, this.y);
+    this.setVelocity(Math.cos(angle) * KNOCKBACK_VELOCITY, Math.sin(angle) * KNOCKBACK_VELOCITY);
+    this._knockbackUntil = this.scene.time.now + KNOCKBACK_MS;
+
+    // Float-up damage number.
+    EventBus.emit('ui:floatText', {
+      x: this.x,
+      y: this.y - DAMAGE_TEXT_OFFSET,
+      text: `-${amount}`,
+      color: '#ff6666'
+    });
+
+    if (this.hp <= 0) this.die();
+  }
+
+  die() {
+    if (this.isDead) return;
+    this.isDead = true;
+    this.body.enable = false;
+    this.setVelocity(0, 0);
+
+    this.scene.tweens.add({
+      targets: this,
+      alpha: 0,
+      duration: DEATH_FADE_MS,
+      onComplete: () => {
+        this.dropSeeds();
+        EventBus.emit('enemy:died', { type: 'skeleton', position: { x: this.x, y: this.y } });
+        const idx = this.scene.enemies.indexOf(this);
+        if (idx > -1) this.scene.enemies.splice(idx, 1);
+        this.destroy();
+      }
+    });
+  }
+
+  dropSeeds() {
+    // Guaranteed Glowshroom + one weighted-random seed.
+    const drops = ['glowshroom', getRandomSeedDrop()];
+    drops.forEach((plantType) => {
+      new Seed(
+        this.scene,
+        this.x + (Math.random() - 0.5) * DROP_SCATTER,
+        this.y + (Math.random() - 0.5) * DROP_SCATTER,
+        plantType,
+        this.scene.gameData
+      );
+    });
+  }
+}
+
+// Bone-colored 16x16 placeholder, mirroring the slime placeholders. Generated
+// defensively so a Skeleton can exist before BootScene art lands.
+function ensurePlaceholderTexture(scene) {
+  if (scene.textures.exists('px_skeleton')) return;
+  const g = scene.make.graphics({ x: 0, y: 0, add: false });
+  g.fillStyle(0xe8e2d0, 1); // bone white
+  g.fillRect(4, 1, 8, 7); // skull
+  g.fillRect(6, 8, 4, 6); // spine
+  g.fillRect(3, 9, 10, 2); // arms / ribs
+  g.lineStyle(1, 0x6b6354, 1);
+  g.strokeRect(4, 1, 8, 7);
+  g.generateTexture('px_skeleton', 16, 16);
+  g.destroy();
+}

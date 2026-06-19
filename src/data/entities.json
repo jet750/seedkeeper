@@ -23,6 +23,19 @@
       "chaseSpeed": 70,
       "detectRange": 150,
       "loseRange": 300
+    },
+    "skeleton": {
+      "hp": 50,
+      "damage": 20,
+      "patrolSpeed": 55,
+      "chaseSpeed": 110,
+      "detectRange": 120,
+      "loseRange": 400
+    },
+    "scaling": {
+      "densityPerDay": 0.1,
+      "startDay_darkSlime": 3,
+      "startDay_skeleton": 5
     }
   },
   "daySystem": {

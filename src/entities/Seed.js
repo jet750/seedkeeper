@@ -39,6 +39,11 @@ export default class Seed extends Phaser.GameObjects.Image {
     this.collectible = false;
     this.baseY = y;
 
+    // Despawning seeds (dropped on player death) shrink away over a recovery
+    // window and are gone for good — they do not respawn like world seeds.
+    this.isDespawning = false;
+    this._despawnTween = null;
+
     this.setTint(hexToNumber(this.plantData.color));
     this.setDepth(6);
 
@@ -81,6 +86,20 @@ export default class Seed extends Phaser.GameObjects.Image {
     });
   }
 
+  // Mark this seed as a temporary death-drop: it visibly shrinks to nothing over
+  // `duration` ms (the recovery window) and then destroys itself. It stays
+  // collectible the whole time so the player can race back to reclaim it.
+  setDespawnTimer(duration) {
+    this.isDespawning = true;
+    this._despawnTween = this.scene.tweens.add({
+      targets: this,
+      scaleX: 0,
+      scaleY: 0,
+      duration,
+      onComplete: () => this.destroy()
+    });
+  }
+
   // Called each frame by GameScene to toggle the proximity name tag.
   updateProximity(player) {
     if (this.collected || !this.active) {
@@ -98,6 +117,15 @@ export default class Seed extends Phaser.GameObjects.Image {
     this.setVisible(false);
     this.nameTag.setVisible(false);
     if (this.bobTween) this.bobTween.pause();
+
+    // A recovered death-drop is consumed permanently — cancel its shrink tween
+    // and destroy rather than scheduling a respawn.
+    if (this.isDespawning) {
+      if (this._despawnTween) this._despawnTween.remove();
+      this.destroy();
+      return;
+    }
+
     this.scene.time.delayedCall(this.respawnDelay, () => this.respawn());
   }
 

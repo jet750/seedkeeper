@@ -7,10 +7,22 @@
 import Phaser from 'phaser';
 import EventBus from '../core/EventBus.js';
 import { GARDEN_ZONE_HEIGHT } from '../core/Constants.js';
+import Seed from './Seed.js';
+import { getRandomSeedDrop } from '../systems/lootTable.js';
 
 const STATE = { WANDER: 'WANDER', CHASE: 'CHASE' };
 const RETARGET_MIN_MS = 2000;
 const RETARGET_MAX_MS = 3000;
+
+// --- Combat (Sprint 3) ---
+const HIT_FLASH_MS = 100;
+const KNOCKBACK_VELOCITY = 200;
+const KNOCKBACK_MS = 300;
+const DAMAGE_TEXT_OFFSET = 20;
+const DEATH_FADE_MS = 400;
+const DROP_SCATTER = 30;
+const GREEN_SLIME_DROPS = 1;
+const DARK_SLIME_DROPS = 2;
 
 export default class Slime extends Phaser.Physics.Arcade.Sprite {
   constructor(scene, x, y, slimeType, gameData) {
@@ -32,7 +44,8 @@ export default class Slime extends Phaser.Physics.Arcade.Sprite {
 
     // --- Stats (from data) ---
     const stats = gameData.enemies[slimeType];
-    this.hp = stats.hp; // tracked; no kill mechanic until Sprint 3
+    this.hp = stats.hp;
+    this.maxHP = stats.hp;
     this.baseDamage = stats.damage;
     this.baseChaseSpeed = stats.chaseSpeed;
     this.wanderSpeed = stats.wanderSpeed;
@@ -58,6 +71,13 @@ export default class Slime extends Phaser.Physics.Arcade.Sprite {
     this.state = STATE.WANDER;
     this._retargetTimer = 0;
     this.pickNewWanderDirection();
+
+    // --- Combat state ---
+    this.isDead = false;
+    this._knockbackUntil = 0;
+    // Tint to restore after a white hit-flash. Dark slimes get a purple tint set
+    // by GameScene; green slimes have no base tint (null → clearTint).
+    this._baseTint = null;
   }
 
   pickNewWanderDirection() {
@@ -69,6 +89,15 @@ export default class Slime extends Phaser.Physics.Arcade.Sprite {
   }
 
   update(dt, player) {
+    if (this.isDead) return;
+
+    // While being knocked back, let the impulse play out — skip steering so the
+    // velocity set in takeDamage() is not immediately overwritten.
+    if (this.scene.time.now < this._knockbackUntil) {
+      this.confineToForest();
+      return;
+    }
+
     const dist = Phaser.Math.Distance.Between(this.x, this.y, player.x, player.y);
 
     // --- Transitions ---
@@ -114,6 +143,73 @@ export default class Slime extends Phaser.Physics.Arcade.Sprite {
   // (invincibility window), so emitting every overlap frame is safe.
   touchPlayer() {
     EventBus.emit('player:damaged', { amount: this.currentDamage });
+  }
+
+  // --- Combat (Sprint 3) ----------------------------------------------------
+
+  takeDamage(amount, sourcePosition) {
+    if (this.isDead) return;
+    this.hp -= amount;
+
+    // Hit flash — white for a beat, then back to the slime's base look.
+    this.setTint(0xffffff);
+    this.scene.time.delayedCall(HIT_FLASH_MS, () => {
+      if (this.isDead) return;
+      if (this._baseTint !== null) this.setTint(this._baseTint);
+      else this.clearTint();
+    });
+
+    // Knockback away from the hit source.
+    const angle = Phaser.Math.Angle.Between(sourcePosition.x, sourcePosition.y, this.x, this.y);
+    this.setVelocity(Math.cos(angle) * KNOCKBACK_VELOCITY, Math.sin(angle) * KNOCKBACK_VELOCITY);
+    this._knockbackUntil = this.scene.time.now + KNOCKBACK_MS;
+
+    // Float-up damage number.
+    EventBus.emit('ui:floatText', {
+      x: this.x,
+      y: this.y - DAMAGE_TEXT_OFFSET,
+      text: `-${amount}`,
+      color: '#ff6666'
+    });
+
+    if (this.hp <= 0) this.die();
+  }
+
+  die() {
+    if (this.isDead) return;
+    this.isDead = true;
+    this.body.enable = false;
+    this.setVelocity(0, 0);
+
+    this.scene.tweens.add({
+      targets: this,
+      alpha: 0,
+      duration: DEATH_FADE_MS,
+      onComplete: () => {
+        this.dropSeeds();
+        EventBus.emit('enemy:died', {
+          type: this.slimeType,
+          position: { x: this.x, y: this.y }
+        });
+        const idx = this.scene.enemies.indexOf(this);
+        if (idx > -1) this.scene.enemies.splice(idx, 1);
+        this.destroy();
+      }
+    });
+  }
+
+  dropSeeds() {
+    const drops = this.slimeType === 'dark_slime' ? DARK_SLIME_DROPS : GREEN_SLIME_DROPS;
+    for (let i = 0; i < drops; i++) {
+      const plantType = getRandomSeedDrop();
+      new Seed(
+        this.scene,
+        this.x + (Math.random() - 0.5) * DROP_SCATTER,
+        this.y + (Math.random() - 0.5) * DROP_SCATTER,
+        plantType,
+        this.scene.gameData
+      );
+    }
   }
 
   // --- Day-timer expiry effects ---
