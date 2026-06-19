@@ -42,6 +42,11 @@ bgm_garden / bgm_forest not yet sourced (no music in the current asset packs).
 The crossfade + volume system is wired and will pick the tracks up automatically
 once `bgm_garden.mp3` / `bgm_forest.mp3` are dropped into `/assets/audio/`.
 
+**SFX — TODO (Sprint 9)**
+`sfx_step` (footstep) not yet sourced. Player.updateFootsteps() already plays it at
+a randomised pitch with speed-scaled cadence and is silent until the file lands;
+drop `sfx_step.wav` into `/assets/audio/` and it loads automatically.
+
 ## Frameworks & Tools
 
 **Phaser 3** — https://phaser.io — MIT License  

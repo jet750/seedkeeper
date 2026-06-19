@@ -11,9 +11,22 @@ import Seed from './Seed.js';
 import PlantBundle from './PlantBundle.js';
 import { getRandomSeedDrop, getRandomBundleDrop } from '../systems/lootTable.js';
 
-const STATE = { WANDER: 'WANDER', CHASE: 'CHASE' };
+const STATE = { WANDER: 'WANDER', ANTICIPATE: 'ANTICIPATE', CHASE: 'CHASE' };
 const RETARGET_MIN_MS = 2000;
 const RETARGET_MAX_MS = 3000;
+
+// Chase anticipation tell (Sprint 9): a brief freeze + scale pulse before the
+// slime commits to the chase, so the player can read the wind-up.
+const ANTICIPATE_PULSE_MS = 75;
+const ANTICIPATE_PULSE_SCALE = 1.3;
+
+// Wander personality per type (Sprint 9). Greens hold a heading for a long lazy
+// stretch and occasionally stop; darks move in short twitchy bursts with a pause
+// between each. Falls back to the generic window for any other type.
+const WANDER_PROFILE = {
+  green_slime: { holdMin: 3000, holdMax: 4000, pauseChance: 0.35, pauseMs: 500 },
+  dark_slime: { holdMin: 800, holdMax: 1200, pauseChance: 1.0, pauseMs: 400 }
+};
 
 // --- Combat (Sprint 3) ---
 const HIT_FLASH_MS = 100;
@@ -71,6 +84,9 @@ export default class Slime extends Phaser.Physics.Arcade.Sprite {
     // --- State machine ---
     this.state = STATE.WANDER;
     this._retargetTimer = 0;
+    this._wanderProfile = WANDER_PROFILE[slimeType] || null;
+    this._isWanderPaused = false;
+    this._pauseTimer = 0;
     this.pickNewWanderDirection();
 
     // --- Combat state ---
@@ -84,9 +100,10 @@ export default class Slime extends Phaser.Physics.Arcade.Sprite {
   pickNewWanderDirection() {
     const angle = Math.random() * Math.PI * 2;
     this._wanderDir = { x: Math.cos(angle), y: Math.sin(angle) };
-    // Randomize per slime so the group never moves in sync.
-    this._retargetTimer =
-      RETARGET_MIN_MS + Math.random() * (RETARGET_MAX_MS - RETARGET_MIN_MS);
+    // Hold window varies by personality; randomized per slime so a group never
+    // moves in lockstep.
+    const prof = this._wanderProfile || { holdMin: RETARGET_MIN_MS, holdMax: RETARGET_MAX_MS };
+    this._retargetTimer = prof.holdMin + Math.random() * (prof.holdMax - prof.holdMin);
   }
 
   update(dt, player) {
@@ -103,31 +120,75 @@ export default class Slime extends Phaser.Physics.Arcade.Sprite {
 
     // --- Transitions ---
     if (this.state === STATE.WANDER && dist < this.detectRange) {
-      this.state = STATE.CHASE;
+      this.startChase(); // wind-up pulse, then CHASE
     } else if (this.state === STATE.CHASE && dist > this.loseRange) {
       this.state = STATE.WANDER;
+      this._isWanderPaused = false;
       this.pickNewWanderDirection();
     }
 
     // --- Behaviour ---
-    if (this.state === STATE.CHASE) {
+    if (this.state === STATE.ANTICIPATE) {
+      // Frozen mid-tell — the pulse tween is doing the talking.
+      this.setVelocity(0, 0);
+    } else if (this.state === STATE.CHASE) {
       const angle = Math.atan2(player.y - this.y, player.x - this.x);
       this.setVelocity(
         Math.cos(angle) * this.currentChaseSpeed,
         Math.sin(angle) * this.currentChaseSpeed
       );
     } else {
-      this._retargetTimer -= dt * 1000;
-      if (this._retargetTimer <= 0) {
-        this.pickNewWanderDirection();
-      }
-      this.setVelocity(
-        this._wanderDir.x * this.wanderSpeed,
-        this._wanderDir.y * this.wanderSpeed
-      );
+      this.updateWander(dt);
     }
 
     this.confineToForest();
+  }
+
+  // WANDER movement with personality pauses. Greens stop occasionally; darks
+  // pause between every short burst, reading as alert and twitchy.
+  updateWander(dt) {
+    const dtMs = dt * 1000;
+    if (this._isWanderPaused) {
+      this.setVelocity(0, 0);
+      this._pauseTimer -= dtMs;
+      if (this._pauseTimer <= 0) {
+        this._isWanderPaused = false;
+        this.pickNewWanderDirection();
+      }
+      return;
+    }
+
+    this._retargetTimer -= dtMs;
+    if (this._retargetTimer <= 0) {
+      const prof = this._wanderProfile;
+      if (prof && Math.random() < prof.pauseChance) {
+        this._isWanderPaused = true;
+        this._pauseTimer = prof.pauseMs;
+        this.setVelocity(0, 0);
+        return;
+      }
+      this.pickNewWanderDirection();
+    }
+    this.setVelocity(this._wanderDir.x * this.wanderSpeed, this._wanderDir.y * this.wanderSpeed);
+  }
+
+  // Chase anticipation: freeze and pulse for a beat, then commit to the chase.
+  startChase() {
+    if (this.state === STATE.ANTICIPATE || this.state === STATE.CHASE) return;
+    this.state = STATE.ANTICIPATE;
+    this._isWanderPaused = false;
+    this.setVelocity(0, 0);
+    this.scene.tweens.add({
+      targets: this,
+      scaleX: ANTICIPATE_PULSE_SCALE,
+      scaleY: ANTICIPATE_PULSE_SCALE,
+      duration: ANTICIPATE_PULSE_MS,
+      yoyo: true,
+      onComplete: () => {
+        if (this.isDead) return;
+        this.state = STATE.CHASE;
+      }
+    });
   }
 
   // Keep slimes in the dangerous forest — they stop at the fence rather than

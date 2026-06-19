@@ -51,6 +51,7 @@ const SaveSystem = {
         { plantType: null, daysRemaining: 0, watered: false, ready: false }
       ],
       plantsGrownEver: freshBank(),
+      wellLevel: 0,
       newGamePlus: false,
       demoWinTriggered: false,
       settings: { masterVolume: 1.0, sfxVolume: 0.8, musicVolume: 0.5, muted: false },
@@ -91,6 +92,7 @@ const SaveSystem = {
     // Backfill fields added after a save was first written so older slots load
     // cleanly. Idempotent — only fills what is missing.
     if (data.demoWinTriggered === undefined) data.demoWinTriggered = false;
+    if (data.wellLevel === undefined) data.wellLevel = 0;
     if (!data.settings) {
       data.settings = { masterVolume: 1.0, sfxVolume: 0.8, musicVolume: 0.5, muted: false };
     }

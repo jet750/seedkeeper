@@ -12,6 +12,13 @@ import Seed from './Seed.js';
 const FLASH_INTERVAL_MS = 100;
 const INVINCIBILITY_MS = 1000;
 
+// --- Game feel (Sprint 9) ---
+const IDLE_THRESHOLD_MS = 3000; // stand still this long → idle animation
+const IDLE_BOB_SCALE_Y = 0.92; // gentle squash when no idle frames exist
+const IDLE_BOB_MS = 600;
+const STEP_INTERVAL_BASE_MS = 320; // footstep cadence at base speed
+const STEP_VOLUME = 0.3;
+
 // --- Melee attack (Sprint 3) ---
 const ATTACK_ARC_RADIUS = 50; // px reach of the swing
 const ATTACK_ARC_DEGREES = 90; // cone width, centred on facing
@@ -98,7 +105,20 @@ export default class Player extends Phaser.Physics.Arcade.Sprite {
     // --- Inventory (Sprint 2) ---
     this.gameData = gameData;
     this.seedSlots = new Array(stats.seedSlots).fill(null); // e.g. ['red_mushroom', null, null]
-    this.hasWater = false;
+
+    // --- Water charges (Sprint 9 well-upgrade) ---
+    // Replaces the old binary hasWater. A well visit fills `waterCharges` up to
+    // `waterCapacity`; each bed watering spends one. Capacity is raised by the
+    // well-upgrade track (see GameScene.applyWellUpgrade).
+    this.waterCapacity = 1;
+    this.waterCharges = 0;
+
+    // --- Idle + footsteps (Sprint 9 game feel) ---
+    this.idleTimer = 0;
+    this.isIdling = false;
+    this.idleThreshold = IDLE_THRESHOLD_MS;
+    this._idleTween = null;
+    this.stepTimer = 0;
 
     // --- State ---
     this.facing = 'down';
@@ -216,8 +236,17 @@ export default class Player extends Phaser.Physics.Arcade.Sprite {
       dy /= len;
       this.lastMoveDir = { x: dx, y: dy };
       this.updateFacing(dx, dy);
+      // Any movement breaks the idle pose immediately.
+      this.idleTimer = 0;
+      if (this.isIdling) this.stopIdle();
       this.playMove();
+      this.updateFootsteps(dtMs);
     } else {
+      this.stepTimer = 0;
+      this.idleTimer += dtMs;
+      if (this.idleTimer >= this.idleThreshold && !this.isIdling) {
+        this.startIdle();
+      }
       this.playIdle();
     }
 
@@ -247,6 +276,49 @@ export default class Player extends Phaser.Physics.Arcade.Sprite {
 
   playIdle() {
     if (this.hasSheet) this.anims.play(`idle_${this.facing}`, true);
+  }
+
+  // --- Idle animation (Sprint 9) --------------------------------------------
+  // After idleThreshold ms of stillness, play a directional idle anim if the
+  // sheet has one, else a subtle squash-bob tween on the placeholder.
+  startIdle() {
+    this.isIdling = true;
+    if (this.hasSheet && this.anims.exists(`idle_${this.facing}`)) {
+      this.anims.play(`idle_${this.facing}`, true);
+      return;
+    }
+    this._idleTween = this.scene.tweens.add({
+      targets: this,
+      scaleY: IDLE_BOB_SCALE_Y,
+      duration: IDLE_BOB_MS,
+      yoyo: true,
+      repeat: -1,
+      ease: 'Sine.easeInOut'
+    });
+  }
+
+  stopIdle() {
+    this.isIdling = false;
+    if (this._idleTween) {
+      this._idleTween.stop();
+      this._idleTween = null;
+    }
+    this.setScale(1);
+  }
+
+  // --- Footsteps (Sprint 9) -------------------------------------------------
+  // Randomised pitch per step; cadence scales with effective speed so faster
+  // boots tap out a quicker rhythm. Silent until sfx_step.* lands in /assets.
+  updateFootsteps(dtMs) {
+    this.stepTimer += dtMs;
+    const baseSpeed = this.gameData.player.speed;
+    const stepInterval = STEP_INTERVAL_BASE_MS * (baseSpeed / Math.max(1, this.speed));
+    if (this.stepTimer < stepInterval) return;
+    this.stepTimer = 0;
+    if (this.scene.cache.audio.exists('sfx_step')) {
+      const rate = 0.9 + Math.random() * 0.2;
+      this.scene.sound.play('sfx_step', { volume: STEP_VOLUME, rate });
+    }
   }
 
   // --- Melee attack (Sprint 3) ----------------------------------------------
@@ -355,6 +427,46 @@ export default class Player extends Phaser.Physics.Arcade.Sprite {
   equipWateringCan(tier) {
     this.equippedGear.wateringCan = tier.id;
     this.wateringCan = { bedsPerUse: tier.bedsPerUse || 1 };
+  }
+
+  // --- Water charges (Sprint 9) ---------------------------------------------
+
+  // Well-upgrade track raises how many waterings a single well visit grants.
+  setWaterCapacity(capacity) {
+    this.waterCapacity = capacity;
+    if (this.waterCharges > this.waterCapacity) this.waterCharges = this.waterCapacity;
+    EventBus.emit('player:waterChanged', {
+      charges: this.waterCharges,
+      capacity: this.waterCapacity
+    });
+  }
+
+  // Top up to capacity at the well.
+  fillWater() {
+    this.waterCharges = this.waterCapacity;
+    EventBus.emit('player:waterFilled', {
+      charges: this.waterCharges,
+      capacity: this.waterCapacity
+    });
+  }
+
+  // Spend one charge to water a bed. Returns false when dry.
+  useWater() {
+    if (this.waterCharges <= 0) return false;
+    this.waterCharges--;
+    EventBus.emit('player:waterUsed', {
+      charges: this.waterCharges,
+      capacity: this.waterCapacity
+    });
+    return true;
+  }
+
+  // 0 = basic, 1 = copper, 2 = golden — scales watering acceleration odds.
+  getWateringCanTier() {
+    const id = this.equippedGear.wateringCan;
+    if (id === 'golden_can') return 2;
+    if (id === 'copper_can') return 1;
+    return 0;
   }
 
   // Grow/shrink the inventory, preserving existing seeds.
@@ -568,6 +680,8 @@ export default class Player extends Phaser.Physics.Arcade.Sprite {
     if (this.isDead) return;
     this.isDead = true;
     this.invincible = true;
+    this.stopIdle();
+    this.idleTimer = 0;
     this.setVelocity(0, 0);
     this.clearTint();
     this.setTint(0x666666);
@@ -589,6 +703,9 @@ export default class Player extends Phaser.Physics.Arcade.Sprite {
       this._invEndEvent = null;
     }
     this.clearTint();
+    this.stopIdle();
+    this.idleTimer = 0;
+    this.stepTimer = 0;
     this.setPosition(x, y);
     this.currentHP = this.maxHP;
     this.attackCooldownRemaining = 0;

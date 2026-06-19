@@ -12,7 +12,13 @@ const STATE = { EMPTY: 'EMPTY', PLANTED: 'PLANTED', GROWING: 'GROWING', READY: '
 const BED_SIZE = 56;
 const SOIL_DRY = 0x5a4632;
 const SOIL_WET = 0x3f3022;
-const WATER_BONUS = 0.33;
+
+// Watering overhaul (Sprint 9): each watering rolls two independent checks whose
+// odds scale with the watering-can tier (0 = basic, 1 = copper, 2 = golden).
+const ACCELERATE_BASE_CHANCE = 0.4; // +0.10 per can tier → 40 / 50 / 60%
+const ACCELERATE_PER_TIER = 0.1;
+const DOUBLE_BASE_CHANCE = 0.08; // +0.04 per can tier → 8 / 12 / 16%
+const DOUBLE_PER_TIER = 0.04;
 
 function hexToNumber(hex) {
   return parseInt(hex.replace('#', ''), 16);
@@ -31,6 +37,7 @@ export default class GardenBed {
     this.plantColorNum = 0xffffff;
     this.daysRemaining = 0;
     this.watered = false;
+    this.doubleHarvest = false; // set by a lucky watering; doubles the yield once
 
     // --- Visuals ---
     this.soil = scene.add
@@ -55,7 +62,22 @@ export default class GardenBed {
       .setDepth(20)
       .setVisible(false);
 
+    // Persistent ×2 badge — visible while doubleHarvest is armed (Sprint 9).
+    this.doubleBadge = scene.add
+      .text(x + BED_SIZE / 2 - 2, y - BED_SIZE / 2 + 2, '×2', {
+        fontFamily: '"Courier New", monospace',
+        fontSize: '15px',
+        fontStyle: 'bold',
+        color: '#ffaa00',
+        backgroundColor: 'rgba(20,18,16,0.75)',
+        padding: { x: 3, y: 1 }
+      })
+      .setOrigin(0.5, 0.5)
+      .setDepth(21)
+      .setVisible(false);
+
     this._pulseTween = null;
+    this._badgeTween = null;
 
     // Grow on day advance (EventBus only).
     this._onDayAdvanced = () => this.onDayAdvanced();
@@ -141,21 +163,92 @@ export default class GardenBed {
     EventBus.emit('bed:planted', { plantType, bedIndex: this.bedIndex });
   }
 
-  water() {
+  // Watering overhaul (Sprint 9): marking the bed wet still gates the once-a-day
+  // rule, but watering now fires two probabilistic checks immediately rather
+  // than a silent 33% growth bonus on the next day.
+  water(canTier = 0) {
     if (this.state !== STATE.PLANTED && this.state !== STATE.GROWING) return false;
     this.watered = true;
     this.refreshSoil();
     EventBus.emit('bed:watered', { bedIndex: this.bedIndex });
+    this.applyWateringEffects(canTier);
     return true;
+  }
+
+  applyWateringEffects(canTier) {
+    if (this.daysRemaining <= 0) return; // already ready — nothing to roll
+
+    // Check 1 — accelerated growth: chance to shave a full day off.
+    const accelerateChance = ACCELERATE_BASE_CHANCE + canTier * ACCELERATE_PER_TIER;
+    if (Math.random() < accelerateChance) {
+      this.daysRemaining = Math.max(0, this.daysRemaining - 1);
+      EventBus.emit('ui:floatText', {
+        x: this.x,
+        y: this.y - 20,
+        text: '⚡ Grew faster!',
+        color: '#88ff88'
+      });
+      if (this.daysRemaining <= 0) {
+        this.setState(STATE.READY);
+        EventBus.emit('ui:floatText', {
+          x: this.x,
+          y: this.y - 44,
+          text: '✓ Ready!',
+          color: '#ffff44'
+        });
+      } else {
+        this.refreshDaysText();
+      }
+    }
+
+    // Check 2 — double harvest: rare bonus, arms a persistent ×2 on the bed.
+    const doubleChance = DOUBLE_BASE_CHANCE + canTier * DOUBLE_PER_TIER;
+    if (!this.doubleHarvest && Math.random() < doubleChance) {
+      this.doubleHarvest = true;
+      this.setDoubleBadge(true);
+      EventBus.emit('ui:floatText', {
+        x: this.x,
+        y: this.y - 32,
+        text: '✨ Double harvest!',
+        color: '#ffaa00'
+      });
+    }
+  }
+
+  setDoubleBadge(on) {
+    this.doubleBadge.setVisible(on);
+    if (on) {
+      if (!this._badgeTween) {
+        this._badgeTween = this.scene.tweens.add({
+          targets: this.doubleBadge,
+          scale: { from: 1, to: 1.18 },
+          duration: 600,
+          ease: 'Sine.easeInOut',
+          yoyo: true,
+          repeat: -1
+        });
+      }
+    } else if (this._badgeTween) {
+      this._badgeTween.remove();
+      this._badgeTween = null;
+      this.doubleBadge.setScale(1);
+    }
   }
 
   harvest() {
     if (this.state !== STATE.READY) return null;
     const plantType = this.plantType;
-    EventBus.emit('plant:harvested', { plantType, position: { x: this.x, y: this.y } });
+    const yieldAmount = this.doubleHarvest ? 2 : 1;
+    EventBus.emit('plant:harvested', {
+      plantType,
+      yield: yieldAmount,
+      position: { x: this.x, y: this.y }
+    });
     this.plantType = null;
     this.daysRemaining = 0;
     this.watered = false;
+    this.doubleHarvest = false;
+    this.setDoubleBadge(false);
     this.setState(STATE.EMPTY);
     return plantType;
   }
@@ -164,8 +257,9 @@ export default class GardenBed {
 
   onDayAdvanced() {
     if (this.state === STATE.PLANTED || this.state === STATE.GROWING) {
-      const dec = 1 + (this.watered ? WATER_BONUS : 0);
-      this.daysRemaining = Math.max(0, this.daysRemaining - dec);
+      // Growth is now a flat one day per night; watering's payoff is the
+      // same-day acceleration/double rolls, not a hidden day-advance bonus.
+      this.daysRemaining = Math.max(0, this.daysRemaining - 1);
       this.watered = false; // resets at start of each new day
       if (this.daysRemaining <= 0) {
         this.setState(STATE.READY);
@@ -186,6 +280,7 @@ export default class GardenBed {
       plantType: this.plantType,
       daysRemaining: this.daysRemaining,
       watered: this.watered,
+      doubleHarvest: this.doubleHarvest,
       ready: this.state === STATE.READY
     };
   }
@@ -197,6 +292,8 @@ export default class GardenBed {
       this.plantType = null;
       this.daysRemaining = 0;
       this.watered = false;
+      this.doubleHarvest = false;
+      this.setDoubleBadge(false);
       this.setState(STATE.EMPTY);
       return;
     }
@@ -204,6 +301,8 @@ export default class GardenBed {
     this.plantColorNum = hexToNumber(this.gameData.plants[saveState.plantType].color);
     this.daysRemaining = saveState.daysRemaining;
     this.watered = !!saveState.watered;
+    this.doubleHarvest = !!saveState.doubleHarvest;
+    this.setDoubleBadge(this.doubleHarvest);
     if (saveState.ready) {
       this.setState(STATE.READY);
     } else {
@@ -228,6 +327,10 @@ export default class GardenBed {
   cleanup() {
     EventBus.off('day:advanced', this._onDayAdvanced);
     this.stopPulse();
+    if (this._badgeTween) {
+      this._badgeTween.remove();
+      this._badgeTween = null;
+    }
   }
 }
 

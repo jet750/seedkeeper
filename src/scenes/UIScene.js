@@ -38,6 +38,7 @@ export default class UIScene extends Phaser.Scene {
     this.urgentTime = entitiesData.daySystem.urgentTime;
     this._busHandlers = [];
     this._pulseTween = null;
+    this._promptTween = null;
     this._toastQueue = [];
     this._toastActive = false;
     this._swapOpen = false;
@@ -141,15 +142,15 @@ export default class UIScene extends Phaser.Scene {
       .setOrigin(0.5, 0)
       .setVisible(false);
 
-    // TOP LEFT (under HP) — watering can indicator, shown only while carrying.
+    // TOP LEFT (under HP) — watering-can charge counter "💧 N/Max" (Sprint 9).
+    // Replaces the old binary "has water" flag with current / capacity charges.
     this.waterIndicator = this.add
-      .text(pad, 92, '💧 Water', {
+      .text(pad, 92, '💧 0/1', {
         fontFamily: '"Courier New", monospace',
         fontSize: '18px',
-        color: '#6B92BC'
+        color: '#9B9389'
       })
-      .setOrigin(0, 0.5)
-      .setVisible(false);
+      .setOrigin(0, 0.5);
 
     // BOTTOM LEFT — seed slot row (real plant-color circles in Sprint 2).
     this._slotSize = 40;
@@ -166,6 +167,23 @@ export default class UIScene extends Phaser.Scene {
         color: '#9B9389'
       })
       .setOrigin(0, 0);
+
+    // BOTTOM CENTER (above the seed bar) — contextual interaction prompt
+    // (Sprint 9). Fades in for the nearest interactable; greyed when not an
+    // actionable [F] prompt. White-on-dark for legibility over any background.
+    this.interactPrompt = this.add
+      .text(VIRTUAL_WIDTH / 2, VIRTUAL_HEIGHT - 112, '', {
+        fontFamily: '"Courier New", monospace',
+        fontSize: '20px',
+        fontStyle: 'bold',
+        color: COLOR_NORMAL,
+        stroke: '#141210',
+        strokeThickness: 4,
+        align: 'center'
+      })
+      .setOrigin(0.5)
+      .setAlpha(0)
+      .setDepth(200);
 
     // BOTTOM RIGHT — plant bank readout (chest UI proper arrives in Sprint 4).
     this.bankText = this.add
@@ -193,6 +211,38 @@ export default class UIScene extends Phaser.Scene {
   refreshAmmo(ammo, max) {
     this.ammoText.setText(`Ammo  ${ammo} / ${max}`).setVisible(true);
     this.ammoText.setColor(ammo === 0 ? '#ff6b6b' : '#EDD49A');
+  }
+
+  refreshWater(charges, capacity) {
+    this.waterIndicator.setText(`💧 ${charges}/${capacity}`);
+    this.waterIndicator.setColor(charges > 0 ? '#6B92BC' : '#9B9389');
+  }
+
+  // --- Contextual interaction prompt (Sprint 9) -----------------------------
+
+  showInteractPrompt(text, actionable) {
+    this.interactPrompt.setText(text);
+    this.interactPrompt.setColor(actionable ? COLOR_NORMAL : '#9B9389');
+    // Suppress while the swap picker owns the bottom-center space.
+    if (this._swapOpen) {
+      this.interactPrompt.setAlpha(0);
+      return;
+    }
+    if (this._promptTween) this._promptTween.stop();
+    this._promptTween = this.tweens.add({
+      targets: this.interactPrompt,
+      alpha: 1,
+      duration: 150
+    });
+  }
+
+  hideInteractPrompt() {
+    if (this._promptTween) this._promptTween.stop();
+    this._promptTween = this.tweens.add({
+      targets: this.interactPrompt,
+      alpha: 0,
+      duration: 150
+    });
   }
 
   buildSeedSlots(count) {
@@ -273,8 +323,11 @@ export default class UIScene extends Phaser.Scene {
       this.dayText.setText(`Day ${this.dayNumber}`);
     });
     this.subscribe('inventory:changed', (d) => this.refreshSeedSlots(d.slots));
-    this.subscribe('player:gotWater', () => this.waterIndicator.setVisible(true));
-    this.subscribe('player:usedWater', () => this.waterIndicator.setVisible(false));
+    // Water charges (Sprint 9): fill at the well, spend per bed, capacity from
+    // the well-upgrade track — all three events refresh the same "💧 N/Max".
+    this.subscribe('player:waterFilled', (d) => this.refreshWater(d.charges, d.capacity));
+    this.subscribe('player:waterUsed', (d) => this.refreshWater(d.charges, d.capacity));
+    this.subscribe('player:waterChanged', (d) => this.refreshWater(d.charges, d.capacity));
     this.subscribe('bank:updated', (d) => this.refreshBank(d.bank));
 
     // --- Sprint 4 ---
@@ -298,6 +351,10 @@ export default class UIScene extends Phaser.Scene {
     this.subscribe('inventory:swapRequested', (d) => this.openSwapPicker(d.slots, d.newPlantType));
     this.subscribe('inventory:swapClosed', () => this.closeSwapPicker());
     this.subscribe('player:died', () => this.showDeathMessage());
+
+    // --- Sprint 9 — contextual interaction prompt ---
+    this.subscribe('interact:nearObject', (d) => this.showInteractPrompt(d.text, d.actionable));
+    this.subscribe('interact:leftObject', () => this.hideInteractPrompt());
   }
 
   // --- Achievement toasts (Sprint 6) ----------------------------------------
@@ -391,6 +448,8 @@ export default class UIScene extends Phaser.Scene {
     });
     if (filled.length === 0) return;
     this._swapOpen = true;
+    // The picker occupies the bottom-center; hide the contextual prompt under it.
+    if (this.interactPrompt) this.interactPrompt.setAlpha(0);
 
     const cx = VIRTUAL_WIDTH / 2;
     const panelY = VIRTUAL_HEIGHT - 200;

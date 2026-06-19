@@ -16,6 +16,7 @@ import { getRandomSeedDrop, getRandomBundleDrop } from '../systems/lootTable.js'
 
 const STATE = { PATROL: 'PATROL', CHASE: 'CHASE' };
 const WAYPOINT_REACHED = 12; // px — close enough to advance to the next waypoint
+const LOOK_RANGE = 200; // px — head turns toward the player within this range (Sprint 9)
 const HIT_FLASH_MS = 100;
 const KNOCKBACK_VELOCITY = 160; // heavier than a slime — takes less of a shove
 const KNOCKBACK_MS = 250;
@@ -84,6 +85,11 @@ export default class Skeleton extends Phaser.Physics.Arcade.Sprite {
     } else if (this.state === STATE.CHASE && dist > this.loseRange) {
       this.state = STATE.PATROL;
       this._wpIndex = this.nearestWaypointIndex();
+    }
+
+    // Head-turn tell: face the player whenever they're close, even mid-patrol.
+    if (dist < LOOK_RANGE) {
+      this.setFlipX(player.x < this.x);
     }
 
     // --- Behaviour ---

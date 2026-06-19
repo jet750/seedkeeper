@@ -140,5 +140,13 @@
         { "id": "golden_can", "name": "Golden Can", "cost": 10, "bedsPerUse": 99 }
       ]}
     }
+  },
+  "well_upgrades": {
+    "tiers": [
+      { "id": "well_basic",   "name": "Basic Well",    "capacity": 1, "cost": 0,  "currency": null },
+      { "id": "well_bucket",  "name": "Deep Bucket",   "capacity": 2, "cost": 4,  "currency": "blue_flower" },
+      { "id": "well_cistern", "name": "Rain Cistern",  "capacity": 4, "cost": 10, "currency": "blue_flower" },
+      { "id": "well_spring",  "name": "Garden Spring", "capacity": 8, "cost": 18, "currency": "blue_flower" }
+    ]
   }
 }

@@ -12,6 +12,7 @@ import EventBus from '../core/EventBus.js';
 const NAME_TAG_RANGE = 60; // px — tag visible within this distance
 const ARM_DELAY_MS = 500; // brief delay before a (re)spawned seed is collectible
 const RESPAWN_FADE_MS = 1000;
+const MAGNET_ARC_MS = 150; // Sprint 9 — seed arcs to the player before collecting
 
 function hexToNumber(hex) {
   return parseInt(hex.replace('#', ''), 16);
@@ -37,6 +38,12 @@ export default class Seed extends Phaser.GameObjects.Image {
     this.respawnDelay = this.plantData.seedRespawn;
     this.collected = false;
     this.collectible = false;
+    // Magnet-arc state (Sprint 9). While arcing, the seed is skipped by the
+    // collection scan so it can't double-trigger. homeX/homeY are the fixed
+    // world spot to snap back to on respawn (the arc moves it onto the player).
+    this.collecting = false;
+    this.homeX = x;
+    this.homeY = y;
     this.baseY = y;
 
     // Despawning seeds (dropped on player death) shrink away over a recovery
@@ -110,8 +117,41 @@ export default class Seed extends Phaser.GameObjects.Image {
     this.nameTag.setVisible(d < NAME_TAG_RANGE);
   }
 
+  // Magnet collect (Sprint 9): tween the seed onto the player, then run the
+  // supplied collect callback (inventory add + events live in GameScene). The
+  // seed is marked `collecting` so the per-frame scan ignores it mid-flight.
+  collectWithArc(player, onArrived) {
+    if (this.collected || this.collecting || !this.collectible) return;
+    this.collecting = true;
+    this.collectible = false;
+    if (this.nameTag) this.nameTag.setVisible(false);
+    if (this.bobTween) this.bobTween.pause();
+    this.scene.tweens.add({
+      targets: this,
+      x: player.x,
+      y: player.y,
+      duration: MAGNET_ARC_MS,
+      ease: 'Quad.easeIn',
+      onComplete: () => {
+        this.collecting = false;
+        if (onArrived) onArrived();
+      }
+    });
+  }
+
+  // Arrival add failed (e.g. another seed claimed the last slot this frame) —
+  // re-arm so the seed can be re-collected or offered to the swap picker.
+  cancelArc() {
+    this.collecting = false;
+    if (!this.collected) {
+      this.collectible = true;
+      if (this.bobTween) this.bobTween.resume();
+    }
+  }
+
   collect() {
     this.collected = true;
+    this.collecting = false;
     this.collectible = false;
     this.setActive(false);
     this.setVisible(false);
@@ -131,6 +171,11 @@ export default class Seed extends Phaser.GameObjects.Image {
 
   respawn() {
     this.collected = false;
+    this.collecting = false;
+    // Snap back to the home spot — the magnet arc may have left the sprite (and
+    // its name tag) sitting on the player's last position.
+    this.setPosition(this.homeX, this.homeY);
+    if (this.nameTag) this.nameTag.setPosition(this.homeX, this.baseY - 18);
     this.setActive(true);
     this.setVisible(true);
     this.setAlpha(0);

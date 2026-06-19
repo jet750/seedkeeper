@@ -44,6 +44,7 @@
     { "key": "sfx_death_player", "path": "assets/audio/sfx_death_player.wav" },
     { "key": "sfx_sleep", "path": "assets/audio/sfx_sleep.wav" },
     { "key": "sfx_water", "path": "assets/audio/sfx_water.wav" },
+    { "key": "sfx_step", "path": "assets/audio/sfx_step.wav" },
     { "key": "sfx_warning_bell", "path": "assets/audio/sfx_warning_bell.wav" },
     { "key": "sfx_urgent_pulse", "path": "assets/audio/sfx_urgent_pulse.wav" },
     { "key": "sfx_achievement", "path": "assets/audio/sfx_achievement.wav" }

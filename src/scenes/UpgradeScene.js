@@ -75,6 +75,9 @@ export default class UpgradeScene extends Phaser.Scene {
       this.buildPanel(pt, GRID_X + col * COL_STRIDE, GRID_Y + row * ROW_STRIDE);
     });
 
+    // Well-upgrade track (Sprint 9) — a wide compact bar below the plant grid.
+    this.buildWellPanel();
+
     this.makeButton(
       VIRTUAL_WIDTH / 2,
       VIRTUAL_HEIGHT - 42,
@@ -96,6 +99,7 @@ export default class UpgradeScene extends Phaser.Scene {
     this._onBank = () => {
       this.refreshSummary();
       PLANT_ORDER.forEach((pt) => this.refreshPanel(pt));
+      this.refreshWellPanel();
     };
     EventBus.on('bank:updated', this._onBank);
     this.events.once('shutdown', () => EventBus.off('bank:updated', this._onBank));
@@ -123,6 +127,95 @@ export default class UpgradeScene extends Phaser.Scene {
     PLANT_ORDER.forEach((pt) => {
       this.summaryRefs[pt].setText(`${this.bank(pt)}`);
     });
+  }
+
+  // --- Well-upgrade bar (Sprint 9) ------------------------------------------
+  // A standalone track paid for in blue flowers. Sits in the gap below the
+  // plant grid; the buy button is rebuilt each refresh like the plant rows.
+
+  buildWellPanel() {
+    const cx = VIRTUAL_WIDTH / 2;
+    const cy = 794;
+    const w = 1440;
+    const h = 60;
+    this.add.rectangle(cx, cy, w, h, COLOR_PANEL).setStrokeStyle(2, 0x6b92bc).setDepth(100);
+    const leftX = cx - w / 2 + 22;
+    this.add.circle(leftX, cy, 12, hexToNum(this.gameData.plants.blue_flower.color)).setDepth(101);
+    this.add
+      .text(leftX + 24, cy - 17, 'WELL UPGRADES', {
+        fontFamily: '"Courier New", monospace',
+        fontSize: '14px',
+        fontStyle: 'bold',
+        color: '#ABC4DE'
+      })
+      .setOrigin(0, 0)
+      .setDepth(101);
+    this.wellInfoText = this.add
+      .text(leftX + 24, cy + 3, '', {
+        fontFamily: '"Courier New", monospace',
+        fontSize: '15px',
+        color: '#D1CCC6'
+      })
+      .setOrigin(0, 0)
+      .setDepth(101);
+    this._wellActionObjs = [];
+    this.refreshWellPanel();
+  }
+
+  refreshWellPanel() {
+    if (!this.wellInfoText) return;
+    const tiers = this.gameData.well_upgrades.tiers;
+    const lvl = this.gameScene.wellLevel || 0;
+    const current = tiers[lvl];
+    const next = tiers[lvl + 1];
+
+    const cx = VIRTUAL_WIDTH / 2;
+    const w = 1440;
+    const cy = 794;
+    const rightX = cx + w / 2 - 22;
+
+    if (this._wellActionObjs) this._wellActionObjs.forEach((o) => o.destroy());
+    this._wellActionObjs = [];
+
+    if (!next) {
+      this.wellInfoText.setText(`${current.name} · Water Capacity ${current.capacity}  ·  fully upgraded`);
+      const t = this.add
+        .text(rightX, cy, 'MAXED', {
+          fontFamily: '"Courier New", monospace',
+          fontSize: '16px',
+          fontStyle: 'bold',
+          color: '#8AB87E'
+        })
+        .setOrigin(1, 0.5)
+        .setDepth(102);
+      this._wellActionObjs.push(t);
+      return;
+    }
+
+    this.wellInfoText.setText(
+      `${current.name} (cap ${current.capacity})  →  ${next.name} (cap ${next.capacity})   ·   ${next.cost} Blue Flower`
+    );
+    const cost = next.cost;
+    const affordable = (this.gameScene.plantBank[next.currency] || 0) >= cost;
+    this._wellActionObjs = this.makeButton(
+      rightX - 90,
+      cy,
+      180,
+      36,
+      `BUY  ${cost}`,
+      affordable ? COLOR_AFFORD : COLOR_DISABLED,
+      affordable,
+      () => this.onWellBuy(),
+      affordable ? '#141210' : '#7a746c'
+    );
+  }
+
+  onWellBuy() {
+    this.gameScene.purchaseWellUpgrade();
+    // purchase emits bank:updated → _onBank refreshes everything; refresh now too.
+    this.refreshSummary();
+    this.refreshWellPanel();
+    PLANT_ORDER.forEach((p) => this.refreshPanel(p));
   }
 
   // --- Panels ---------------------------------------------------------------

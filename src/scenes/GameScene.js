@@ -15,6 +15,8 @@ import {
   WORLD_HEIGHT,
   GARDEN_ZONE_HEIGHT,
   TILE_SIZE,
+  VIRTUAL_WIDTH,
+  VIRTUAL_HEIGHT,
   isDevModeActive
 } from '../core/Constants.js';
 import Player from '../entities/Player.js';
@@ -108,6 +110,7 @@ export default class GameScene extends Phaser.Scene {
     this._upgradeOpen = false;
     this._winOpen = false;
     this._signpostOpen = false;
+    this._lastPromptText = null; // contextual F-prompt dedupe (Sprint 9)
     this._busHandlers = [];
 
     // --- Win / New Game+ / run-stats state (Sprint 5) ---
@@ -127,6 +130,7 @@ export default class GameScene extends Phaser.Scene {
     this.plantBank = { ...DEFAULT_BANK, ...(this.saveData.bank || {}) };
     this.upgradeLevels = JSON.parse(JSON.stringify(this.saveData.upgrades));
     this.plantsGrownEver = { ...DEFAULT_BANK, ...(this.saveData.plantsGrownEver || {}) };
+    this.wellLevel = this.saveData.wellLevel || 0; // Sprint 9 well-upgrade tier index
     this._playtimeMs = (this.saveData.totalPlaytime || 0) * 1000;
 
     // Single source of truth for all active enemies (slimes + skeletons). The
@@ -148,6 +152,17 @@ export default class GameScene extends Phaser.Scene {
     // --- Camera ---
     this.cameras.main.setBounds(0, 0, WORLD_WIDTH, WORLD_HEIGHT);
     this.cameras.main.startFollow(this.player, true, 0.1, 0.1);
+
+    // --- Day/night atmosphere tint (Sprint 9) ---
+    // A screen-fixed colour wash over the world (below the HUD scene). Garden
+    // warms and forest cools slightly more with each passing day. Deliberately
+    // subtle — felt, not noticed. Phaser cameras have no setTint, so this is a
+    // scrollFactor-0 overlay rather than a camera filter.
+    this.dayTint = this.add
+      .rectangle(0, 0, VIRTUAL_WIDTH, VIRTUAL_HEIGHT, 0xffffff, 0)
+      .setOrigin(0, 0)
+      .setScrollFactor(0)
+      .setDepth(50);
 
     // --- Slimes ---
     this.spawnSlimes();
@@ -261,6 +276,9 @@ export default class GameScene extends Phaser.Scene {
     this.scene.launch('DevMenuScene');
     if (isDevModeActive()) this.setupDevHandlers();
 
+    // Seed the initial atmosphere tint for the loaded zone + day.
+    this.applyDayTint();
+
     this.events.once('shutdown', this.shutdown, this);
     this.events.once('destroy', this.shutdown, this);
   }
@@ -282,6 +300,10 @@ export default class GameScene extends Phaser.Scene {
     }
     EventBus.emit('ngplus:status', { active: this.newGamePlus });
     EventBus.emit('audio:muteChanged', { muted: this.audioSettings.muted });
+    EventBus.emit('player:waterChanged', {
+      charges: this.player.waterCharges,
+      capacity: this.player.waterCapacity
+    });
   }
 
   // --- Placeholder textures (Sprint 2 additive — leaves BootScene untouched) -
@@ -484,11 +506,14 @@ export default class GameScene extends Phaser.Scene {
   // --- Plant bundles (Sprint 7) ---------------------------------------------
   // Player overlap: credit the bank directly (bundles skip the grow cycle).
   collectBundle(bundle) {
-    if (!bundle || bundle.collected) return;
-    const pt = bundle.plantType;
-    this.plantBank[pt] = (this.plantBank[pt] || 0) + 1;
-    EventBus.emit('bank:updated', { bank: { ...this.plantBank } });
-    bundle.collect(); // emits bundle:collected, then self-destructs
+    if (!bundle || bundle.collected || bundle.collecting) return;
+    // Magnet arc (Sprint 9): the bundle flies to the player, then banks on arrival.
+    bundle.collectWithArc(this.player, () => {
+      const pt = bundle.plantType;
+      this.plantBank[pt] = (this.plantBank[pt] || 0) + 1;
+      EventBus.emit('bank:updated', { bank: { ...this.plantBank } });
+      bundle.collect(); // emits bundle:collected, then self-destructs
+    });
   }
 
   onBundleCollected({ plantType, position }) {
@@ -544,7 +569,7 @@ export default class GameScene extends Phaser.Scene {
     const collectRange = this.getHarvestRange();
 
     for (const seed of this.seeds) {
-      if (!seed.active || seed.collected) continue;
+      if (!seed.active || seed.collected || seed.collecting) continue;
       seed.updateProximity(this.player);
       if (!seed.collectible) continue;
 
@@ -557,15 +582,7 @@ export default class GameScene extends Phaser.Scene {
       if (d > collectRange) continue;
 
       if (this.player.hasEmptySlot()) {
-        if (this.player.addSeed(seed.plantType)) {
-          const recovered = seed.isDespawning;
-          seed.collect();
-          EventBus.emit('seed:collected', {
-            plantType: seed.plantType,
-            position: { x: seed.x, y: seed.y }
-          });
-          if (recovered) EventBus.emit('seed:recovered', { plantType: seed.plantType });
-        }
+        this.beginSeedCollect(seed);
       } else if (d < candidateDist) {
         candidateDist = d;
         candidate = seed;
@@ -581,6 +598,26 @@ export default class GameScene extends Phaser.Scene {
     if (candidate && candidate === this._swapSnoozedSeed) candidate = null;
 
     this.handleSwapPicker(candidate);
+  }
+
+  // Magnet collect (Sprint 9): arc the seed onto the player, then add it to
+  // inventory on arrival. The add is deferred to arrival so the seed:collected
+  // particles + sfx fire where the seed lands. If the slot was claimed by another
+  // arriving seed in the same window, re-arm the seed instead of dropping it.
+  beginSeedCollect(seed) {
+    seed.collectWithArc(this.player, () => {
+      if (!this.player.addSeed(seed.plantType)) {
+        seed.cancelArc();
+        return;
+      }
+      const recovered = seed.isDespawning;
+      seed.collect();
+      EventBus.emit('seed:collected', {
+        plantType: seed.plantType,
+        position: { x: seed.x, y: seed.y }
+      });
+      if (recovered) EventBus.emit('seed:recovered', { plantType: seed.plantType });
+    });
   }
 
   // Full inventory near a collectible seed → show the swap picker (Sprint 7,
@@ -745,6 +782,79 @@ export default class GameScene extends Phaser.Scene {
     }
   }
 
+  // --- Contextual F prompt (Sprint 9) ---------------------------------------
+  // Each frame, find the single nearest interactable in range and push a fully
+  // resolved prompt to the HUD. Nearest wins; informational states (no [F])
+  // render greyed. Events are deduped so the HUD only updates on change.
+  updateInteractPrompt() {
+    const p = this.player;
+    let best = null;
+    let bestDist = Infinity;
+
+    const consider = (obj, range, build) => {
+      if (!obj) return;
+      const d = Phaser.Math.Distance.Between(p.x, p.y, obj.x, obj.y);
+      if (d > range || d >= bestDist) return;
+      const info = build();
+      if (info) {
+        best = info;
+        bestDist = d;
+      }
+    };
+
+    consider(this.chest, INTERACT_RANGE, () => ({ text: '[F] Open Workshop', actionable: true }));
+    consider(this.signpost, INTERACT_RANGE, () => ({ text: '[F] View achievements', actionable: true }));
+    consider(this.sleepObject, INTERACT_RANGE, () => ({
+      text: `[F] Sleep — advance to Day ${this.daySystem.dayNumber + 1}`,
+      actionable: true
+    }));
+    consider(this.well, INTERACT_RANGE, () => this.wellPrompt());
+
+    const bed = this.nearestBed(INTERACT_RANGE);
+    if (bed) consider(bed, INTERACT_RANGE, () => this.bedPrompt(bed));
+
+    if (best) {
+      if (best.text !== this._lastPromptText) {
+        this._lastPromptText = best.text;
+        EventBus.emit('interact:nearObject', { text: best.text, actionable: best.actionable });
+      }
+    } else if (this._lastPromptText !== null) {
+      this._lastPromptText = null;
+      EventBus.emit('interact:leftObject', {});
+    }
+  }
+
+  wellPrompt() {
+    if (this.player.waterCharges < this.player.waterCapacity) {
+      return { text: '[F] Fill watering can', actionable: true };
+    }
+    return { text: 'Watering can full ✓', actionable: false };
+  }
+
+  bedPrompt(bed) {
+    if (bed.isReady()) {
+      return { text: `[F] Harvest ${this.plantName(bed.plantType)}`, actionable: true };
+    }
+    if (bed.isEmpty()) {
+      const idx = this.player.getOldestSeed();
+      if (idx === -1) return { text: 'Need a seed to plant', actionable: false };
+      return { text: `[F] Plant ${this.plantName(this.player.seedSlots[idx])}`, actionable: true };
+    }
+    // Growing / planted.
+    const days = Math.ceil(bed.daysRemaining);
+    const dayWord = days === 1 ? 'day' : 'days';
+    if (bed.watered) return { text: 'Watered today ✓', actionable: false };
+    if (this.player.waterCharges > 0) {
+      return { text: `[F] Water — ${days} ${dayWord} left`, actionable: true };
+    }
+    return { text: `${days} ${dayWord} remaining`, actionable: false };
+  }
+
+  plantName(plantType) {
+    const plant = this.gameData.plants[plantType];
+    return plant ? plant.name : plantType;
+  }
+
   // --- Decorative props (Sprint 8) ------------------------------------------
   // Static, non-interactive decor scattered across both zones. Drawn above the
   // ground/fence (depth 2) but below seeds, enemies and the player. No-op until
@@ -843,26 +953,27 @@ export default class GameScene extends Phaser.Scene {
       bed.plant(plantType);
       return true;
     }
-    if (bed.isGrowing() && this.player.hasWater) {
+    if (bed.isGrowing() && this.player.waterCharges > 0) {
       this.waterBedsFrom(bed);
-      this.player.hasWater = false;
-      EventBus.emit('player:usedWater', {});
+      this.player.useWater(); // spend one charge (multi-bed soak still costs one)
       return true;
     }
     return false;
   }
 
   // Water the targeted bed, plus extra growing beds up to the can's bedsPerUse
-  // (Sprint 4 watering-can upgrade — golden can soaks the whole garden).
+  // (Sprint 4 watering-can upgrade — golden can soaks the whole garden). The
+  // can tier rides along so each bed rolls the Sprint 9 acceleration odds.
   waterBedsFrom(primary) {
+    const canTier = this.player.getWateringCanTier();
     const perUse = this.player.wateringCan.bedsPerUse || 1;
-    primary.water();
+    primary.water(canTier);
     let watered = 1;
     if (perUse > 1) {
       for (const bed of this.beds) {
         if (watered >= perUse) break;
         if (bed !== primary && bed.isGrowing() && !bed.watered) {
-          bed.water();
+          bed.water(canTier);
           watered++;
         }
       }
@@ -870,9 +981,8 @@ export default class GameScene extends Phaser.Scene {
   }
 
   getWater() {
-    if (this.player.hasWater) return;
-    this.player.hasWater = true;
-    EventBus.emit('player:gotWater', {});
+    if (this.player.waterCharges >= this.player.waterCapacity) return;
+    this.player.fillWater();
   }
 
   sleep() {
@@ -964,6 +1074,7 @@ export default class GameScene extends Phaser.Scene {
 
   onZoneChanged({ zone }) {
     this.currentZone = zone;
+    this.applyDayTint();
     // The gate chime is played by AudioSystem on 'player:zoneChanged'.
     this.crossfadeTo(zone === 'forest' ? 'bgm_forest' : 'bgm_garden');
     // Timer counts only in the forest, and never restarts once already expired.
@@ -996,6 +1107,22 @@ export default class GameScene extends Phaser.Scene {
       this._postTimerApplied = false;
     }
     this.handleEnemyScaling(d ? d.dayNumber : this.daySystem.dayNumber);
+    this.applyDayTint(); // deepen the atmosphere a touch with the new day
+  }
+
+  // Atmosphere wash that intensifies with the day count. Garden trends warm
+  // amber; forest trends cool blue-grey and a little stronger, so the deeper
+  // into a run the more the forest reads as threatening.
+  applyDayTint() {
+    if (!this.dayTint) return;
+    const day = this.daySystem ? this.daySystem.dayNumber : 1;
+    if (this.currentZone === 'garden') {
+      const a = Math.min(day * 0.008, 0.06);
+      this.dayTint.setFillStyle(0xffb866).setAlpha(a);
+    } else {
+      const a = Math.min(day * 0.01, 0.08);
+      this.dayTint.setFillStyle(0x4a5a82).setAlpha(a);
+    }
   }
 
   // Day-based enemy scaling: dark slimes ramp in from day 3 (one more every two
@@ -1022,11 +1149,12 @@ export default class GameScene extends Phaser.Scene {
     }
   }
 
-  onPlantHarvested({ plantType, position }) {
+  onPlantHarvested({ plantType, position, yield: harvestYield = 1 }) {
+    const amount = harvestYield || 1; // double-harvested beds yield 2 (Sprint 9)
     if (this.plantBank[plantType] === undefined) this.plantBank[plantType] = 0;
-    this.plantBank[plantType]++;
+    this.plantBank[plantType] += amount;
     if (this.plantsGrownEver[plantType] === undefined) this.plantsGrownEver[plantType] = 0;
-    this.plantsGrownEver[plantType]++;
+    this.plantsGrownEver[plantType] += amount;
     EventBus.emit('bank:updated', { bank: { ...this.plantBank } });
     if (position) this.particleSystem.harvestBurst(position);
     this.checkDemoWin();
@@ -1049,6 +1177,10 @@ export default class GameScene extends Phaser.Scene {
   // so loading the save again never re-triggers it.
   checkDemoWin() {
     if (this._demoWinTriggered) return;
+    // Guard (Sprint 9): the demo win can only ever resolve at the moment of a
+    // garden harvest. Forest bundle pickups credit the bank but never the
+    // grown-ever tally, and this guard makes the zone requirement explicit.
+    if (this.player.currentZone !== 'garden') return;
     const allGrown = Object.keys(this.gameData.plants).every(
       (pt) => (this.plantsGrownEver[pt] || 0) >= DEMO_WIN_PER_PLANT
     );
@@ -1125,11 +1257,33 @@ export default class GameScene extends Phaser.Scene {
     this.player.setVelocity(0, 0);
     if (this._swapPickerOpen) this.closeSwapPicker(false);
     EventBus.emit('upgrade:opened', {});
-    this.scene.launch('UpgradeScene');
+    // Play the chest lid-open tween, then launch the workshop overlay.
+    this.animateChestOpen(() => this.scene.launch('UpgradeScene'));
+  }
+
+  // Lid opens: squash the chest's height briefly before the overlay appears.
+  // Works on the rectangle placeholder; a real chest sprite would tween a lid
+  // frame here instead. Falls through immediately if the chest is missing.
+  animateChestOpen(done) {
+    if (!this.chest) {
+      done();
+      return;
+    }
+    this.tweens.add({
+      targets: this.chest,
+      scaleY: 0.85,
+      duration: 120,
+      ease: 'Quad.easeOut',
+      onComplete: () => this.time.delayedCall(200, done)
+    });
   }
 
   onUpgradeClosed() {
     this._upgradeOpen = false;
+    // Lid closes: reverse the open tween.
+    if (this.chest) {
+      this.tweens.add({ targets: this.chest, scaleY: 1, duration: 150, ease: 'Quad.easeOut' });
+    }
   }
 
   // --- Win overlay & New Game+ (Sprint 5) -----------------------------------
@@ -1232,8 +1386,36 @@ export default class GameScene extends Phaser.Scene {
       if (lv.stat > 0) this.applyStatEffect(plantType, lv.stat);
       if (lv.gear >= 0) this.applyGearEffect(plantType, lv.gear);
     });
+    this.applyWellUpgrade();
     this.player.recalculateStats();
     this.daySystem.setTimerBonus(this.player.statBonuses.timerBonus);
+  }
+
+  // --- Well upgrade track (Sprint 9) ----------------------------------------
+  // A standalone track (not tied to a plant tree): better well = more water
+  // charges per trip. Paid for in blue flowers — the life/water resource.
+
+  applyWellUpgrade() {
+    const tiers = this.gameData.well_upgrades.tiers;
+    const idx = Phaser.Math.Clamp(this.wellLevel, 0, tiers.length - 1);
+    this.player.setWaterCapacity(tiers[idx].capacity);
+  }
+
+  purchaseWellUpgrade() {
+    const tiers = this.gameData.well_upgrades.tiers;
+    const nextIndex = this.wellLevel + 1;
+    if (nextIndex >= tiers.length) return { ok: false };
+    const tier = tiers[nextIndex];
+    const currency = tier.currency;
+    const cost = tier.cost;
+    if ((this.plantBank[currency] || 0) < cost) return { ok: false };
+    this.plantBank[currency] -= cost;
+    this.wellLevel = nextIndex;
+    this.applyWellUpgrade();
+    // upgrade:purchased drives runStats + auto-save + particle burst via onUpgradePurchased.
+    EventBus.emit('upgrade:purchased', { plantType: currency, track: 'well', newLevel: nextIndex, cost });
+    EventBus.emit('bank:updated', { bank: { ...this.plantBank } });
+    return { ok: true, newLevel: nextIndex, cost };
   }
 
   applyStatEffect(plantType, level) {
@@ -1280,6 +1462,7 @@ export default class GameScene extends Phaser.Scene {
       seedSlots: this.player.seedSlots.length,
       gardenBeds: this.beds.map((b) => b.serialize()),
       plantsGrownEver: { ...this.plantsGrownEver },
+      wellLevel: this.wellLevel,
       newGamePlus: this.newGamePlus,
       demoWinTriggered: this._demoWinTriggered,
       settings: { ...this.audioSettings },
@@ -1450,6 +1633,7 @@ export default class GameScene extends Phaser.Scene {
     this.daySystem.update(delta);
     this.updateSeeds();
     this.updateStructureLabels();
+    this.updateInteractPrompt();
 
     if (Phaser.Input.Keyboard.JustDown(this.fKey)) {
       this.handleInteract();
