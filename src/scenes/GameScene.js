@@ -21,9 +21,11 @@ import Slime from '../entities/Slime.js';
 import Skeleton from '../entities/Skeleton.js';
 import Seed from '../entities/Seed.js';
 import GardenBed from '../entities/GardenBed.js';
+import Projectile from '../entities/Projectile.js';
 import DaySystem from '../systems/DaySystem.js';
 import CombatSystem from '../systems/CombatSystem.js';
 import ParticleSystem from '../systems/ParticleSystem.js';
+import SaveSystem from '../core/SaveSystem.js';
 import entitiesData from '../data/entities.json';
 
 const INTERACT_RANGE = 48; // px — F-key reach for beds, well, sleep
@@ -48,9 +50,44 @@ const ENEMY_DEATH_COLORS = {
   skeleton: '#E8E2D0'
 };
 
+// --- Upgrades, save & projectiles (Sprint 4) ---
+// Which player gear slot each plant's gear track feeds.
+const GEAR_SLOT_BY_PLANT = {
+  red_mushroom: 'weapon',
+  blue_flower: 'armor',
+  golden_wheat: 'boots',
+  green_herb: 'satchel',
+  glowshroom: 'ranged',
+  sunflower: 'wateringCan'
+};
+const DEFAULT_BANK = {
+  red_mushroom: 0,
+  blue_flower: 0,
+  golden_wheat: 0,
+  green_herb: 0,
+  glowshroom: 0,
+  sunflower: 0
+};
+const PROJECTILE_POOL_SIZE = 10;
+// Garden bed grid layout (row-wraps as satchel upgrades add beds).
+const BED_BASE_X = 1340;
+const BED_BASE_Y = 260;
+const BED_COL_GAP = 160;
+const BED_ROW_GAP = 150;
+const BEDS_PER_ROW = 4;
+const CHEST_X = 1600;
+const CHEST_Y = 560;
+
 export default class GameScene extends Phaser.Scene {
   constructor() {
     super('GameScene');
+  }
+
+  // Receives { slotIndex, save } from MenuScene. Falls back to a fresh default
+  // save when launched directly (e.g. dev hot-reload).
+  init(data) {
+    this.currentSlot = data && data.slotIndex != null ? data.slotIndex : 0;
+    this.saveData = data && data.save ? data.save : SaveSystem.load(this.currentSlot);
   }
 
   create() {
@@ -60,7 +97,14 @@ export default class GameScene extends Phaser.Scene {
     this._postTimerApplied = false;
     this._sleeping = false;
     this._swapCandidate = null;
+    this._upgradeOpen = false;
     this._busHandlers = [];
+
+    // --- Persistent state restored from the save slot ---
+    this.plantBank = { ...DEFAULT_BANK, ...(this.saveData.bank || {}) };
+    this.upgradeLevels = JSON.parse(JSON.stringify(this.saveData.upgrades));
+    this.plantsGrownEver = { ...DEFAULT_BANK, ...(this.saveData.plantsGrownEver || {}) };
+    this._playtimeMs = (this.saveData.totalPlaytime || 0) * 1000;
 
     // Single source of truth for all active enemies (slimes + skeletons). The
     // CombatSystem and enemy-scaling logic both read this array.
@@ -109,24 +153,24 @@ export default class GameScene extends Phaser.Scene {
     this.combatSystem = new CombatSystem(this);
     this.particleSystem = new ParticleSystem(this);
 
+    // --- Projectile pool (Sprint 4 ranged) ---
+    this.spawnProjectilePool();
+
     // --- Sprint 2 world objects ---
     this.seeds = [];
     this.spawnSeeds();
     this.spawnGardenBeds();
     this.spawnGardenStructures();
 
-    // --- Plant bank ---
-    this.plantBank = {
-      red_mushroom: 0,
-      blue_flower: 0,
-      golden_wheat: 0,
-      green_herb: 0,
-      glowshroom: 0,
-      sunflower: 0
-    };
-
     // --- Day timer (extracted system) ---
     this.daySystem = new DaySystem(this, this.gameData);
+    this.daySystem.dayNumber = this.saveData.dayNumber || 1;
+
+    // --- Apply saved upgrades to the freshly-built player ---
+    this.applyAllUpgrades();
+
+    // Populate the enemy density appropriate to the loaded day (no-op on day 1).
+    this.handleEnemyScaling(this.daySystem.dayNumber);
 
     // --- Audio ---
     this.setupMusic();
@@ -153,15 +197,35 @@ export default class GameScene extends Phaser.Scene {
     this.subscribe('day:advanced', (d) => this.onDayAdvanced(d));
     this.subscribe('plant:harvested', (d) => this.onPlantHarvested(d));
     this.subscribe('enemy:died', (d) => this.onEnemyDied(d));
+    this.subscribe('projectile:spawn', (d) => this.firePooledProjectile(d));
+    this.subscribe('upgrade:closed', () => this.onUpgradeClosed());
+    this.subscribe('upgrade:purchased', () => this.autoSave());
+    this.subscribe('player:slept', () => this.onPlayerSlept());
 
     // --- HUD scene ---
     this.scene.launch('UIScene', { dayNumber: this.daySystem.dayNumber });
-    this.time.delayedCall(0, () =>
-      EventBus.emit('day:dayChanged', { day: this.daySystem.dayNumber })
-    );
+    // Push the full restored HUD state once UIScene has booted and subscribed.
+    this.time.delayedCall(0, () => this.syncHud());
 
     this.events.once('shutdown', this.shutdown, this);
     this.events.once('destroy', this.shutdown, this);
+  }
+
+  // Broadcast all restored state so the HUD reflects the loaded save.
+  syncHud() {
+    EventBus.emit('day:dayChanged', { day: this.daySystem.dayNumber });
+    EventBus.emit('inventory:changed', { slots: [...this.player.seedSlots] });
+    EventBus.emit('bank:updated', { bank: { ...this.plantBank } });
+    EventBus.emit('player:statsChanged', {
+      maxHP: this.player.maxHP,
+      currentHP: this.player.currentHP
+    });
+    if (this.player.equippedGear.ranged !== null) {
+      EventBus.emit('ranged:equipped', {
+        ammo: this.player.rangedAmmo,
+        max: this.player.rangedAmmoMax
+      });
+    }
   }
 
   // --- Placeholder textures (Sprint 2 additive — leaves BootScene untouched) -
@@ -172,6 +236,13 @@ export default class GameScene extends Phaser.Scene {
       g.fillStyle(0xffffff, 1);
       g.fillCircle(7, 7, 7);
       g.generateTexture('px_seed', 14, 14);
+      g.destroy();
+    }
+    if (!this.textures.exists('px_projectile')) {
+      const g = this.make.graphics({ x: 0, y: 0, add: false });
+      g.fillStyle(0xeac34f, 1);
+      g.fillRect(0, 0, 8, 4);
+      g.generateTexture('px_projectile', 8, 4);
       g.destroy();
     }
   }
@@ -348,6 +419,7 @@ export default class GameScene extends Phaser.Scene {
   updateSeeds() {
     let candidate = null;
     let candidateDist = Infinity;
+    const collectRange = this.getHarvestRange();
 
     for (const seed of this.seeds) {
       if (!seed.active || seed.collected) continue;
@@ -360,7 +432,7 @@ export default class GameScene extends Phaser.Scene {
         seed.x,
         seed.y
       );
-      if (d > SEED_COLLECT_RANGE) continue;
+      if (d > collectRange) continue;
 
       if (this.player.hasEmptySlot()) {
         if (this.player.addSeed(seed.plantType)) {
@@ -408,14 +480,29 @@ export default class GameScene extends Phaser.Scene {
 
   spawnGardenBeds() {
     this.beds = [];
-    const bedY = 260;
-    const startX = 1340;
-    const gap = 160;
-    for (let i = 0; i < 4; i++) {
-      this.beds.push(
-        new GardenBed(this, startX + i * gap, bedY, i, this.gameData)
-      );
+    const savedBeds = (this.saveData && this.saveData.gardenBeds) || [];
+    // At least the original 4 beds; more if a satchel save grew the garden.
+    const count = Math.max(4, savedBeds.length);
+    for (let i = 0; i < count; i++) {
+      const pos = this.bedPosition(i);
+      const bed = new GardenBed(this, pos.x, pos.y, i, this.gameData);
+      if (savedBeds[i]) bed.restore(savedBeds[i]);
+      this.beds.push(bed);
     }
+  }
+
+  // Beds fill a row left-to-right, wrapping to a new row every BEDS_PER_ROW.
+  // Index 0–3 reproduce the original Sprint 2 positions exactly.
+  bedPosition(i) {
+    const col = i % BEDS_PER_ROW;
+    const row = Math.floor(i / BEDS_PER_ROW);
+    return { x: BED_BASE_X + col * BED_COL_GAP, y: BED_BASE_Y + row * BED_ROW_GAP };
+  }
+
+  addGardenBed() {
+    const i = this.beds.length;
+    const pos = this.bedPosition(i);
+    this.beds.push(new GardenBed(this, pos.x, pos.y, i, this.gameData));
   }
 
   spawnGardenStructures() {
@@ -445,6 +532,28 @@ export default class GameScene extends Phaser.Scene {
         color: '#EDD49A'
       })
       .setOrigin(0.5, 1)
+      .setDepth(20);
+
+    // Workshop chest — open the upgrade overlay.
+    this.chest = this.add
+      .rectangle(CHEST_X, CHEST_Y, 64, 48, 0x6e4a22)
+      .setStrokeStyle(3, 0xd4a83f)
+      .setDepth(2);
+    this.add
+      .text(CHEST_X, CHEST_Y - 38, 'WORKSHOP', {
+        fontFamily: '"Courier New", monospace',
+        fontSize: '14px',
+        color: '#EDD49A'
+      })
+      .setOrigin(0.5, 1)
+      .setDepth(20);
+    this.add
+      .text(CHEST_X, CHEST_Y + 34, '[F] Upgrades', {
+        fontFamily: '"Courier New", monospace',
+        fontSize: '12px',
+        color: '#9B9389'
+      })
+      .setOrigin(0.5, 0)
       .setDepth(20);
   }
 
@@ -476,8 +585,13 @@ export default class GameScene extends Phaser.Scene {
   }
 
   handleInteract() {
-    // Priority: sleep > well > garden bed > seed swap. Objects are spatially
-    // separated so only one is ever in range, but ordering keeps it deterministic.
+    // Priority: chest > sleep > well > garden bed > seed swap. Objects are
+    // spatially separated so only one is ever in range, but ordering keeps it
+    // deterministic.
+    if (this.chest && this.within(this.chest, INTERACT_RANGE)) {
+      this.openUpgrade();
+      return;
+    }
     if (this.sleepObject && this.within(this.sleepObject, INTERACT_RANGE)) {
       this.sleep();
       return;
@@ -507,12 +621,29 @@ export default class GameScene extends Phaser.Scene {
       return true;
     }
     if (bed.isGrowing() && this.player.hasWater) {
-      bed.water();
+      this.waterBedsFrom(bed);
       this.player.hasWater = false;
       EventBus.emit('player:usedWater', {});
       return true;
     }
     return false;
+  }
+
+  // Water the targeted bed, plus extra growing beds up to the can's bedsPerUse
+  // (Sprint 4 watering-can upgrade — golden can soaks the whole garden).
+  waterBedsFrom(primary) {
+    const perUse = this.player.wateringCan.bedsPerUse || 1;
+    primary.water();
+    let watered = 1;
+    if (perUse > 1) {
+      for (const bed of this.beds) {
+        if (watered >= perUse) break;
+        if (bed !== primary && bed.isGrowing() && !bed.watered) {
+          bed.water();
+          watered++;
+        }
+      }
+    }
   }
 
   getWater() {
@@ -534,8 +665,8 @@ export default class GameScene extends Phaser.Scene {
     this.cameras.main.once('camerafadeoutcomplete', () => {
       this.daySystem.advanceDay(); // dayNumber++, refill timer, emit day:advanced
       this.player.healToFull(); // emits player:healed → UIScene updates
+      // player:slept triggers onPlayerSlept → ammo refill + auto-save to the slot.
       EventBus.emit('player:slept', { dayNumber: this.daySystem.dayNumber });
-      console.log('AUTO-SAVE placeholder — Day', this.daySystem.dayNumber);
 
       GameState.transition('PLAYING');
       this.physics.resume();
@@ -604,6 +735,13 @@ export default class GameScene extends Phaser.Scene {
     this.crossfadeTo(zone === 'forest' ? 'bgm_forest' : 'bgm_garden');
     // Timer counts only in the forest, and never restarts once already expired.
     this.daySystem.setTimerActive(zone === 'forest' && this.daySystem.timerRemaining > 0);
+    // Auto-save whenever the player reaches the safety of the garden.
+    if (zone === 'garden') this.autoSave();
+  }
+
+  onPlayerSlept() {
+    this.player.restoreAmmo(); // refill ranged ammo each new day
+    this.autoSave();
   }
 
   onTimerExpired() {
@@ -653,6 +791,8 @@ export default class GameScene extends Phaser.Scene {
   onPlantHarvested({ plantType }) {
     if (this.plantBank[plantType] === undefined) this.plantBank[plantType] = 0;
     this.plantBank[plantType]++;
+    if (this.plantsGrownEver[plantType] === undefined) this.plantsGrownEver[plantType] = 0;
+    this.plantsGrownEver[plantType]++;
     EventBus.emit('bank:updated', { bank: { ...this.plantBank } });
   }
 
@@ -693,11 +833,157 @@ export default class GameScene extends Phaser.Scene {
     this.particleSystem.showDeathBurst(position.x, position.y, color);
   }
 
+  // --- Upgrade economy (Sprint 4) -------------------------------------------
+
+  openUpgrade() {
+    if (this._upgradeOpen) return;
+    this._upgradeOpen = true;
+    this.player.setVelocity(0, 0);
+    this.swapPrompt.setVisible(false);
+    EventBus.emit('upgrade:opened', {});
+    this.scene.launch('UpgradeScene');
+  }
+
+  onUpgradeClosed() {
+    this._upgradeOpen = false;
+  }
+
+  // Called by UpgradeScene. Validates affordability, deducts the cost, applies
+  // the effect to the player, bumps the saved level, and broadcasts the change.
+  purchaseUpgrade(plantType, track) {
+    const def = this.gameData.upgrades[plantType];
+    const lv = this.upgradeLevels[plantType];
+
+    if (track === 'stat') {
+      if (lv.stat >= def.stat.levels) return { ok: false };
+      const cost = def.stat.costs[lv.stat];
+      if (this.plantBank[plantType] < cost) return { ok: false };
+      this.plantBank[plantType] -= cost;
+      lv.stat += 1;
+      this.applyStatEffect(plantType, lv.stat);
+      this.player.recalculateStats();
+      if (def.stat.statKey === 'timerBonus') {
+        this.daySystem.setTimerBonus(this.player.statBonuses.timerBonus);
+      }
+      EventBus.emit('upgrade:purchased', { plantType, track, newLevel: lv.stat, cost });
+      EventBus.emit('bank:updated', { bank: { ...this.plantBank } });
+      return { ok: true, newLevel: lv.stat, cost };
+    }
+
+    const nextIndex = lv.gear + 1;
+    if (nextIndex >= def.gear.tiers.length) return { ok: false };
+    const cost = def.gear.tiers[nextIndex].cost;
+    if (this.plantBank[plantType] < cost) return { ok: false };
+    this.plantBank[plantType] -= cost;
+    lv.gear = nextIndex;
+    this.applyGearEffect(plantType, nextIndex);
+    if (GEAR_SLOT_BY_PLANT[plantType] === 'satchel') this.addGardenBed();
+    EventBus.emit('upgrade:purchased', { plantType, track, newLevel: nextIndex, cost });
+    EventBus.emit('bank:updated', { bank: { ...this.plantBank } });
+    return { ok: true, newLevel: nextIndex, cost };
+  }
+
+  // Replay all saved upgrade levels onto the player (called once on load).
+  applyAllUpgrades() {
+    Object.keys(this.upgradeLevels).forEach((plantType) => {
+      const lv = this.upgradeLevels[plantType];
+      if (lv.stat > 0) this.applyStatEffect(plantType, lv.stat);
+      if (lv.gear >= 0) this.applyGearEffect(plantType, lv.gear);
+    });
+    this.player.recalculateStats();
+    this.daySystem.setTimerBonus(this.player.statBonuses.timerBonus);
+  }
+
+  applyStatEffect(plantType, level) {
+    const stat = this.gameData.upgrades[plantType].stat;
+    // Recompute from base each time (level * perLevelBonus) to avoid drift.
+    this.player.statBonuses[stat.statKey] = stat.perLevelBonus * level;
+  }
+
+  applyGearEffect(plantType, tierIndex) {
+    const tier = this.gameData.upgrades[plantType].gear.tiers[tierIndex];
+    switch (GEAR_SLOT_BY_PLANT[plantType]) {
+      case 'weapon':
+        this.player.equipWeapon(tier);
+        break;
+      case 'armor':
+        this.player.equipArmor(tier);
+        break;
+      case 'boots':
+        this.player.equipBoots(tier);
+        break;
+      case 'satchel':
+        this.player.equipSatchel(tier);
+        break;
+      case 'ranged':
+        this.player.equipRanged(tier);
+        break;
+      case 'wateringCan':
+        this.player.equipWateringCan(tier);
+        break;
+      default:
+        break;
+    }
+  }
+
+  // --- Save (Sprint 4) ------------------------------------------------------
+
+  buildCurrentState() {
+    return {
+      dayNumber: this.daySystem.dayNumber,
+      totalPlaytime: Math.floor(this._playtimeMs / 1000),
+      bank: { ...this.plantBank },
+      upgrades: JSON.parse(JSON.stringify(this.upgradeLevels)),
+      equippedGear: { ...this.player.equippedGear },
+      seedSlots: this.player.seedSlots.length,
+      gardenBeds: this.beds.map((b) => b.serialize()),
+      plantsGrownEver: { ...this.plantsGrownEver },
+      newGamePlus: this.saveData.newGamePlus || false
+    };
+  }
+
+  autoSave() {
+    SaveSystem.save(this.currentSlot, this.buildCurrentState());
+  }
+
+  // --- Projectiles (Sprint 4 ranged) ----------------------------------------
+
+  spawnProjectilePool() {
+    this.projectileGroup = this.physics.add.group();
+    this.projectiles = [];
+    for (let i = 0; i < PROJECTILE_POOL_SIZE; i++) {
+      const p = new Projectile(this);
+      this.projectileGroup.add(p);
+      this.projectiles.push(p);
+    }
+    this.physics.add.overlap(this.projectileGroup, this.slimeGroup, (proj, enemy) =>
+      proj.hit(enemy)
+    );
+    this.physics.add.overlap(this.projectileGroup, this.skeletonGroup, (proj, enemy) =>
+      proj.hit(enemy)
+    );
+  }
+
+  firePooledProjectile({ x, y, facing, damage, range, speed }) {
+    const p = this.projectiles.find((pr) => !pr.active);
+    if (!p) return; // pool exhausted — drop the shot
+    p.fire(x, y, facing, damage, range, speed);
+  }
+
+  getHarvestRange() {
+    // Base pickup radius widened by the sunflower Harvest Range stat.
+    return SEED_COLLECT_RANGE * (1 + this.player.statBonuses.harvestRange);
+  }
+
   // --- Main loop ------------------------------------------------------------
 
   update(time, delta) {
     if (!GameState.is('PLAYING')) return;
+    // Freeze the world (but keep rendering) while the workshop overlay is open.
+    if (this._upgradeOpen) return;
+
     const dt = delta / 1000;
+    this._playtimeMs += delta;
 
     this.player.update(dt);
     this.enemies.forEach((e) => e.update(dt, this.player));

@@ -179,6 +179,40 @@ export default class GardenBed {
     }
   }
 
+  // --- Save / restore (Sprint 4) --------------------------------------------
+
+  serialize() {
+    return {
+      plantType: this.plantType,
+      daysRemaining: this.daysRemaining,
+      watered: this.watered,
+      ready: this.state === STATE.READY
+    };
+  }
+
+  // Reapply a saved bed state without emitting gameplay events (it is a load,
+  // not a player action).
+  restore(saveState) {
+    if (!saveState || !saveState.plantType) {
+      this.plantType = null;
+      this.daysRemaining = 0;
+      this.watered = false;
+      this.setState(STATE.EMPTY);
+      return;
+    }
+    this.plantType = saveState.plantType;
+    this.plantColorNum = hexToNumber(this.gameData.plants[saveState.plantType].color);
+    this.daysRemaining = saveState.daysRemaining;
+    this.watered = !!saveState.watered;
+    if (saveState.ready) {
+      this.setState(STATE.READY);
+    } else {
+      const full = this.gameData.plants[saveState.plantType].growthDays;
+      this.setState(this.daysRemaining >= full ? STATE.PLANTED : STATE.GROWING);
+      this.refreshDaysText();
+    }
+  }
+
   // --- Helpers --------------------------------------------------------------
 
   isEmpty() {

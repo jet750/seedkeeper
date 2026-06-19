@@ -12,14 +12,29 @@ export default class DaySystem {
     this.scene = scene;
     this.gameData = gameData;
     this.dayNumber = 1;
-    this.timerRemaining = gameData.daySystem.timerDuration;
+    this.timerBonus = 0; // extra ms from the Day Timer upgrade (Sprint 4)
+    this.timerRemaining = this.maxTimer();
     this.timerActive = false;
     this.warningEmitted = false;
     this.urgentEmitted = false;
   }
 
+  maxTimer() {
+    return this.gameData.daySystem.timerDuration + this.timerBonus;
+  }
+
   setTimerActive(active) {
     this.timerActive = active;
+  }
+
+  // Day Timer upgrade: extends the per-day countdown. Applies to future days and
+  // immediately tops up the current day's remaining time by the delta.
+  setTimerBonus(ms) {
+    const delta = ms - this.timerBonus;
+    this.timerBonus = ms;
+    if (delta > 0 && this.timerRemaining > 0) {
+      this.timerRemaining = Math.min(this.timerRemaining + delta, this.maxTimer());
+    }
   }
 
   update(delta) {
@@ -45,7 +60,7 @@ export default class DaySystem {
 
   advanceDay() {
     this.dayNumber++;
-    this.timerRemaining = this.gameData.daySystem.timerDuration;
+    this.timerRemaining = this.maxTimer();
     this.warningEmitted = false;
     this.urgentEmitted = false;
     // Notify garden beds to tick growth (and clear watered flags).
@@ -53,7 +68,7 @@ export default class DaySystem {
   }
 
   resetTimer() {
-    this.timerRemaining = this.gameData.daySystem.timerDuration;
+    this.timerRemaining = this.maxTimer();
     this.warningEmitted = false;
     this.urgentEmitted = false;
   }

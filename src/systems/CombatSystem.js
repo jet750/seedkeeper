@@ -26,14 +26,15 @@ export default class CombatSystem {
     scene.events.once('destroy', this.cleanup, this);
   }
 
-  handlePlayerAttack({ direction, damage, position, arcRadius }) {
+  handlePlayerAttack({ direction, damage, position, arcRadius, arcDegrees }) {
     const hitbox = {
       x: position.x,
       y: position.y,
       radius: arcRadius,
       damage,
       direction,
-      arcDegrees: ARC_DEGREES,
+      // Weapons widen the swing cone (sword = 120°); default to the base arc.
+      arcDegrees: arcDegrees ?? ARC_DEGREES,
       expireTime: Date.now() + HITBOX_LIFETIME_MS,
       sourceType: 'player'
     };

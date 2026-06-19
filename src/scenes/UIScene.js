@@ -134,6 +134,23 @@ export default class UIScene extends Phaser.Scene {
         align: 'right'
       })
       .setOrigin(1, 1);
+
+    // BOTTOM RIGHT (above bank) — ranged ammo counter, hidden until equipped.
+    this.ammoText = this.add
+      .text(VIRTUAL_WIDTH - pad, VIRTUAL_HEIGHT - 72, '', {
+        fontFamily: '"Courier New", monospace',
+        fontSize: '18px',
+        fontStyle: 'bold',
+        color: '#EDD49A',
+        align: 'right'
+      })
+      .setOrigin(1, 1)
+      .setVisible(false);
+  }
+
+  refreshAmmo(ammo, max) {
+    this.ammoText.setText(`Ammo  ${ammo} / ${max}`).setVisible(true);
+    this.ammoText.setColor(ammo === 0 ? '#ff6b6b' : '#EDD49A');
   }
 
   buildSeedSlots(count) {
@@ -217,6 +234,15 @@ export default class UIScene extends Phaser.Scene {
     this.subscribe('player:gotWater', () => this.waterIndicator.setVisible(true));
     this.subscribe('player:usedWater', () => this.waterIndicator.setVisible(false));
     this.subscribe('bank:updated', (d) => this.refreshBank(d.bank));
+
+    // --- Sprint 4 ---
+    this.subscribe('player:statsChanged', (d) => {
+      this.hp = d.currentHP;
+      this.maxHP = d.maxHP;
+      this.refreshHP();
+    });
+    this.subscribe('ranged:equipped', (d) => this.refreshAmmo(d.ammo, d.max));
+    this.subscribe('ranged:fired', (d) => this.refreshAmmo(d.ammo, d.max));
   }
 
   refreshBank(bank) {
