@@ -148,5 +148,13 @@
       { "id": "well_cistern", "name": "Rain Cistern",  "capacity": 4, "cost": 10, "currency": "blue_flower" },
       { "id": "well_spring",  "name": "Garden Spring", "capacity": 8, "cost": 18, "currency": "blue_flower" }
     ]
-  }
+  },
+  "weather": [
+    { "id": "cloudy", "name": "Cloudy Day",    "icon": "☁️",  "description": "Overcast skies slow plant growth today.",            "effect": "growthPenalty",   "value": 1 },
+    { "id": "rain",   "name": "Rain Overnight","icon": "🌧️", "description": "The rain watered everything. Beds soaked overnight.", "effect": "freeWater",       "value": 1 },
+    { "id": "sunny",  "name": "Bright Sun",    "icon": "☀️",  "description": "Perfect growing conditions. Watering pays off more.",  "effect": "growthBonus",     "value": 0.15 },
+    { "id": "fog",    "name": "Forest Fog",    "icon": "🌫️", "description": "Enemies are disoriented. Detect range reduced today.", "effect": "enemyDetectMult", "value": 0.6 },
+    { "id": "wind",   "name": "Strong Wind",   "icon": "🍃",  "description": "Seeds drift on the wind. Respawn timers shortened.",   "effect": "respawnMult",     "value": 0.7 },
+    { "id": "clear",  "name": "Clear Day",     "icon": "🌤️", "description": "Nothing unusual. A good day to explore.",              "effect": "none",            "value": 0 }
+  ]
 }

@@ -166,20 +166,21 @@ export default class GardenBed {
   // Watering overhaul (Sprint 9): marking the bed wet still gates the once-a-day
   // rule, but watering now fires two probabilistic checks immediately rather
   // than a silent 33% growth bonus on the next day.
-  water(canTier = 0) {
+  water(canTier = 0, accelBonus = 0) {
     if (this.state !== STATE.PLANTED && this.state !== STATE.GROWING) return false;
     this.watered = true;
     this.refreshSoil();
     EventBus.emit('bed:watered', { bedIndex: this.bedIndex });
-    this.applyWateringEffects(canTier);
+    this.applyWateringEffects(canTier, accelBonus);
     return true;
   }
 
-  applyWateringEffects(canTier) {
+  // accelBonus is an extra flat chance from weather (Sprint 11 Bright Sun).
+  applyWateringEffects(canTier, accelBonus = 0) {
     if (this.daysRemaining <= 0) return; // already ready — nothing to roll
 
     // Check 1 — accelerated growth: chance to shave a full day off.
-    const accelerateChance = ACCELERATE_BASE_CHANCE + canTier * ACCELERATE_PER_TIER;
+    const accelerateChance = ACCELERATE_BASE_CHANCE + canTier * ACCELERATE_PER_TIER + accelBonus;
     if (Math.random() < accelerateChance) {
       this.daysRemaining = Math.max(0, this.daysRemaining - 1);
       EventBus.emit('ui:floatText', {

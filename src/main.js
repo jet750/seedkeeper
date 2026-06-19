@@ -12,6 +12,7 @@ import UIScene from './scenes/UIScene.js';
 import UpgradeScene from './scenes/UpgradeScene.js';
 import WinScene from './scenes/WinScene.js';
 import SignpostScene from './scenes/SignpostScene.js';
+import SeedDictScene from './scenes/SeedDictScene.js';
 import DevMenuScene from './scenes/DevMenuScene.js';
 
 const config = {
@@ -41,6 +42,7 @@ const config = {
     UpgradeScene,
     WinScene,
     SignpostScene,
+    SeedDictScene,
     DevMenuScene
   ]
 };

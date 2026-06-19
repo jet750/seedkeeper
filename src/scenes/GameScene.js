@@ -24,6 +24,7 @@ import Slime from '../entities/Slime.js';
 import Skeleton from '../entities/Skeleton.js';
 import Seed from '../entities/Seed.js';
 import GardenBed from '../entities/GardenBed.js';
+import WorldDetail from '../entities/WorldDetail.js';
 import Projectile from '../entities/Projectile.js';
 import DaySystem from '../systems/DaySystem.js';
 import CombatSystem from '../systems/CombatSystem.js';
@@ -114,13 +115,28 @@ export default class GameScene extends Phaser.Scene {
     this._winOpen = false;
     this._signpostOpen = false;
     this._lastPromptText = null; // contextual F-prompt dedupe (Sprint 9)
+    this._dictionaryOpen = false;
+    this._worldDetailOpen = false;
     this._busHandlers = [];
 
-    // --- Win / New Game+ / run-stats state (Sprint 5) ---
+    // --- Weather day-scoped modifiers (Sprint 11) ---
+    this.weatherDetectMult = 1; // fog → 0.6 (read by enemies)
+    this.weatherRespawnMult = 1; // wind → 0.7 (read by seeds)
+    this._weatherAccelBonus = 0; // sunny → +0.15 watering accelerate chance
+    this._pendingGrowthPenalty = false; // cloudy → +1 day on the next night
+
+    // --- Win / New Game+ / run-stats state (Sprint 5 + Sprint 11 run summary) ---
     this.newGamePlus = !!this.saveData.newGamePlus;
     this._demoWinTriggered = !!this.saveData.demoWinTriggered;
     this._fullWinTriggered = false;
-    this.runStats = { enemiesDefeated: 0, upgradesPurchased: 0 };
+    this.runStats = {
+      enemiesDefeated: 0,
+      upgradesPurchased: 0,
+      seedsCollected: 0,
+      deaths: 0,
+      firstPlantGrown: null,
+      killsByType: { green_slime: 0, dark_slime: 0, skeleton: 0 }
+    };
     this.audioSettings = {
       masterVolume: 1.0,
       sfxVolume: 0.8,
@@ -134,6 +150,10 @@ export default class GameScene extends Phaser.Scene {
     this.upgradeLevels = JSON.parse(JSON.stringify(this.saveData.upgrades));
     this.plantsGrownEver = { ...DEFAULT_BANK, ...(this.saveData.plantsGrownEver || {}) };
     this.wellLevel = this.saveData.wellLevel || 0; // Sprint 9 well-upgrade tier index
+    // Sprint 11 retention state.
+    this.discoveredPlants = [...(this.saveData.discoveredPlants || [])];
+    this._dailySeedCollected = this.saveData.dailySeedCollected || null;
+    this._dailySeedToastShown = this.saveData.dailySeedToastShown || null;
     this._playtimeMs = (this.saveData.totalPlaytime || 0) * 1000;
 
     // Single source of truth for all active enemies (slimes + skeletons). The
@@ -220,9 +240,24 @@ export default class GameScene extends Phaser.Scene {
     this.spawnProps();
     this.createForestAmbience();
 
+    // --- Sprint 11 world systems ---
+    this.createRockFormations(); // physics-collider cover geometry
+    this.createWorldDetails(); // examinable storytelling objects
+    this.maybeSpawnDailySeed(); // once-a-day glowing gift
+
     // --- Day timer (extracted system) ---
     this.daySystem = new DaySystem(this, this.gameData);
     this.daySystem.dayNumber = this.saveData.dayNumber || 1;
+    // Weather for the current day: restore the saved one, or pick a quiet
+    // starting weather on a fresh game (no day-1 wake-up toast). Modifiers apply
+    // either way; the HUD icon is pushed in syncHud().
+    if (this.saveData.todayWeather) {
+      this.daySystem.restoreWeather(this.saveData.todayWeather);
+    } else {
+      const pool = this.gameData.weather;
+      this.daySystem.todayWeather = pool[Math.floor(Math.random() * pool.length)];
+    }
+    this.applyWeatherEffects(this.daySystem.todayWeather);
 
     // --- Achievements (Sprint 6) — mounted after daySystem so unlocks can
     // stamp the current day. Driven purely by EventBus events. ---
@@ -271,6 +306,11 @@ export default class GameScene extends Phaser.Scene {
     this.subscribe('inventory:swapConfirmed', (d) => this.executeSwap(d.dropSlotIndex));
     this.subscribe('inventory:swapCancelled', () => this.onSwapCancelled());
 
+    // --- Weather + retention (Sprint 11) ---
+    this.subscribe('weather:changed', (d) => this.onWeatherChanged(d));
+    this.subscribe('dictionary:closed', () => { this._dictionaryOpen = false; });
+    this.subscribe('worlddetail:closed', () => { this._worldDetailOpen = false; });
+
     // --- HUD scene ---
     this.scene.launch('UIScene', { dayNumber: this.daySystem.dayNumber });
     // Push the full restored HUD state once UIScene has booted and subscribed.
@@ -308,6 +348,10 @@ export default class GameScene extends Phaser.Scene {
       charges: this.player.waterCharges,
       capacity: this.player.waterCapacity
     });
+    if (this.daySystem && this.daySystem.todayWeather) {
+      // Icon-only sync (no wake-up toast) so a reloaded run shows current weather.
+      EventBus.emit('weather:changed', { weather: this.daySystem.todayWeather, isNewDay: false });
+    }
   }
 
   // --- Placeholder textures (Sprint 2 additive — leaves BootScene untouched) -
@@ -615,12 +659,14 @@ export default class GameScene extends Phaser.Scene {
         return;
       }
       const recovered = seed.isDespawning;
+      const wasDaily = seed.isDailySpecial;
       seed.collect();
       EventBus.emit('seed:collected', {
         plantType: seed.plantType,
         position: { x: seed.x, y: seed.y }
       });
       if (recovered) EventBus.emit('seed:recovered', { plantType: seed.plantType });
+      if (wasDaily) this.markDailySeedCollected();
     });
   }
 
@@ -662,6 +708,7 @@ export default class GameScene extends Phaser.Scene {
       return;
     }
     const recovered = seed.isDespawning;
+    const wasDaily = seed.isDailySpecial;
     const dropped = this.player.dropSeed(dropSlotIndex); // chosen seed lands at the player's feet
     this.player.addSeed(seed.plantType); // fills the freed slot
     seed.collect();
@@ -670,6 +717,7 @@ export default class GameScene extends Phaser.Scene {
       position: { x: seed.x, y: seed.y }
     });
     if (recovered) EventBus.emit('seed:recovered', { plantType: seed.plantType });
+    if (wasDaily) this.markDailySeedCollected();
     this._swapCandidate = null;
     // Don't immediately re-prompt a swap for the seed we just dropped at our feet.
     this._swapSnoozedSeed = dropped;
@@ -774,6 +822,17 @@ export default class GameScene extends Phaser.Scene {
       .setStrokeStyle(2, 0x5a3a22)
       .setDepth(2);
     this.addStructureLabel(SIGN_X, SIGN_Y, SIGN_X, SIGN_Y - 36, 'LOG  [F]', '#EDD49A');
+
+    // Field Notes book (Sprint 11) — opens the Seed Dictionary. Distinct blue
+    // book on a stand, set apart from the signpost and the bed grid.
+    const BOOK_X = 1340;
+    const BOOK_Y = 560;
+    this.add.rectangle(BOOK_X, BOOK_Y + 14, 8, 36, 0x6e4a22).setDepth(2); // stand
+    this.book = this.add
+      .rectangle(BOOK_X, BOOK_Y - 8, 30, 22, 0x395a7a)
+      .setStrokeStyle(2, 0xabc4de)
+      .setDepth(2);
+    this.addStructureLabel(BOOK_X, BOOK_Y, BOOK_X, BOOK_Y - 34, 'FIELD NOTES  [F]', '#ABC4DE');
   }
 
   // Register a structure label (hidden by default; revealed within
@@ -830,9 +889,13 @@ export default class GameScene extends Phaser.Scene {
       actionable: true
     }));
     consider(this.well, INTERACT_RANGE, () => this.wellPrompt());
+    consider(this.book, INTERACT_RANGE, () => ({ text: '[F] Read Field Notes', actionable: true }));
 
     const bed = this.nearestBed(INTERACT_RANGE);
     if (bed) consider(bed, INTERACT_RANGE, () => this.bedPrompt(bed));
+
+    const wd = this.nearestWorldDetail(INTERACT_RANGE);
+    if (wd) consider(wd, INTERACT_RANGE, () => ({ text: '[F] Examine', actionable: true }));
 
     if (best) {
       if (best.text !== this._lastPromptText) {
@@ -994,6 +1057,10 @@ export default class GameScene extends Phaser.Scene {
       this.openSignpost();
       return;
     }
+    if (this.book && this.within(this.book, INTERACT_RANGE)) {
+      this.openSeedDict();
+      return;
+    }
     if (this.sleepObject && this.within(this.sleepObject, INTERACT_RANGE)) {
       this.sleep();
       return;
@@ -1004,6 +1071,10 @@ export default class GameScene extends Phaser.Scene {
     }
     const bed = this.nearestBed(INTERACT_RANGE);
     if (bed && this.interactBed(bed)) return;
+
+    // Lowest priority: examine a forest world-detail object (Sprint 11).
+    const detail = this.nearestWorldDetail(INTERACT_RANGE);
+    if (detail) this.openWorldDetail(detail);
   }
 
   interactBed(bed) {
@@ -1031,14 +1102,15 @@ export default class GameScene extends Phaser.Scene {
   // can tier rides along so each bed rolls the Sprint 9 acceleration odds.
   waterBedsFrom(primary) {
     const canTier = this.player.getWateringCanTier();
+    const bonus = this._weatherAccelBonus; // Bright Sun adds accelerate chance
     const perUse = this.player.wateringCan.bedsPerUse || 1;
-    primary.water(canTier);
+    primary.water(canTier, bonus);
     let watered = 1;
     if (perUse > 1) {
       for (const bed of this.beds) {
         if (watered >= perUse) break;
         if (bed !== primary && bed.isGrowing() && !bed.watered) {
-          bed.water(canTier);
+          bed.water(canTier, bonus);
           watered++;
         }
       }
@@ -1048,6 +1120,239 @@ export default class GameScene extends Phaser.Scene {
   getWater() {
     if (this.player.waterCharges >= this.player.waterCapacity) return;
     this.player.fillWater();
+  }
+
+  // --- Weather (Sprint 11) --------------------------------------------------
+
+  onWeatherChanged({ weather }) {
+    this.applyWeatherEffects(weather);
+    // UIScene owns the wake-up toast + persistent HUD icon.
+  }
+
+  // Reset the day-scoped modifiers, then set the one this weather drives. The
+  // cloudy growth penalty is applied at the next night (see onDayAdvanced) so
+  // it is intentionally not toggled here.
+  applyWeatherEffects(weather) {
+    this.weatherDetectMult = 1;
+    this.weatherRespawnMult = 1;
+    this._weatherAccelBonus = 0;
+    if (!weather) return;
+    switch (weather.effect) {
+      case 'growthPenalty':
+        this._pendingGrowthPenalty = true;
+        break;
+      case 'freeWater':
+        this.applyFreeWater();
+        break;
+      case 'growthBonus':
+        this._weatherAccelBonus = weather.value;
+        break;
+      case 'enemyDetectMult':
+        this.weatherDetectMult = weather.value;
+        break;
+      case 'respawnMult':
+        this.weatherRespawnMult = weather.value;
+        break;
+      default:
+        break;
+    }
+  }
+
+  // Rain: every growing bed gets watered overnight for free (still rolls the
+  // Sprint 9 accelerate/double checks).
+  applyFreeWater() {
+    if (!this.beds) return;
+    const canTier = this.player.getWateringCanTier();
+    this.beds.forEach((bed) => {
+      if (bed.isGrowing() && !bed.watered) bed.water(canTier, this._weatherAccelBonus);
+    });
+  }
+
+  // --- World details (Sprint 11) --------------------------------------------
+
+  createWorldDetails() {
+    this.worldDetails = [];
+    // Fixed forest placements, each ≥100px from seed spawns and off the paths.
+    const defs = [
+      {
+        x: 1350, y: 1000, frame: 0,
+        title: 'An Old Marker',
+        text: "A weathered post, half-rotted into the soil. Something is carved into the wood — initials, maybe, or a tally. It's been here longer than the overgrowth."
+      },
+      {
+        x: 380, y: 2120, frame: 1,
+        title: 'Stacked Stones',
+        text: 'Seven flat stones balanced deliberately beside the stream. Someone took care with this. The moss on the bottom stone is years old.'
+      },
+      {
+        x: 1000, y: 2350, frame: 2,
+        title: 'A Fallen Giant',
+        text: 'The tree came down in a storm — the root ball still half-raised from the earth, trailing soil like a torn hem. New saplings already grow from the trunk.'
+      },
+      {
+        x: 2600, y: 2050, frame: 3,
+        title: 'Something Buried',
+        text: "A flat stone lies flush with the ground, deliberate in a way natural stones aren't. Whatever was placed here was placed with intention."
+      },
+      {
+        x: 2780, y: 2180, frame: 4,
+        title: 'A Rusted Can',
+        text: 'A watering can, orange with rust, wedged between two roots. The spout still points at a patch of earth where nothing grows anymore.'
+      }
+    ];
+    defs.forEach((d) => {
+      this.worldDetails.push(
+        new WorldDetail(this, d.x, d.y, {
+          sprite: 'props_decor',
+          frame: d.frame,
+          scale: 2,
+          range: 56,
+          title: d.title,
+          text: d.text
+        })
+      );
+    });
+  }
+
+  nearestWorldDetail(range) {
+    if (!this.worldDetails) return null;
+    let best = null;
+    let bestDist = range;
+    for (const d of this.worldDetails) {
+      const dist = d.distanceTo(this.player);
+      if (dist < bestDist) {
+        bestDist = dist;
+        best = d;
+      }
+    }
+    return best;
+  }
+
+  // Non-modal popup — the world keeps running; UIScene auto-closes it after 6s
+  // or on Esc, then emits worlddetail:closed.
+  openWorldDetail(detail) {
+    if (this._worldDetailOpen) return;
+    this._worldDetailOpen = true;
+    EventBus.emit('worlddetail:opened', {
+      title: detail.config.title,
+      text: detail.config.text
+    });
+  }
+
+  // --- Rock formations (Sprint 11) ------------------------------------------
+  // Static collider clusters that create cover geometry. Generated rock texture
+  // (no confidently-sliceable rock sprite in the packs — see CREDITS TODO).
+  createRockFormations() {
+    if (!this.textures.exists('px_rock')) {
+      const g = this.make.graphics({ x: 0, y: 0, add: false });
+      g.fillStyle(0x6b6660, 1);
+      g.fillRoundedRect(1, 5, 26, 21, 8);
+      g.fillStyle(0x847d74, 1);
+      g.fillRoundedRect(5, 2, 15, 12, 6);
+      g.lineStyle(2, 0x47443f, 1);
+      g.strokeRoundedRect(1, 5, 26, 21, 8);
+      g.generateTexture('px_rock', 28, 28);
+      g.destroy();
+    }
+
+    this.rockGroup = this.physics.add.staticGroup();
+    const formations = [
+      { x: 800, y: GARDEN_ZONE_HEIGHT + 400, count: 3 },
+      { x: 2400, y: GARDEN_ZONE_HEIGHT + 800, count: 4 },
+      { x: 1200, y: GARDEN_ZONE_HEIGHT + 1200, count: 3 },
+      { x: 2800, y: GARDEN_ZONE_HEIGHT + 600, count: 5 }
+    ];
+    formations.forEach(({ x, y, count }) => {
+      for (let i = 0; i < count; i++) {
+        const rx = x + (Math.random() - 0.5) * 120;
+        const ry = y + (Math.random() - 0.5) * 80;
+        // Keep rocks off seed spawns so nothing becomes uncollectible.
+        const tooClose = this.seeds.some(
+          (s) => Phaser.Math.Distance.Between(rx, ry, s.x, s.y) < 60
+        );
+        if (tooClose) continue;
+        const rock = this.rockGroup.create(rx, ry, 'px_rock');
+        rock.setScale(1.6).setDepth(3);
+        rock.refreshBody();
+      }
+    });
+
+    // Player and both enemy groups route around rocks (chase geometry).
+    this.physics.add.collider(this.player, this.rockGroup);
+    this.physics.add.collider(this.slimeGroup, this.rockGroup);
+    this.physics.add.collider(this.skeletonGroup, this.rockGroup);
+  }
+
+  // --- Daily special seed (Sprint 11) ---------------------------------------
+
+  maybeSpawnDailySeed() {
+    const today = new Date().toDateString();
+    if (this._dailySeedCollected === today) return; // already claimed today
+    this.spawnDailySpecialSeed();
+  }
+
+  spawnDailySpecialSeed() {
+    const dateStr = new Date().toDateString();
+    const hash = dateStr.split('').reduce((acc, c) => acc + c.charCodeAt(0), 0);
+    const x = 400 + (hash % (WORLD_WIDTH - 800));
+    const y = GARDEN_ZONE_HEIGHT + 600 + (hash % (WORLD_HEIGHT - GARDEN_ZONE_HEIGHT - 800));
+    const rarePlants = ['glowshroom', 'green_herb', 'glowshroom', 'green_herb', 'blue_flower'];
+    const plantType = rarePlants[hash % rarePlants.length];
+
+    const seed = new Seed(this, x, y, plantType, this.gameData);
+    seed.setScale(1.4);
+    seed.isDailySpecial = true;
+    seed.nameTagOverride = "✨ Today's Gift";
+    this._dailySeed = seed;
+
+    // Pulsing glow so it reads as special at a distance.
+    this.tweens.add({
+      targets: seed,
+      alpha: 0.6,
+      duration: 800,
+      yoyo: true,
+      repeat: -1,
+      ease: 'Sine.easeInOut'
+    });
+  }
+
+  markDailySeedCollected() {
+    this._dailySeedCollected = new Date().toDateString();
+    this.saveData.dailySeedCollected = this._dailySeedCollected;
+    this._dailySeed = null;
+    this.autoSave();
+  }
+
+  // First forest entry each day teases the special seed (once per day).
+  maybeDailySeedToast() {
+    const today = new Date().toDateString();
+    if (this._dailySeedToastShown === today) return;
+    if (this._dailySeedCollected === today) return;
+    if (!this._dailySeed || !this._dailySeed.active) return;
+    this._dailySeedToastShown = today;
+    this.saveData.dailySeedToastShown = today;
+    EventBus.emit('ui:notice', {
+      text: '✨ A special seed has appeared somewhere in the forest today.'
+    });
+    this.autoSave();
+  }
+
+  // --- Seed dictionary (Sprint 11) ------------------------------------------
+
+  discoverPlant(plantType) {
+    if (!plantType || this.discoveredPlants.includes(plantType)) return;
+    this.discoveredPlants.push(plantType);
+    EventBus.emit('dictionary:newEntry', { plantType });
+    this.autoSave();
+  }
+
+  openSeedDict() {
+    if (this._dictionaryOpen) return;
+    this._dictionaryOpen = true;
+    this.player.setVelocity(0, 0);
+    if (this._swapPickerOpen) this.closeSwapPicker(false);
+    this.scene.launch('SeedDictScene');
+    this.scene.bringToTop('SeedDictScene');
   }
 
   sleep() {
@@ -1144,6 +1449,8 @@ export default class GameScene extends Phaser.Scene {
     this.crossfadeTo(zone === 'forest' ? 'bgm_forest' : 'bgm_garden');
     // Timer counts only in the forest, and never restarts once already expired.
     this.daySystem.setTimerActive(zone === 'forest' && this.daySystem.timerRemaining > 0);
+    // First forest entry of the day teases the daily special seed.
+    if (zone === 'forest') this.maybeDailySeedToast();
     // Auto-save whenever the player reaches the safety of the garden.
     if (zone === 'garden') this.autoSave();
   }
@@ -1170,6 +1477,17 @@ export default class GameScene extends Phaser.Scene {
         if (e.resetPostTimer) e.resetPostTimer();
       });
       this._postTimerApplied = false;
+    }
+    // Cloudy weather (selected the previous morning) negates the night's growth:
+    // beds have already ticked -1 above (GardenBed listens first), so add 1 back.
+    if (this._pendingGrowthPenalty) {
+      this._pendingGrowthPenalty = false;
+      this.beds.forEach((bed) => {
+        if (bed.isGrowing()) {
+          bed.daysRemaining += 1;
+          bed.refreshDaysText();
+        }
+      });
     }
     this.handleEnemyScaling(d ? d.dayNumber : this.daySystem.dayNumber);
     this.applyDayTint(); // deepen the atmosphere a touch with the new day
@@ -1220,12 +1538,16 @@ export default class GameScene extends Phaser.Scene {
     this.plantBank[plantType] += amount;
     if (this.plantsGrownEver[plantType] === undefined) this.plantsGrownEver[plantType] = 0;
     this.plantsGrownEver[plantType] += amount;
+    if (!this.runStats.firstPlantGrown) this.runStats.firstPlantGrown = plantType; // run summary
     EventBus.emit('bank:updated', { bank: { ...this.plantBank } });
     if (position) this.particleSystem.harvestBurst(position);
     this.checkDemoWin();
   }
 
   onSeedCollected({ plantType, position }) {
+    // Run-summary + dictionary tracking happen regardless of particle position.
+    this.runStats.seedsCollected++;
+    this.discoverPlant(plantType);
     if (!position) return;
     const plant = this.gameData.plants[plantType];
     this.particleSystem.seedCollect(position, plant ? plant.color : '#ffffff');
@@ -1272,6 +1594,7 @@ export default class GameScene extends Phaser.Scene {
   onPlayerDied() {
     if (this._respawning) return;
     this._respawning = true;
+    this.runStats.deaths++; // run summary
 
     this.particleSystem.deathBurst(this.player.x, this.player.y);
 
@@ -1310,6 +1633,7 @@ export default class GameScene extends Phaser.Scene {
 
   onEnemyDied({ type, position }) {
     this.runStats.enemiesDefeated++;
+    if (this.runStats.killsByType[type] !== undefined) this.runStats.killsByType[type]++;
     const color = ENEMY_DEATH_COLORS[type] || '#ffffff';
     this.particleSystem.showDeathBurst(position.x, position.y, color);
   }
@@ -1387,7 +1711,13 @@ export default class GameScene extends Phaser.Scene {
       daysSurvived: this.daySystem.dayNumber,
       enemiesDefeated: this.runStats.enemiesDefeated,
       upgradesPurchased: this.runStats.upgradesPurchased,
-      plantsGrown: { ...this.plantsGrownEver }
+      plantsGrown: { ...this.plantsGrownEver },
+      // Sprint 11 run summary fields.
+      killsByType: { ...this.runStats.killsByType },
+      seedsCollected: this.runStats.seedsCollected,
+      deaths: this.runStats.deaths,
+      firstPlantGrown: this.runStats.firstPlantGrown,
+      achievementsUnlocked: this.achievementSystem ? this.achievementSystem.unlockedIds.size : 0
     });
     this.scene.bringToTop('WinScene');
   }
@@ -1544,6 +1874,11 @@ export default class GameScene extends Phaser.Scene {
       gardenBeds: this.beds.map((b) => b.serialize()),
       plantsGrownEver: { ...this.plantsGrownEver },
       wellLevel: this.wellLevel,
+      // Sprint 11 retention state.
+      todayWeather: this.daySystem && this.daySystem.todayWeather ? this.daySystem.todayWeather.id : null,
+      dailySeedCollected: this._dailySeedCollected,
+      dailySeedToastShown: this._dailySeedToastShown,
+      discoveredPlants: [...this.discoveredPlants],
       newGamePlus: this.newGamePlus,
       demoWinTriggered: this._demoWinTriggered,
       settings: { ...this.audioSettings },
@@ -1702,9 +2037,10 @@ export default class GameScene extends Phaser.Scene {
 
   update(time, delta) {
     if (!GameState.is('PLAYING')) return;
-    // Freeze the world (but keep rendering) while an overlay (workshop, win, or
-    // achievement log) is open.
-    if (this._upgradeOpen || this._winOpen || this._signpostOpen) return;
+    // Freeze the world (but keep rendering) while a modal overlay (workshop, win,
+    // achievement log, or seed dictionary) is open. The world-detail popup is
+    // non-modal, so it deliberately does NOT freeze the world.
+    if (this._upgradeOpen || this._winOpen || this._signpostOpen || this._dictionaryOpen) return;
 
     const dt = delta / 1000;
     this._playtimeMs += delta;

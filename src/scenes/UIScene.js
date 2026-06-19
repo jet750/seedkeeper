@@ -40,6 +40,10 @@ export default class UIScene extends Phaser.Scene {
     this._busHandlers = [];
     this._pulseTween = null;
     this._promptTween = null;
+    this._banner = null; // transient top-center banner (weather/notice/dict)
+    this._bannerEvent = null;
+    this._worldDetailObjs = null; // examine popup
+    this._worldDetailTimer = null;
     this._toastQueue = [];
     this._toastActive = false;
     this._swapOpen = false;
@@ -57,6 +61,10 @@ export default class UIScene extends Phaser.Scene {
 
     // Number keys / Esc drive the swap picker (Sprint 7) — only while it's open.
     this.input.keyboard.on('keydown', (e) => this.onSwapKey(e));
+    // Esc also closes an open world-detail popup (Sprint 11).
+    this.input.keyboard.on('keydown-ESC', () => {
+      if (this._worldDetailObjs) this.closeWorldDetail();
+    });
 
     this.events.once('shutdown', this.teardown, this);
     this.events.once('destroy', this.teardown, this);
@@ -110,6 +118,11 @@ export default class UIScene extends Phaser.Scene {
         fontStyle: 'bold',
         color: '#8AB87E'
       })
+      .setOrigin(0.5, 0);
+
+    // TOP CENTER (right of the day counter) — persistent weather icon (Sprint 11).
+    this.weatherIcon = this.add
+      .text(VIRTUAL_WIDTH / 2 + 92, 32, '', { fontSize: '24px' })
       .setOrigin(0.5, 0);
 
     // TOP RIGHT — Timer (forest only)
@@ -366,6 +379,122 @@ export default class UIScene extends Phaser.Scene {
     // --- Sprint 9 — contextual interaction prompt ---
     this.subscribe('interact:nearObject', (d) => this.showInteractPrompt(d.text, d.actionable));
     this.subscribe('interact:leftObject', () => this.hideInteractPrompt());
+
+    // --- Sprint 11 — weather, world details, dictionary, notices ---
+    this.subscribe('weather:changed', (d) => this.onWeather(d));
+    this.subscribe('worlddetail:opened', (d) => this.showWorldDetail(d));
+    this.subscribe('dictionary:newEntry', (d) => this.showDictToast(d.plantType));
+    this.subscribe('ui:notice', (d) => this.showBanner(d.text, 4500, COLOR_NORMAL));
+  }
+
+  // --- Weather, banners, world-detail popup (Sprint 11) ---------------------
+
+  onWeather({ weather, isNewDay }) {
+    if (!weather) return;
+    this.weatherIcon.setText(weather.icon || '');
+    if (isNewDay) {
+      this.showBanner(`${weather.icon} ${weather.name}\n"${weather.description}"`, 5000, '#EDD49A');
+    }
+  }
+
+  showDictToast(plantType) {
+    const name = entitiesData.plants[plantType] ? entitiesData.plants[plantType].name : plantType;
+    this.showBanner(`📖 New entry: ${name}`, 2600, '#8AB87E');
+  }
+
+  // Single transient top-center banner. A new banner replaces the previous one.
+  showBanner(text, holdMs, color) {
+    if (this._banner) {
+      this._banner.destroy();
+      this._banner = null;
+    }
+    if (this._bannerEvent) {
+      this._bannerEvent.remove(false);
+      this._bannerEvent = null;
+    }
+    const t = this.add
+      .text(VIRTUAL_WIDTH / 2, 150, text, {
+        fontFamily: '"Courier New", monospace',
+        fontSize: '20px',
+        color: color || COLOR_NORMAL,
+        align: 'center',
+        backgroundColor: 'rgba(20,18,16,0.85)',
+        padding: { x: 18, y: 10 },
+        stroke: '#141210',
+        strokeThickness: 2
+      })
+      .setOrigin(0.5, 0)
+      .setDepth(320)
+      .setAlpha(0);
+    this._banner = t;
+    this.tweens.add({ targets: t, alpha: 1, duration: 200 });
+    this._bannerEvent = this.time.delayedCall(holdMs, () => {
+      this.tweens.add({
+        targets: t,
+        alpha: 0,
+        duration: 400,
+        onComplete: () => {
+          t.destroy();
+          if (this._banner === t) this._banner = null;
+        }
+      });
+    });
+  }
+
+  showWorldDetail({ title, text }) {
+    this.closeWorldDetail();
+    const cx = VIRTUAL_WIDTH / 2;
+    const cy = VIRTUAL_HEIGHT / 2;
+    const w = 640;
+    const h = 250;
+    const bg = this.add
+      .rectangle(cx, cy, w, h, 0x221e1b, 0.97)
+      .setStrokeStyle(2, 0x8ab87e)
+      .setDepth(310);
+    const titleT = this.add
+      .text(cx, cy - h / 2 + 22, title, {
+        fontFamily: '"Courier New", monospace',
+        fontSize: '22px',
+        fontStyle: 'bold',
+        color: '#EDD49A'
+      })
+      .setOrigin(0.5, 0)
+      .setDepth(311);
+    const divider = this.add.rectangle(cx, cy - h / 2 + 58, w - 60, 2, 0x4d4843).setDepth(311);
+    const body = this.add
+      .text(cx, cy - h / 2 + 76, text, {
+        fontFamily: '"Courier New", monospace',
+        fontSize: '16px',
+        fontStyle: 'italic',
+        color: '#D1CCC6',
+        align: 'center',
+        wordWrap: { width: w - 64 },
+        lineSpacing: 6
+      })
+      .setOrigin(0.5, 0)
+      .setDepth(311);
+    const hint = this.add
+      .text(cx, cy + h / 2 - 26, '[Esc] Close', {
+        fontFamily: '"Courier New", monospace',
+        fontSize: '14px',
+        color: '#9B9389'
+      })
+      .setOrigin(0.5)
+      .setDepth(311);
+    this._worldDetailObjs = [bg, titleT, divider, body, hint];
+    this._worldDetailTimer = this.time.delayedCall(6000, () => this.closeWorldDetail());
+  }
+
+  closeWorldDetail() {
+    if (this._worldDetailTimer) {
+      this._worldDetailTimer.remove(false);
+      this._worldDetailTimer = null;
+    }
+    if (this._worldDetailObjs) {
+      this._worldDetailObjs.forEach((o) => o.destroy());
+      this._worldDetailObjs = null;
+      EventBus.emit('worlddetail:closed', {});
+    }
   }
 
   // --- Achievement toasts (Sprint 6) ----------------------------------------

@@ -52,6 +52,10 @@ const SaveSystem = {
       ],
       plantsGrownEver: freshBank(),
       wellLevel: 0,
+      todayWeather: null,
+      dailySeedCollected: null,
+      dailySeedToastShown: null,
+      discoveredPlants: [],
       newGamePlus: false,
       demoWinTriggered: false,
       settings: { masterVolume: 1.0, sfxVolume: 0.8, musicVolume: 0.5, muted: false },
@@ -93,6 +97,10 @@ const SaveSystem = {
     // cleanly. Idempotent — only fills what is missing.
     if (data.demoWinTriggered === undefined) data.demoWinTriggered = false;
     if (data.wellLevel === undefined) data.wellLevel = 0;
+    if (data.todayWeather === undefined) data.todayWeather = null;
+    if (data.dailySeedCollected === undefined) data.dailySeedCollected = null;
+    if (data.dailySeedToastShown === undefined) data.dailySeedToastShown = null;
+    if (!Array.isArray(data.discoveredPlants)) data.discoveredPlants = [];
     if (!data.settings) {
       data.settings = { masterVolume: 1.0, sfxVolume: 0.8, musicVolume: 0.5, muted: false };
     }

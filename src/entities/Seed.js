@@ -46,6 +46,11 @@ export default class Seed extends Phaser.GameObjects.Image {
     this.homeY = y;
     this.baseY = y;
 
+    // Daily special seed (Sprint 11): once-a-day gift that never respawns and
+    // shows a custom name tag. Set by GameScene.spawnDailySpecialSeed().
+    this.isDailySpecial = false;
+    this.nameTagOverride = null;
+
     // Despawning seeds (dropped on player death) shrink away over a recovery
     // window and are gone for good — they do not respawn like world seeds.
     this.isDespawning = false;
@@ -114,7 +119,11 @@ export default class Seed extends Phaser.GameObjects.Image {
       return;
     }
     const d = Phaser.Math.Distance.Between(this.x, this.y, player.x, player.y);
-    this.nameTag.setVisible(d < NAME_TAG_RANGE);
+    const near = d < NAME_TAG_RANGE;
+    if (near && this.nameTagOverride && this.nameTag.text !== this.nameTagOverride) {
+      this.nameTag.setText(this.nameTagOverride);
+    }
+    this.nameTag.setVisible(near);
   }
 
   // Magnet collect (Sprint 9): tween the seed onto the player, then run the
@@ -158,15 +167,21 @@ export default class Seed extends Phaser.GameObjects.Image {
     this.nameTag.setVisible(false);
     if (this.bobTween) this.bobTween.pause();
 
-    // A recovered death-drop is consumed permanently — cancel its shrink tween
-    // and destroy rather than scheduling a respawn.
+    // A recovered death-drop, or the daily special gift, is consumed
+    // permanently — destroy rather than scheduling a respawn.
     if (this.isDespawning) {
       if (this._despawnTween) this._despawnTween.remove();
       this.destroy();
       return;
     }
+    if (this.isDailySpecial) {
+      this.destroy();
+      return;
+    }
 
-    this.scene.time.delayedCall(this.respawnDelay, () => this.respawn());
+    // Strong Wind weather shortens respawn timers for the day (Sprint 11).
+    const mult = (this.scene && this.scene.weatherRespawnMult) || 1;
+    this.scene.time.delayedCall(this.respawnDelay * mult, () => this.respawn());
   }
 
   respawn() {

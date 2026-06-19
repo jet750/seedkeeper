@@ -119,7 +119,9 @@ export default class Slime extends Phaser.Physics.Arcade.Sprite {
     const dist = Phaser.Math.Distance.Between(this.x, this.y, player.x, player.y);
 
     // --- Transitions ---
-    if (this.state === STATE.WANDER && dist < this.detectRange) {
+    // Forest Fog weather reduces detect range for the day (Sprint 11).
+    const detect = this.detectRange * (this.scene.weatherDetectMult || 1);
+    if (this.state === STATE.WANDER && dist < detect) {
       this.startChase(); // wind-up pulse, then CHASE
     } else if (this.state === STATE.CHASE && dist > this.loseRange) {
       this.state = STATE.WANDER;

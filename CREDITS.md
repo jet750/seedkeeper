@@ -29,6 +29,17 @@ ambient motes.
   with open/closed frames; drives the Sprint 9 chest-open animation)  
 - UI Pack `Inventory_Blocks_Spritesheet.png` → `ui_slot_frame.png` (HUD seed-slot frames)
 
+**Sprint 11 notes:**  
+- Weather HUD uses emoji icons (the Sprout Lands `Weather_Icons_small.png` sheet is
+  present and could replace them later; emoji avoids frame-index guesswork).  
+- Rock-formation obstacles use a generated `px_rock` texture — no confidently
+  sliceable rock sprite in the free packs (Sprout Lands `Mushrooms, Flowers,
+  Stones.png` exists but frame mapping is unverified). TODO: swap to real stone art.  
+- World-detail objects reuse `props_decor` frames as their markers.  
+- Tool-use animations (Sprint 11 Feature 7) — skipped: no `spriteConfig.json` and the
+  player sheet's tool-row layout is unknown, so no frames to wire (per prompt's
+  "skip if frames don't exist").
+
 **Sprint 10 TODOs (assets present but not yet wired — kept placeholders to avoid
 regressions):**  
 - Sleep bed sprite — `Basic_Furniture.png` layout ambiguous; placeholder rectangle kept.  

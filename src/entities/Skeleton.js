@@ -80,7 +80,9 @@ export default class Skeleton extends Phaser.Physics.Arcade.Sprite {
     const dist = Phaser.Math.Distance.Between(this.x, this.y, player.x, player.y);
 
     // --- Transitions ---
-    if (this.state === STATE.PATROL && dist < this.detectRange) {
+    // Forest Fog weather reduces detect range for the day (Sprint 11).
+    const detect = this.detectRange * (this.scene.weatherDetectMult || 1);
+    if (this.state === STATE.PATROL && dist < detect) {
       this.state = STATE.CHASE;
     } else if (this.state === STATE.CHASE && dist > this.loseRange) {
       this.state = STATE.PATROL;
