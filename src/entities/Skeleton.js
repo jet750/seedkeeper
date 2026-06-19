@@ -11,7 +11,8 @@ import Phaser from 'phaser';
 import EventBus from '../core/EventBus.js';
 import { GARDEN_ZONE_HEIGHT } from '../core/Constants.js';
 import Seed from './Seed.js';
-import { getRandomSeedDrop } from '../systems/lootTable.js';
+import PlantBundle from './PlantBundle.js';
+import { getRandomSeedDrop, getRandomBundleDrop } from '../systems/lootTable.js';
 
 const STATE = { PATROL: 'PATROL', CHASE: 'CHASE' };
 const WAYPOINT_REACHED = 12; // px — close enough to advance to the next waypoint
@@ -177,6 +178,7 @@ export default class Skeleton extends Phaser.Physics.Arcade.Sprite {
       alpha: 0,
       duration: DEATH_FADE_MS,
       onComplete: () => {
+        this.dropBundle();
         this.dropSeeds();
         EventBus.emit('enemy:died', { type: 'skeleton', position: { x: this.x, y: this.y } });
         const idx = this.scene.enemies.indexOf(this);
@@ -184,6 +186,14 @@ export default class Skeleton extends Phaser.Physics.Arcade.Sprite {
         this.destroy();
       }
     });
+  }
+
+  // Skeletons have a high chance to drop a pre-grown plant bundle (Sprint 7).
+  dropBundle() {
+    const threshold = this.scene.gameData.enemies.skeleton.bundleDropChance || 0;
+    if (Math.random() > threshold) return;
+    const plantType = getRandomBundleDrop();
+    new PlantBundle(this.scene, this.x, this.y, plantType, this.scene.gameData);
   }
 
   dropSeeds() {

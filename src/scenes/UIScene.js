@@ -38,6 +38,12 @@ export default class UIScene extends Phaser.Scene {
     this.urgentTime = entitiesData.daySystem.urgentTime;
     this._busHandlers = [];
     this._pulseTween = null;
+    this._toastQueue = [];
+    this._toastActive = false;
+    this._swapOpen = false;
+    this._swapObjects = [];
+    this._swapSlots = [];
+    this._swapNewType = null;
   }
 
   create() {
@@ -46,6 +52,9 @@ export default class UIScene extends Phaser.Scene {
     this.refreshHP();
     this.refreshZone();
     this.refreshTimer();
+
+    // Number keys / Esc drive the swap picker (Sprint 7) — only while it's open.
+    this.input.keyboard.on('keydown', (e) => this.onSwapKey(e));
 
     this.events.once('shutdown', this.teardown, this);
     this.events.once('destroy', this.teardown, this);
@@ -98,6 +107,27 @@ export default class UIScene extends Phaser.Scene {
         color: COLOR_NORMAL
       })
       .setOrigin(1, 0.5);
+
+    // TOP RIGHT (under timer) — mute indicator, shown only while muted.
+    this.muteIndicator = this.add
+      .text(VIRTUAL_WIDTH - 40, 84, '🔇 MUTED', {
+        fontFamily: '"Courier New", monospace',
+        fontSize: '16px',
+        color: '#9B9389'
+      })
+      .setOrigin(1, 0.5)
+      .setVisible(false);
+
+    // TOP CENTER (under zone badge) — New Game+ indicator, shown only on NG+.
+    this.ngPlusIndicator = this.add
+      .text(VIRTUAL_WIDTH / 2, 96, '⭐ NG+', {
+        fontFamily: '"Courier New", monospace',
+        fontSize: '18px',
+        fontStyle: 'bold',
+        color: '#EDD49A'
+      })
+      .setOrigin(0.5, 0)
+      .setVisible(false);
 
     // TOP LEFT (under HP) — watering can indicator, shown only while carrying.
     this.waterIndicator = this.add
@@ -243,6 +273,251 @@ export default class UIScene extends Phaser.Scene {
     });
     this.subscribe('ranged:equipped', (d) => this.refreshAmmo(d.ammo, d.max));
     this.subscribe('ranged:fired', (d) => this.refreshAmmo(d.ammo, d.max));
+
+    // --- Sprint 5 ---
+    this.subscribe('audio:muteChanged', (d) => this.muteIndicator.setVisible(!!d.muted));
+    this.subscribe('ngplus:status', (d) => this.ngPlusIndicator.setVisible(!!d.active));
+    this.subscribe('newGamePlus:activated', () => this.ngPlusIndicator.setVisible(true));
+
+    // --- Sprint 6 — achievement toasts ---
+    this.subscribe('achievement:unlocked', (d) => this.enqueueToast(d.achievement));
+
+    // --- Sprint 7 — swap picker + death message ---
+    this.subscribe('inventory:swapRequested', (d) => this.openSwapPicker(d.slots, d.newPlantType));
+    this.subscribe('inventory:swapClosed', () => this.closeSwapPicker());
+    this.subscribe('player:died', () => this.showDeathMessage());
+  }
+
+  // --- Achievement toasts (Sprint 6) ----------------------------------------
+  // Slide in from the top-right, hold 4s, fade out. Concurrent unlocks queue
+  // and play one at a time (max depth 5 — oldest dropped on overflow).
+
+  enqueueToast(achievement) {
+    if (!achievement) return;
+    this._toastQueue.push(achievement);
+    if (this._toastQueue.length > 5) this._toastQueue.shift();
+    if (!this._toastActive) this.showNextToast();
+  }
+
+  showNextToast() {
+    if (this._toastQueue.length === 0) {
+      this._toastActive = false;
+      return;
+    }
+    this._toastActive = true;
+    this.buildToast(this._toastQueue.shift());
+  }
+
+  buildToast(a) {
+    const w = 380;
+    const h = 96;
+    const pad = 24;
+    const y = 160; // below the timer / mute / NG+ indicators
+    const xHidden = VIRTUAL_WIDTH + w;
+    const xShown = VIRTUAL_WIDTH - pad - w / 2;
+
+    const container = this.add.container(xHidden, y).setDepth(300);
+    const bg = this.add
+      .rectangle(0, 0, w, h, 0x221e1b, 0.97)
+      .setStrokeStyle(2, 0xd4a83f);
+    const icon = this.add.text(-w / 2 + 30, 0, a.icon, { fontSize: '34px' }).setOrigin(0.5);
+    const title = this.add
+      .text(-w / 2 + 60, -28, 'ACHIEVEMENT UNLOCKED', {
+        fontFamily: '"Courier New", monospace',
+        fontSize: '12px',
+        fontStyle: 'bold',
+        color: '#D4A83F'
+      })
+      .setOrigin(0, 0.5);
+    const name = this.add
+      .text(-w / 2 + 60, -6, a.name, {
+        fontFamily: '"Courier New", monospace',
+        fontSize: '18px',
+        fontStyle: 'bold',
+        color: '#F5EFE6'
+      })
+      .setOrigin(0, 0.5);
+    const flavor = this.add
+      .text(-w / 2 + 60, 22, `"${a.flavor}"`, {
+        fontFamily: '"Courier New", monospace',
+        fontSize: '12px',
+        color: '#9B9389',
+        wordWrap: { width: w - 80 }
+      })
+      .setOrigin(0, 0.5);
+
+    container.add([bg, icon, title, name, flavor]);
+
+    this.tweens.add({ targets: container, x: xShown, duration: 350, ease: 'Back.easeOut' });
+    this.time.delayedCall(4000, () => {
+      this.tweens.add({
+        targets: container,
+        x: xHidden,
+        alpha: 0,
+        duration: 400,
+        onComplete: () => {
+          container.destroy();
+          this.showNextToast();
+        }
+      });
+    });
+  }
+
+  // --- Swap picker (Sprint 7) -----------------------------------------------
+  // Shown when the player tries to collect a seed with a full inventory. Lists
+  // the filled slots as options; clicking one (or pressing its number key)
+  // drops that seed and collects the new one. Cancel / Esc / walking away abort.
+
+  openSwapPicker(slots, newPlantType) {
+    this.closeSwapPicker();
+    this._swapSlots = slots;
+    this._swapNewType = newPlantType;
+
+    const filled = [];
+    slots.forEach((pt, i) => {
+      if (pt !== null) filled.push({ pt, i });
+    });
+    if (filled.length === 0) return;
+    this._swapOpen = true;
+
+    const cx = VIRTUAL_WIDTH / 2;
+    const panelY = VIRTUAL_HEIGHT - 200;
+    const btnW = 150;
+    const btnH = 48;
+    const gap = 14;
+    const totalW = filled.length * btnW + (filled.length - 1) * gap;
+    const panelW = Math.max(totalW + 60, 420);
+    const panelH = 150;
+
+    const bg = this.add
+      .rectangle(cx, panelY, panelW, panelH, 0x221e1b, 0.97)
+      .setStrokeStyle(2, 0xd4a83f)
+      .setDepth(250);
+    this._swapObjects.push(bg);
+
+    this._swapObjects.push(
+      this.add
+        .text(cx, panelY - panelH / 2 + 16, 'Swap which seed?', {
+          fontFamily: '"Courier New", monospace',
+          fontSize: '18px',
+          fontStyle: 'bold',
+          color: '#EDD49A'
+        })
+        .setOrigin(0.5, 0)
+        .setDepth(251)
+    );
+
+    const newName = entitiesData.plants[newPlantType]
+      ? entitiesData.plants[newPlantType].name
+      : newPlantType;
+    this._swapObjects.push(
+      this.add
+        .text(cx, panelY - panelH / 2 + 44, `Picking up: ${newName}`, {
+          fontFamily: '"Courier New", monospace',
+          fontSize: '14px',
+          color: '#D1CCC6'
+        })
+        .setOrigin(0.5, 0)
+        .setDepth(251)
+    );
+
+    const startX = cx - totalW / 2 + btnW / 2;
+    const rowY = panelY + 6;
+    filled.forEach((f, n) => {
+      const x = startX + n * (btnW + gap);
+      const color = parseInt(entitiesData.plants[f.pt].color.replace('#', ''), 16);
+      const name = entitiesData.plants[f.pt].name;
+      const rect = this.add
+        .rectangle(x, rowY, btnW, btnH, 0x2d2926)
+        .setStrokeStyle(2, 0x57514b)
+        .setDepth(251)
+        .setInteractive({ useHandCursor: true });
+      const dot = this.add.circle(x - btnW / 2 + 18, rowY, 9, color).setDepth(252);
+      const label = this.add
+        .text(x - btnW / 2 + 34, rowY, `${f.i + 1}. ${name}`, {
+          fontFamily: '"Courier New", monospace',
+          fontSize: '13px',
+          color: '#F5EFE6'
+        })
+        .setOrigin(0, 0.5)
+        .setDepth(252);
+      rect.on('pointerover', () => rect.setStrokeStyle(2, 0xeac34f));
+      rect.on('pointerout', () => rect.setStrokeStyle(2, 0x57514b));
+      rect.on('pointerup', () => this.confirmSwap(f.i));
+      this._swapObjects.push(rect, dot, label);
+    });
+
+    const cancelY = panelY + panelH / 2 - 22;
+    const cancel = this.add
+      .rectangle(cx, cancelY, 170, 34, 0x8a3a3a)
+      .setStrokeStyle(2, 0x000000)
+      .setDepth(251)
+      .setInteractive({ useHandCursor: true });
+    const cancelLabel = this.add
+      .text(cx, cancelY, 'Cancel (Esc)', {
+        fontFamily: '"Courier New", monospace',
+        fontSize: '14px',
+        fontStyle: 'bold',
+        color: '#F5EFE6'
+      })
+      .setOrigin(0.5)
+      .setDepth(252);
+    cancel.on('pointerup', () => this.cancelSwap());
+    this._swapObjects.push(cancel, cancelLabel);
+  }
+
+  closeSwapPicker() {
+    this._swapObjects.forEach((o) => o.destroy());
+    this._swapObjects = [];
+    this._swapOpen = false;
+  }
+
+  onSwapKey(e) {
+    if (!this._swapOpen) return;
+    if (e.key === 'Escape') {
+      this.cancelSwap();
+      return;
+    }
+    const n = parseInt(e.key, 10);
+    if (!Number.isNaN(n) && n >= 1 && n <= this._swapSlots.length) {
+      if (this._swapSlots[n - 1] !== null) this.confirmSwap(n - 1);
+    }
+  }
+
+  confirmSwap(dropSlotIndex) {
+    EventBus.emit('inventory:swapConfirmed', {
+      dropSlotIndex,
+      newPlantType: this._swapNewType
+    });
+    this.closeSwapPicker();
+  }
+
+  cancelSwap() {
+    EventBus.emit('inventory:swapCancelled', {});
+    this.closeSwapPicker();
+  }
+
+  // --- Death recovery message (Sprint 7) ------------------------------------
+
+  showDeathMessage() {
+    const msg = this.add
+      .text(VIRTUAL_WIDTH / 2, VIRTUAL_HEIGHT / 2 - 40, 'Seeds dropped — 30 seconds to recover', {
+        fontFamily: '"Courier New", monospace',
+        fontSize: '26px',
+        fontStyle: 'bold',
+        color: '#ff6b6b',
+        backgroundColor: 'rgba(20,18,16,0.85)',
+        padding: { x: 14, y: 8 }
+      })
+      .setOrigin(0.5)
+      .setDepth(260);
+    this.tweens.add({
+      targets: msg,
+      alpha: 0,
+      delay: 2000,
+      duration: 1000,
+      onComplete: () => msg.destroy()
+    });
   }
 
   refreshBank(bank) {
@@ -253,7 +528,6 @@ export default class UIScene extends Phaser.Scene {
         return `${name}: ${count}`;
       });
     this.bankText.setText(parts.length ? `Bank — ${parts.join('  ·  ')}` : 'Bank: empty');
-    console.log('[bank] updated:', bank);
   }
 
   // --- Refreshers -----------------------------------------------------------

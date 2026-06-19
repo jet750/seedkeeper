@@ -10,6 +10,8 @@ import MenuScene from './scenes/MenuScene.js';
 import GameScene from './scenes/GameScene.js';
 import UIScene from './scenes/UIScene.js';
 import UpgradeScene from './scenes/UpgradeScene.js';
+import WinScene from './scenes/WinScene.js';
+import SignpostScene from './scenes/SignpostScene.js';
 import DevMenuScene from './scenes/DevMenuScene.js';
 
 const config = {
@@ -31,7 +33,16 @@ const config = {
       debug: false
     }
   },
-  scene: [BootScene, MenuScene, GameScene, UIScene, UpgradeScene, DevMenuScene]
+  scene: [
+    BootScene,
+    MenuScene,
+    GameScene,
+    UIScene,
+    UpgradeScene,
+    WinScene,
+    SignpostScene,
+    DevMenuScene
+  ]
 };
 
 // eslint-disable-next-line no-new

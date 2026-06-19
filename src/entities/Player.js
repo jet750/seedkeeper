@@ -407,6 +407,7 @@ export default class Player extends Phaser.Physics.Arcade.Sprite {
     this.setVelocity(dir.x * d.dashSpeed, dir.y * d.dashSpeed);
     this.isDashing = true;
     this.dashCooldownRemaining = d.dashCooldown;
+    EventBus.emit('player:dashed', {});
 
     this.scene.time.delayedCall(d.dashDuration, () => {
       this.isDashing = false; // normal movement resumes next frame
@@ -521,12 +522,14 @@ export default class Player extends Phaser.Physics.Arcade.Sprite {
 
   dropSeed(slotIndex) {
     const plantType = this.seedSlots[slotIndex];
-    if (!plantType) return;
+    if (!plantType) return null;
     this.seedSlots[slotIndex] = null;
     // Create a world Seed object at the player's feet (self-registers with the
-    // scene so it can be re-collected).
-    new Seed(this.scene, this.x, this.y, plantType, this.scene.gameData);
+    // scene so it can be re-collected). Returned so callers (e.g. the swap
+    // picker) can reference it.
+    const seed = new Seed(this.scene, this.x, this.y, plantType, this.scene.gameData);
     EventBus.emit('inventory:changed', { slots: [...this.seedSlots] });
+    return seed;
   }
 
   // Remove a seed from inventory without spawning a world object (used when
