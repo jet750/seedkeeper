@@ -31,5 +31,49 @@
     "urgentTime": 10000,
     "postTimerSpeedMult": 1.5,
     "postTimerDamageMult": 1.5
+  },
+  "plants": {
+    "red_mushroom": {
+      "name": "Red Mushroom",
+      "growthDays": 1,
+      "color": "#cc3333",
+      "foundNear": "dark_trees",
+      "seedRespawn": 90000
+    },
+    "blue_flower": {
+      "name": "Blue Flower",
+      "growthDays": 1,
+      "color": "#3366cc",
+      "foundNear": "water",
+      "seedRespawn": 90000
+    },
+    "golden_wheat": {
+      "name": "Golden Wheat",
+      "growthDays": 1,
+      "color": "#ccaa00",
+      "foundNear": "clearing",
+      "seedRespawn": 90000
+    },
+    "green_herb": {
+      "name": "Green Herb",
+      "growthDays": 3,
+      "color": "#33aa44",
+      "foundNear": "entrance",
+      "seedRespawn": 120000
+    },
+    "glowshroom": {
+      "name": "Glowshroom",
+      "growthDays": 2,
+      "color": "#aa44ff",
+      "foundNear": "deep_forest",
+      "seedRespawn": 150000
+    },
+    "sunflower": {
+      "name": "Sunflower",
+      "growthDays": 1,
+      "color": "#ffcc00",
+      "foundNear": "meadow",
+      "seedRespawn": 90000
+    }
   }
 }

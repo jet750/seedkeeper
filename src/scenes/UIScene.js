@@ -99,31 +99,79 @@ export default class UIScene extends Phaser.Scene {
       })
       .setOrigin(1, 0.5);
 
-    // BOTTOM LEFT — 3 seed slot placeholders
-    this.seedSlots = [];
-    const slotSize = 40;
-    const slotGap = 12;
-    const baseY = VIRTUAL_HEIGHT - 48;
-    for (let i = 0; i < entitiesData.player.seedSlots; i++) {
-      const slot = this.add
-        .rectangle(
-          pad + i * (slotSize + slotGap),
-          baseY,
-          slotSize,
-          slotSize,
-          0x3a3531
-        )
-        .setOrigin(0, 0.5)
-        .setStrokeStyle(2, 0x57514b);
-      this.seedSlots.push(slot);
-    }
+    // TOP LEFT (under HP) — watering can indicator, shown only while carrying.
+    this.waterIndicator = this.add
+      .text(pad, 92, '💧 Water', {
+        fontFamily: '"Courier New", monospace',
+        fontSize: '18px',
+        color: '#6B92BC'
+      })
+      .setOrigin(0, 0.5)
+      .setVisible(false);
+
+    // BOTTOM LEFT — seed slot row (real plant-color circles in Sprint 2).
+    this._slotSize = 40;
+    this._slotGap = 12;
+    this._slotBaseX = pad;
+    this._slotBaseY = VIRTUAL_HEIGHT - 48;
+    this.slotCount = entitiesData.player.seedSlots;
+    this.buildSeedSlots(this.slotCount);
+
     this.add
-      .text(pad, baseY + 28, 'SEEDS', {
+      .text(pad, this._slotBaseY + 28, 'SEEDS', {
         fontFamily: '"Courier New", monospace',
         fontSize: '12px',
         color: '#9B9389'
       })
       .setOrigin(0, 0);
+
+    // BOTTOM RIGHT — plant bank readout (chest UI proper arrives in Sprint 4).
+    this.bankText = this.add
+      .text(VIRTUAL_WIDTH - pad, VIRTUAL_HEIGHT - 40, 'Bank: empty', {
+        fontFamily: '"Courier New", monospace',
+        fontSize: '16px',
+        color: '#9B9389',
+        align: 'right'
+      })
+      .setOrigin(1, 1);
+  }
+
+  buildSeedSlots(count) {
+    // Tear down any previous slot graphics (slot count can grow in Sprint 4).
+    if (this.seedSlots) {
+      this.seedSlots.forEach((s) => {
+        s.box.destroy();
+        s.fill.destroy();
+      });
+    }
+    this.seedSlots = [];
+    this.slotCount = count;
+    for (let i = 0; i < count; i++) {
+      const cx = this._slotBaseX + i * (this._slotSize + this._slotGap) + this._slotSize / 2;
+      const box = this.add
+        .rectangle(cx, this._slotBaseY, this._slotSize, this._slotSize, 0x3a3531)
+        .setStrokeStyle(2, 0x57514b);
+      const fill = this.add
+        .circle(cx, this._slotBaseY, this._slotSize / 2 - 6, 0xffffff)
+        .setVisible(false);
+      this.seedSlots.push({ box, fill });
+    }
+  }
+
+  refreshSeedSlots(slots) {
+    if (slots.length !== this.slotCount) {
+      this.buildSeedSlots(slots.length);
+    }
+    slots.forEach((plantType, i) => {
+      const slot = this.seedSlots[i];
+      if (!slot) return;
+      if (plantType && entitiesData.plants[plantType]) {
+        const color = parseInt(entitiesData.plants[plantType].color.replace('#', ''), 16);
+        slot.fill.setFillStyle(color).setVisible(true);
+      } else {
+        slot.fill.setVisible(false);
+      }
+    });
   }
 
   // --- EventBus subscriptions ----------------------------------------------
@@ -159,6 +207,27 @@ export default class UIScene extends Phaser.Scene {
       this.dayNumber = d.day;
       this.dayText.setText(`Day ${this.dayNumber}`);
     });
+
+    // --- Sprint 2 ---
+    this.subscribe('day:advanced', (d) => {
+      this.dayNumber = d.dayNumber;
+      this.dayText.setText(`Day ${this.dayNumber}`);
+    });
+    this.subscribe('inventory:changed', (d) => this.refreshSeedSlots(d.slots));
+    this.subscribe('player:gotWater', () => this.waterIndicator.setVisible(true));
+    this.subscribe('player:usedWater', () => this.waterIndicator.setVisible(false));
+    this.subscribe('bank:updated', (d) => this.refreshBank(d.bank));
+  }
+
+  refreshBank(bank) {
+    const parts = Object.entries(bank)
+      .filter(([, count]) => count > 0)
+      .map(([type, count]) => {
+        const name = entitiesData.plants[type] ? entitiesData.plants[type].name : type;
+        return `${name}: ${count}`;
+      });
+    this.bankText.setText(parts.length ? `Bank — ${parts.join('  ·  ')}` : 'Bank: empty');
+    console.log('[bank] updated:', bank);
   }
 
   // --- Refreshers -----------------------------------------------------------

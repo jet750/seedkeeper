@@ -7,6 +7,7 @@
 import Phaser from 'phaser';
 import EventBus from '../core/EventBus.js';
 import { GARDEN_ZONE_HEIGHT } from '../core/Constants.js';
+import Seed from './Seed.js';
 
 const FLASH_INTERVAL_MS = 100;
 const INVINCIBILITY_MS = 1000;
@@ -30,6 +31,11 @@ export default class Player extends Phaser.Physics.Arcade.Sprite {
     this.maxHP = stats.maxHP;
     this.speed = stats.speed;
     this.currentHP = this.maxHP;
+
+    // --- Inventory (Sprint 2) ---
+    this.gameData = gameData;
+    this.seedSlots = new Array(stats.seedSlots).fill(null); // e.g. ['red_mushroom', null, null]
+    this.hasWater = false;
 
     // --- State ---
     this.facing = 'down';
@@ -200,6 +206,58 @@ export default class Player extends Phaser.Physics.Arcade.Sprite {
       currentHP: this.currentHP,
       maxHP: this.maxHP
     });
+  }
+
+  healToFull() {
+    const amount = this.maxHP - this.currentHP;
+    this.currentHP = this.maxHP;
+    EventBus.emit('player:healed', {
+      amount,
+      currentHP: this.currentHP,
+      maxHP: this.maxHP
+    });
+  }
+
+  // --- Inventory (Sprint 2) -------------------------------------------------
+
+  hasEmptySlot() {
+    return this.seedSlots.includes(null);
+  }
+
+  isFull() {
+    return !this.hasEmptySlot();
+  }
+
+  addSeed(plantType) {
+    const emptyIndex = this.seedSlots.indexOf(null);
+    if (emptyIndex === -1) return false; // full
+    this.seedSlots[emptyIndex] = plantType;
+    EventBus.emit('inventory:changed', { slots: [...this.seedSlots] });
+    return true;
+  }
+
+  dropSeed(slotIndex) {
+    const plantType = this.seedSlots[slotIndex];
+    if (!plantType) return;
+    this.seedSlots[slotIndex] = null;
+    // Create a world Seed object at the player's feet (self-registers with the
+    // scene so it can be re-collected).
+    new Seed(this.scene, this.x, this.y, plantType, this.scene.gameData);
+    EventBus.emit('inventory:changed', { slots: [...this.seedSlots] });
+  }
+
+  // Remove a seed from inventory without spawning a world object (used when
+  // planting it into a garden bed). Returns the plant type removed.
+  removeSeedAt(slotIndex) {
+    const plantType = this.seedSlots[slotIndex];
+    if (!plantType) return null;
+    this.seedSlots[slotIndex] = null;
+    EventBus.emit('inventory:changed', { slots: [...this.seedSlots] });
+    return plantType;
+  }
+
+  getOldestSeed() {
+    return this.seedSlots.findIndex((s) => s !== null); // first filled slot (FIFO)
   }
 
   startInvincibility() {
