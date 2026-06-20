@@ -8,6 +8,7 @@
 
 import Phaser from 'phaser';
 import EventBus from '../core/EventBus.js';
+import MobileDetect from '../core/MobileDetect.js';
 import { VIRTUAL_WIDTH, VIRTUAL_HEIGHT } from '../core/Constants.js';
 
 const PLANT_ORDER = [
@@ -112,6 +113,29 @@ export default class UpgradeScene extends Phaser.Scene {
     };
     EventBus.on('bank:updated', this._onBank);
     this.events.once('shutdown', () => EventBus.off('bank:updated', this._onBank));
+
+    // Mobile: the BUY/Close buttons already take touch (they use pointerup), but
+    // there's no Esc key — add a swipe-down gesture to dismiss, plus a hint. The
+    // horizontal guard keeps it from firing on a sideways drag across buttons.
+    if (MobileDetect.isMobile()) {
+      let startY = 0;
+      let startX = 0;
+      this.input.on('pointerdown', (p) => {
+        startY = p.y;
+        startX = p.x;
+      });
+      this.input.on('pointerup', (p) => {
+        if (p.y - startY > 120 && Math.abs(p.x - startX) < 90) this.close();
+      });
+      this.add
+        .text(VIRTUAL_WIDTH / 2, VIRTUAL_HEIGHT - 76, 'swipe down to close', {
+          fontFamily: '"SproutLands", "Courier New", monospace',
+          fontSize: '14px',
+          color: '#9B9389'
+        })
+        .setOrigin(0.5)
+        .setDepth(101);
+    }
   }
 
   // --- Header resource summary ---------------------------------------------

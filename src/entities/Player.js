@@ -194,6 +194,31 @@ export default class Player extends Phaser.Physics.Arcade.Sprite {
     this._onDamageRequest = (data) => this.handleDamageRequest(data);
     EventBus.on('player:damaged', this._onDamageRequest);
 
+    // --- Touch controls (Sprint Mobile) ---
+    // The virtual joystick feeds an analog velocity here; keyboard always wins
+    // when an axis is held (see update()). Desktop never emits these, so this is
+    // inert there. Refs are stored so cleanup() can detach them exactly.
+    this.touchVelocity = { x: 0, y: 0 };
+    this._onTouchMove = ({ x, y }) => {
+      this.touchVelocity.x = x;
+      this.touchVelocity.y = y;
+    };
+    this._onTouchAttack = () => {
+      if (this.attackCooldownRemaining <= 0) {
+        this.attack();
+      } else {
+        // Buffer exactly like the keyboard press so a tap never feels eaten.
+        this.attackBuffer = true;
+        this.attackBufferTimer = ATTACK_BUFFER_MS;
+      }
+    };
+    this._onTouchDash = () => this.tryDash();
+    this._onTouchRanged = () => this.fireRanged();
+    EventBus.on('touch:move', this._onTouchMove);
+    EventBus.on('touch:attack', this._onTouchAttack);
+    EventBus.on('touch:dash', this._onTouchDash);
+    EventBus.on('touch:ranged', this._onTouchRanged);
+
     // Clean up listeners when the scene tears down.
     scene.events.once('shutdown', this.cleanup, this);
     scene.events.once('destroy', this.cleanup, this);
@@ -279,6 +304,11 @@ export default class Player extends Phaser.Physics.Arcade.Sprite {
     if (k.right.isDown || k.rightArrow.isDown) dx += 1;
     if (k.up.isDown || k.upArrow.isDown) dy -= 1;
     if (k.down.isDown || k.downArrow.isDown) dy += 1;
+
+    // Touch joystick fills in any axis the keyboard isn't driving (keyboard
+    // wins). touchVelocity is 0 on desktop, so this never affects mouse/keys.
+    if (dx === 0 && this.touchVelocity.x !== 0) dx = this.touchVelocity.x;
+    if (dy === 0 && this.touchVelocity.y !== 0) dy = this.touchVelocity.y;
 
     const moving = dx !== 0 || dy !== 0;
     if (moving) {
@@ -484,6 +514,8 @@ export default class Player extends Phaser.Physics.Arcade.Sprite {
         dashDuration: tier.dashDuration,
         dashCooldown: tier.dashCooldown
       };
+      // Tell the mobile control layer to reveal its dash button (no-op on desktop).
+      EventBus.emit('dash:enabled', {});
     }
     this.recalculateStats();
   }
@@ -818,6 +850,10 @@ export default class Player extends Phaser.Physics.Arcade.Sprite {
 
   cleanup() {
     EventBus.off('player:damaged', this._onDamageRequest);
+    EventBus.off('touch:move', this._onTouchMove);
+    EventBus.off('touch:attack', this._onTouchAttack);
+    EventBus.off('touch:dash', this._onTouchDash);
+    EventBus.off('touch:ranged', this._onTouchRanged);
     if (this._flashEvent) this._flashEvent.remove(false);
     if (this._invEndEvent) this._invEndEvent.remove(false);
   }

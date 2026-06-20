@@ -18,6 +18,8 @@ import {
   FONT_FAMILY
 } from '../core/Constants.js';
 import WorldZoneSystem from '../systems/WorldZoneSystem.js';
+import MobileDetect from '../core/MobileDetect.js';
+import TouchControlSystem from '../systems/TouchControlSystem.js';
 import entitiesData from '../data/entities.json';
 
 const COLOR_NORMAL = '#F5EFE6';
@@ -98,6 +100,13 @@ export default class UIScene extends Phaser.Scene {
     this.input.keyboard.on('keydown-ESC', () => {
       if (this._worldDetailObjs) this.closeWorldDetail();
     });
+
+    // Mobile control layer (joystick + buttons + orientation gate). Built last so
+    // it draws over the HUD, and only on touch devices — desktop stays untouched.
+    if (MobileDetect.isMobile()) {
+      this.touchControls = new TouchControlSystem(this);
+      this.scaleHUDForMobile();
+    }
 
     this.events.once('shutdown', this.teardown, this);
     this.events.once('destroy', this.teardown, this);
@@ -217,7 +226,7 @@ export default class UIScene extends Phaser.Scene {
     this.slotCount = entitiesData.player.seedSlots;
     this.buildSeedSlots(this.slotCount);
 
-    this.add
+    this.seedsLabel = this.add
       .text(pad, this._slotBaseY + 28, 'SEEDS', {
         fontFamily: '"SproutLands", "Courier New", monospace',
         fontSize: '12px',
@@ -479,6 +488,10 @@ export default class UIScene extends Phaser.Scene {
     this.subscribe('bed:plantPrompt', (d) => this.openPlantPicker(d));
     this.subscribe('bed:plantPromptClose', () => this.closePlantPicker());
     this.subscribe('player:moved', (d) => this.updateMinimapPlayer(d.x, d.y));
+
+    // --- Sprint Mobile — minimap toggled/forced from the touch HUD ---
+    this.subscribe('minimap:toggle', () => this.toggleMinimap());
+    this.subscribe('minimap:setVisible', (visible) => this.setMinimapVisible(visible));
 
     // --- Sprint 9 — contextual interaction prompt ---
     this.subscribe('interact:nearObject', (d) => this.showInteractPrompt(d.text, d.actionable));
@@ -1158,6 +1171,55 @@ export default class UIScene extends Phaser.Scene {
     this._minimapObjects.forEach((o) => o.setVisible(this._minimapVisible));
   }
 
+  // Forced show/hide (mobile starts hidden; MAP button toggles). Event payload is
+  // the bare boolean, not an object.
+  setMinimapVisible(visible) {
+    this._minimapVisible = !!visible;
+    this._minimapObjects.forEach((o) => o.setVisible(this._minimapVisible));
+  }
+
+  // --- Mobile HUD layout pass (Sprint Mobile) -------------------------------
+  // Nudges HUD clusters out of the safe-area insets and relocates the seed-slot
+  // row into the clear central-bottom gap so the joystick (bottom-left) and the
+  // action buttons (bottom-right) never sit on top of it. Additive shifts: with
+  // no notch/home-bar the only thing that moves is the seed row. Desktop never
+  // calls this.
+  scaleHUDForMobile() {
+    const ds = this.scale.displaySize;
+    const safe = MobileDetect.getSafeArea(
+      VIRTUAL_WIDTH,
+      VIRTUAL_HEIGHT,
+      ds && ds.width ? ds.width : window.innerWidth,
+      ds && ds.height ? ds.height : window.innerHeight
+    );
+
+    // Top-left cluster (HP + water) clears a left notch and the status bar.
+    [this.hpFill, this.hpBorder, this.hpText, this.waterIndicator].forEach((o) => {
+      if (!o) return;
+      o.x += safe.left;
+      o.y += safe.top;
+    });
+
+    // Top-center cluster just drops below the status bar.
+    [this.dayText, this.zoneBadge, this.weatherIcon, this.ngPlusIndicator].forEach((o) => {
+      if (o) o.y += safe.top;
+    });
+
+    // Top-right cluster (timer + mute) clears a right notch and the status bar.
+    [this.timerText, this.muteIndicator].forEach((o) => {
+      if (!o) return;
+      o.x -= safe.right;
+      o.y += safe.top;
+    });
+
+    // Seed slots → central-bottom gap, clear of the joystick and action buttons.
+    // Re-anchoring _slotBaseX/Y means later satchel-driven rebuilds stay here too.
+    this._slotBaseX = 270;
+    this._slotBaseY = VIRTUAL_HEIGHT - 64 - safe.bottom;
+    this.buildSeedSlots(this.slotCount);
+    if (this.seedsLabel) this.seedsLabel.setVisible(false); // frames are self-evident
+  }
+
   // --- Death message (Sprint 7 + death-fix) ---------------------------------
   // Death now costs a day, so the headline is "Day lost." with the seed-recovery
   // window as a secondary line. Both fade out together with the respawn fade.
@@ -1267,6 +1329,10 @@ export default class UIScene extends Phaser.Scene {
   }
 
   teardown() {
+    if (this.touchControls) {
+      this.touchControls.destroy();
+      this.touchControls = null;
+    }
     this._busHandlers.forEach(([event, handler]) => EventBus.off(event, handler));
     this._busHandlers = [];
     this.stopPulse();

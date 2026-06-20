@@ -27,6 +27,10 @@ const BURST_DEPTH = 12;
 export default class ParticleSystem {
   constructor(scene) {
     this.scene = scene;
+    // Halved by GameScene.applyMobileOptimizations() on touch devices so heavy
+    // combat doesn't spawn hundreds of tween targets on a mobile GPU. The float
+    // damage numbers are untouched (they carry information, not just juice).
+    this.mobileMode = false;
     this.pool = [];
     for (let i = 0; i < POOL_SIZE; i++) {
       const t = scene.add
@@ -120,8 +124,14 @@ export default class ParticleSystem {
 
   // Generic radial pop. `diamond` rotates square particles 45° for a sparkle
   // look; `yBias` nudges the spread upward (negative = up).
+  // Halve the particle budget on mobile (min 1) so juice never costs framerate.
+  _count(n) {
+    return this.mobileMode ? Math.max(1, Math.ceil(n / 2)) : n;
+  }
+
   burst(x, y, { count, color, radius, duration, size, diamond = false, yBias = 0 }) {
     const tint = this.toTint(color);
+    count = this._count(count);
     for (let i = 0; i < count; i++) {
       const angle = (i / count) * Math.PI * 2 + Math.random() * 0.4;
       const dist = radius * (0.6 + Math.random() * 0.4);
@@ -178,8 +188,9 @@ export default class ParticleSystem {
   // Green slime: 4 colored blobs burst radially and shrink to nothing — a pop.
   slimeSplat(x, y, color) {
     const tint = this.toTint(color);
-    for (let i = 0; i < 4; i++) {
-      const angle = (i / 4) * Math.PI * 2 + Math.random() * 0.5;
+    const n = this._count(4);
+    for (let i = 0; i < n; i++) {
+      const angle = (i / n) * Math.PI * 2 + Math.random() * 0.5;
       const dist = 20 + Math.random() * 10;
       const blob = this.scene.add.circle(x, y, 5, tint).setDepth(BURST_DEPTH);
       this.scene.tweens.add({
@@ -203,7 +214,7 @@ export default class ParticleSystem {
 
   // Skeleton: 3-4 white "bones" fly outward at random angles, spin, and fade.
   skeletonBones(x, y) {
-    const count = 3 + Math.floor(Math.random() * 2);
+    const count = this._count(3 + Math.floor(Math.random() * 2));
     for (let i = 0; i < count; i++) {
       const angle = Math.random() * Math.PI * 2;
       const dist = 30 + Math.random() * 20;
@@ -230,7 +241,8 @@ export default class ParticleSystem {
   harvestConfetti(position, color) {
     if (!position) return;
     const tint = this.toTint(color);
-    for (let i = 0; i < 6; i++) {
+    const n = this._count(6);
+    for (let i = 0; i < n; i++) {
       const p = this.scene.add.rectangle(position.x, position.y, 6, 6, tint).setDepth(BURST_DEPTH);
       const dx = (Math.random() - 0.5) * 60;
       const peakY = position.y - (30 + Math.random() * 30);
