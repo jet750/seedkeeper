@@ -6,7 +6,18 @@
 
 import Phaser from 'phaser';
 import EventBus from '../core/EventBus.js';
-import { VIRTUAL_WIDTH, VIRTUAL_HEIGHT } from '../core/Constants.js';
+import {
+  VIRTUAL_WIDTH,
+  VIRTUAL_HEIGHT,
+  WORLD_WIDTH,
+  WORLD_HEIGHT,
+  GARDEN_ZONE_HEIGHT,
+  MEADOW_END,
+  MID_FOREST_START,
+  RIVER_Y,
+  RIVER_HEIGHT,
+  DEEP_FOREST_START
+} from '../core/Constants.js';
 import entitiesData from '../data/entities.json';
 
 const COLOR_NORMAL = '#F5EFE6';
@@ -57,17 +68,30 @@ export default class UIScene extends Phaser.Scene {
     this._swapObjects = [];
     this._swapSlots = [];
     this._swapNewType = null;
+    // Planting picker (Sprint 10c)
+    this._plantOpen = false;
+    this._plantObjects = [];
+    this._plantSlots = [];
+    this._plantBedIndex = null;
+    // Minimap (Sprint 10c)
+    this._minimapVisible = true;
+    this._minimapObjects = [];
   }
 
   create() {
     this.buildHud();
+    this.createMinimap();
     this.subscribeAll();
     this.refreshHP();
     this.refreshZone();
     this.refreshTimer();
 
-    // Number keys / Esc drive the swap picker (Sprint 7) — only while it's open.
+    // Number keys / Esc drive the swap picker (Sprint 7) and the planting picker
+    // (Sprint 10c) — each only responds while its own picker is open.
     this.input.keyboard.on('keydown', (e) => this.onSwapKey(e));
+    this.input.keyboard.on('keydown', (e) => this.onPlantKey(e));
+    // M toggles the minimap (Sprint 10c).
+    this.input.keyboard.on('keydown-M', () => this.toggleMinimap());
     // Esc also closes an open world-detail popup (Sprint 11).
     this.input.keyboard.on('keydown-ESC', () => {
       if (this._worldDetailObjs) this.closeWorldDetail();
@@ -310,8 +334,8 @@ export default class UIScene extends Phaser.Scene {
   showInteractPrompt(text, actionable) {
     this.interactPrompt.setText(text);
     this.interactPrompt.setColor(actionable ? COLOR_NORMAL : '#9B9389');
-    // Suppress while the swap picker owns the bottom-center space.
-    if (this._swapOpen) {
+    // Suppress while a picker overlay owns the screen.
+    if (this._swapOpen || this._plantOpen) {
       this.interactPrompt.setAlpha(0);
       return;
     }
@@ -448,6 +472,11 @@ export default class UIScene extends Phaser.Scene {
     this.subscribe('inventory:swapRequested', (d) => this.openSwapPicker(d.slots, d.newPlantType));
     this.subscribe('inventory:swapClosed', () => this.closeSwapPicker());
     this.subscribe('player:died', () => this.showDeathMessage());
+
+    // --- Sprint 10c — planting picker + minimap ---
+    this.subscribe('bed:plantPrompt', (d) => this.openPlantPicker(d));
+    this.subscribe('bed:plantPromptClose', () => this.closePlantPicker());
+    this.subscribe('player:moved', (d) => this.updateMinimapPlayer(d.x, d.y));
 
     // --- Sprint 9 — contextual interaction prompt ---
     this.subscribe('interact:nearObject', (d) => this.showInteractPrompt(d.text, d.actionable));
@@ -856,6 +885,245 @@ export default class UIScene extends Phaser.Scene {
   cancelSwap() {
     EventBus.emit('inventory:swapCancelled', {});
     this.closeSwapPicker();
+  }
+
+  // --- Planting picker (Sprint 10c) -----------------------------------------
+  // Centered overlay shown when the player plants with 2+ different seeds. Each
+  // option card shows the plant colour, name, grow days (the strategic info) and
+  // its number-key shortcut. Click a card or press its number to plant; Esc /
+  // Cancel aborts. GameScene owns the bed and performs the plant on confirm.
+
+  openPlantPicker({ bedIndex, slots, hasGoldenCan }) {
+    this.closePlantPicker();
+    this._plantSlots = slots;
+    this._plantBedIndex = bedIndex;
+
+    const filled = [];
+    slots.forEach((pt, i) => {
+      if (pt !== null) filled.push({ pt, i });
+    });
+    if (filled.length === 0) return;
+    this._plantOpen = true;
+    if (this.interactPrompt) this.interactPrompt.setAlpha(0);
+
+    const cx = VIRTUAL_WIDTH / 2;
+    const cy = VIRTUAL_HEIGHT / 2;
+    const cardW = 150;
+    const cardH = 150;
+    const gap = 16;
+    const totalW = filled.length * cardW + (filled.length - 1) * gap;
+    const panelW = Math.max(totalW + 80, 460);
+    const panelH = 300;
+
+    // Light dim so the choice reads as the focus, but the world stays visible.
+    this._plantObjects.push(
+      this.add
+        .rectangle(0, 0, VIRTUAL_WIDTH, VIRTUAL_HEIGHT, 0x000000, 0.35)
+        .setOrigin(0, 0)
+        .setDepth(263)
+    );
+    this._plantObjects.push(
+      this.add
+        .rectangle(cx, cy, panelW, panelH, 0x221e1b, 0.97)
+        .setStrokeStyle(2, 0x8ab87e)
+        .setDepth(264)
+    );
+    this._plantObjects.push(
+      this.add
+        .text(cx, cy - panelH / 2 + 22, 'Choose a seed to plant', {
+          fontFamily: '"SproutLands", "Courier New", monospace',
+          fontSize: '22px',
+          fontStyle: 'bold',
+          color: '#EDD49A'
+        })
+        .setOrigin(0.5, 0)
+        .setDepth(265)
+    );
+
+    const startX = cx - totalW / 2 + cardW / 2;
+    const rowY = cy - 4;
+    filled.forEach((f, n) => {
+      const x = startX + n * (cardW + gap);
+      const plant = entitiesData.plants[f.pt];
+      const color = parseInt(plant.color.replace('#', ''), 16);
+      const days = plant.growthDays;
+
+      const card = this.add
+        .rectangle(x, rowY, cardW, cardH, 0x2d2926)
+        .setStrokeStyle(2, 0x57514b)
+        .setDepth(264)
+        .setInteractive({ useHandCursor: true });
+      const dot = this.add.circle(x, rowY - cardH / 2 + 34, 16, color).setDepth(265);
+      const name = this.add
+        .text(x, rowY - 4, plant.name, {
+          fontFamily: '"SproutLands", "Courier New", monospace',
+          fontSize: '15px',
+          fontStyle: 'bold',
+          color: '#F5EFE6',
+          align: 'center',
+          wordWrap: { width: cardW - 16 }
+        })
+        .setOrigin(0.5)
+        .setDepth(265);
+      const daysT = this.add
+        .text(x, rowY + 34, `${days} ${days === 1 ? 'day' : 'days'}`, {
+          fontFamily: '"SproutLands", "Courier New", monospace',
+          fontSize: '16px',
+          color: '#8AB87E'
+        })
+        .setOrigin(0.5)
+        .setDepth(265);
+      const keyT = this.add
+        .text(x, rowY + cardH / 2 - 16, `[${f.i + 1}]`, {
+          fontFamily: '"SproutLands", "Courier New", monospace',
+          fontSize: '15px',
+          fontStyle: 'bold',
+          color: '#9B9389'
+        })
+        .setOrigin(0.5)
+        .setDepth(265);
+
+      card.on('pointerover', () => card.setStrokeStyle(2, 0xeac34f));
+      card.on('pointerout', () => card.setStrokeStyle(2, 0x57514b));
+      card.on('pointerup', () => this.confirmPlant(f.i));
+      this._plantObjects.push(card, dot, name, daysT, keyT);
+    });
+
+    // Golden-can note: it soaks every bed after planting, so the choice matters.
+    if (hasGoldenCan) {
+      this._plantObjects.push(
+        this.add
+          .text(cx, cy + panelH / 2 - 58, 'Golden Can: waters all beds after planting', {
+            fontFamily: '"SproutLands", "Courier New", monospace',
+            fontSize: '13px',
+            color: '#EDD49A'
+          })
+          .setOrigin(0.5)
+          .setDepth(265)
+      );
+    }
+
+    const cancelY = cy + panelH / 2 - 26;
+    const cancel = this.add
+      .rectangle(cx, cancelY, 180, 34, 0x8a3a3a)
+      .setStrokeStyle(2, 0x000000)
+      .setDepth(264)
+      .setInteractive({ useHandCursor: true });
+    const cancelLabel = this.add
+      .text(cx, cancelY, 'Cancel (Esc)', {
+        fontFamily: '"SproutLands", "Courier New", monospace',
+        fontSize: '14px',
+        fontStyle: 'bold',
+        color: '#F5EFE6'
+      })
+      .setOrigin(0.5)
+      .setDepth(265);
+    cancel.on('pointerup', () => this.cancelPlant());
+    this._plantObjects.push(cancel, cancelLabel);
+  }
+
+  closePlantPicker() {
+    this._plantObjects.forEach((o) => o.destroy());
+    this._plantObjects = [];
+    this._plantOpen = false;
+  }
+
+  onPlantKey(e) {
+    if (!this._plantOpen) return;
+    if (e.key === 'Escape') {
+      this.cancelPlant();
+      return;
+    }
+    const n = parseInt(e.key, 10);
+    if (!Number.isNaN(n) && n >= 1 && n <= this._plantSlots.length) {
+      if (this._plantSlots[n - 1] !== null) this.confirmPlant(n - 1);
+    }
+  }
+
+  confirmPlant(slotIndex) {
+    const plantType = this._plantSlots[slotIndex];
+    if (!plantType) return;
+    EventBus.emit('bed:plantConfirmed', {
+      bedIndex: this._plantBedIndex,
+      plantType,
+      slotIndex
+    });
+    this.closePlantPicker();
+  }
+
+  cancelPlant() {
+    EventBus.emit('bed:plantCancelled', {});
+    this.closePlantPicker();
+  }
+
+  // --- Minimap (Sprint 10c) -------------------------------------------------
+  // Top-right zone-banded minimap with a live player dot. The dot updates on the
+  // throttled 'player:moved' event (every 500ms). M toggles visibility.
+
+  createMinimap() {
+    const MAP_W = 120;
+    const MAP_H = 90;
+    const MAP_X = VIRTUAL_WIDTH - MAP_W - 16;
+    const MAP_Y = 96; // below the top HUD bar so it never overlaps the timer
+    const SCALE_X = MAP_W / WORLD_WIDTH;
+    const SCALE_Y = MAP_H / WORLD_HEIGHT;
+
+    this.minimapBg = this.add
+      .rectangle(MAP_X, MAP_Y, MAP_W, MAP_H, 0x000000, 0.6)
+      .setOrigin(0, 0)
+      .setScrollFactor(0)
+      .setDepth(50);
+    this._minimapObjects.push(this.minimapBg);
+
+    // Zone colour bands (world-space y/height scaled into the map).
+    const band = (yWorld, hWorld, color) => {
+      const r = this.add
+        .rectangle(MAP_X, MAP_Y + yWorld * SCALE_Y, MAP_W, hWorld * SCALE_Y, color, 0.85)
+        .setOrigin(0, 0)
+        .setScrollFactor(0)
+        .setDepth(51);
+      this._minimapObjects.push(r);
+    };
+    band(0, GARDEN_ZONE_HEIGHT, 0x5a8f3c); // garden
+    band(GARDEN_ZONE_HEIGHT, MEADOW_END - GARDEN_ZONE_HEIGHT, 0x4a7a30); // meadow
+    band(MID_FOREST_START, RIVER_Y - MID_FOREST_START, 0x2d5a1a); // mid forest
+    band(RIVER_Y - RIVER_HEIGHT / 2, RIVER_HEIGHT, 0x2255aa); // river
+    band(DEEP_FOREST_START, WORLD_HEIGHT - DEEP_FOREST_START, 0x1a3a0a); // deep forest
+
+    // Player dot (updated by player:moved).
+    this.minimapPlayer = this.add
+      .circle(MAP_X, MAP_Y, 3, 0x00ffff)
+      .setScrollFactor(0)
+      .setDepth(52);
+    this._minimapObjects.push(this.minimapPlayer);
+
+    // Border.
+    this._minimapObjects.push(
+      this.add
+        .rectangle(MAP_X, MAP_Y, MAP_W, MAP_H, 0xffffff, 0)
+        .setOrigin(0, 0)
+        .setScrollFactor(0)
+        .setDepth(52)
+        .setStrokeStyle(1, 0x888888)
+    );
+
+    this.minimapScaleX = SCALE_X;
+    this.minimapScaleY = SCALE_Y;
+    this.minimapX = MAP_X;
+    this.minimapY = MAP_Y;
+  }
+
+  updateMinimapPlayer(x, y) {
+    if (!this.minimapPlayer) return;
+    this.minimapPlayer.setPosition(
+      this.minimapX + x * this.minimapScaleX,
+      this.minimapY + y * this.minimapScaleY
+    );
+  }
+
+  toggleMinimap() {
+    this._minimapVisible = !this._minimapVisible;
+    this._minimapObjects.forEach((o) => o.setVisible(this._minimapVisible));
   }
 
   // --- Death message (Sprint 7 + death-fix) ---------------------------------

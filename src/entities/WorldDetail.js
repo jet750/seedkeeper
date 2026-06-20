@@ -27,6 +27,15 @@ export default class WorldDetail {
         .setStrokeStyle(2, 0x3a2c1f)
         .setDepth(2);
     }
+
+    // Solid world objects (posts, stones, fallen trunks) get a small static
+    // collider so the player walks around them rather than through (Sprint 10c).
+    // Flowers / mushrooms / flush stones stay walk-through (no hasCollision flag).
+    if (config.hasCollision) {
+      scene.physics.add.existing(this.sprite, true); // static body
+      this.sprite.body.setSize(12, 16);
+      if (scene.player) scene.physics.add.collider(scene.player, this.sprite);
+    }
   }
 
   distanceTo(player) {

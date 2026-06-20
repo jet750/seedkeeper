@@ -13,6 +13,20 @@ export const TILE_SIZE = 16;
 // Zones
 export const GARDEN_ZONE_HEIGHT = 800; // top N world-px is garden
 
+// --- Geographic zone bands (Sprint 10c) ---
+// The forest is divided into distinct biomes top-to-bottom. Real tileset art
+// slots into these bands in Sprint 10d; until then they render as colored
+// placeholder zones. The river (a physics barrier crossable only at the bridge)
+// cuts horizontally through the mid-forest band.
+export const MEADOW_START = GARDEN_ZONE_HEIGHT; // 800 — open meadow entrance
+export const MEADOW_END = GARDEN_ZONE_HEIGHT + 400; // 1200
+export const MID_FOREST_START = 1200; // denser, tree-row barriers begin
+export const RIVER_Y = 1500; // river centerline (within the mid-forest band)
+export const RIVER_HEIGHT = 80; // river/bridge band thickness
+export const DEEP_FOREST_START = 1600; // dark, high-danger zone
+export const BRIDGE_X = WORLD_WIDTH / 2; // the single river crossing point
+export const BRIDGE_WIDTH = 120; // gap in the river wall the bridge spans
+
 // Day timer
 export const DAY_TIMER_MS = 180000; // 3 minutes
 
