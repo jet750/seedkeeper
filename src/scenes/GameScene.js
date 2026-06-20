@@ -14,7 +14,14 @@ import {
   WORLD_WIDTH,
   WORLD_HEIGHT,
   GARDEN_ZONE_HEIGHT,
-  TILE_SIZE,
+  GARDEN_X,
+  GARDEN_Y,
+  GARDEN_WIDTH,
+  GARDEN_HEIGHT,
+  GARDEN_LEFT,
+  GARDEN_RIGHT,
+  GARDEN_TOP,
+  GARDEN_BOTTOM,
   VIRTUAL_WIDTH,
   VIRTUAL_HEIGHT,
   FONT_FAMILY,
@@ -94,14 +101,17 @@ const DEFAULT_BANK = {
   sunflower: 0
 };
 const PROJECTILE_POOL_SIZE = 10;
-// Garden bed grid layout (row-wraps as satchel upgrades add beds).
-const BED_BASE_X = 1340;
-const BED_BASE_Y = 260;
+// Garden bed grid layout (row-wraps as satchel upgrades add beds). Anchored to the
+// centered garden homestead: the 4-bed top row is centred on the garden's x-axis
+// (BED_BASE_X + 1.5*COL_GAP == garden centre 3200) and sits in the upper third.
+const BED_BASE_X = 2960;
+const BED_BASE_Y = 320;
 const BED_COL_GAP = 160;
 const BED_ROW_GAP = 150;
 const BEDS_PER_ROW = 4;
-const CHEST_X = 1600;
-const CHEST_Y = 560;
+// Workshop chest — lower-right of the garden interior.
+const CHEST_X = 3340;
+const CHEST_Y = 860;
 // obj_chest.png is a 48x48 sheet: row 0 is a closed→open progression.
 const CHEST_CLOSED_FRAME = 0;
 const CHEST_OPEN_FRAME = 4;
@@ -198,8 +208,8 @@ export default class GameScene extends Phaser.Scene {
     // --- Player ---
     this.player = new Player(
       this,
-      WORLD_WIDTH / 2,
-      GARDEN_ZONE_HEIGHT / 2,
+      GARDEN_X + GARDEN_WIDTH / 2,
+      GARDEN_Y + GARDEN_HEIGHT / 2,
       this.gameData
     );
 
@@ -265,8 +275,9 @@ export default class GameScene extends Phaser.Scene {
       this
     );
 
-    // --- Hard zone boundary (Sprint 7) — invisible wall enemies can't cross ---
-    this.createZoneBoundary();
+    // --- Garden fence (centered homestead) — 4-sided fence with gate gaps that
+    // blocks the player (except at the gates) and keeps enemies out ---
+    this.createGardenFence();
 
     // --- Sprint 2 world objects ---
     this.seeds = [];
@@ -457,37 +468,12 @@ export default class GameScene extends Phaser.Scene {
     // tileset art. createOrganicBackground() samples the WorldZoneSystem into a
     // colour map for now; the river, bridges and tree clusters are built later in
     // create() (they need the player and enemy groups to exist).
-    const forestY = GARDEN_ZONE_HEIGHT;
 
     // Organic biome map (Sprint 10c revised) — irregular zones sampled from the
-    // WorldZoneSystem instead of flat horizontal bands.
+    // WorldZoneSystem instead of flat horizontal bands. The 4-sided garden fence
+    // (visual + colliders) is built later by createGardenFence(), once the player
+    // and enemy groups exist.
     this.createOrganicBackground();
-
-    // Fence line marking the safe garden boundary (garden⇄meadow crossing).
-    if (this.textures.exists('tileset_fence')) {
-      this.add
-        .tileSprite(0, forestY - TILE_SIZE / 2, WORLD_WIDTH, TILE_SIZE, 'tileset_fence')
-        .setOrigin(0, 0)
-        .setDepth(1);
-    } else {
-      // TODO(asset): tileset_fence.png — colored boundary line in use.
-      // A clearly visible 10px fence line marks the safe-zone boundary.
-      this.add
-        .rectangle(0, forestY, WORLD_WIDTH, 10, 0xc0904f)
-        .setOrigin(0, 0.5)
-        .setDepth(1);
-    }
-
-    // Fence gate at the garden⇄forest crossing — decorative marker that swings
-    // open while the player is in the forest and closes back in the garden
-    // (see animateGate, driven by player:zoneChanged).
-    if (this.textures.exists('fence_gate')) {
-      this.gateSprite = this.add
-        .sprite(WORLD_WIDTH / 2, forestY, 'fence_gate', 0)
-        .setOrigin(0.5, 0.5)
-        .setScale(GATE_SCALE)
-        .setDepth(2);
-    }
 
     // Faint zone labels for at-a-glance orientation in the bigger world. Placed
     // over a representative point of each organic zone (not a band edge).
@@ -515,23 +501,28 @@ export default class GameScene extends Phaser.Scene {
   // A pixel-sampled biome map: the forest is sampled on a coarse grid and each
   // cell filled with its zone colour, giving soft, irregular borders. Drawn into
   // a single Graphics (one GameObject) rather than thousands of rectangles. The
-  // garden stays a solid band on top; the river is rendered separately.
+  // garden is now a centered square drawn on top; the river is rendered separately.
   createOrganicBackground() {
     const SAMPLE = 64;
     const g = this.add.graphics().setDepth(0);
 
-    // Garden — solid safe-zone green across the top band.
-    g.fillStyle(this.worldZoneSystem.getZoneColor('garden'), 1);
-    g.fillRect(0, 0, WORLD_WIDTH, GARDEN_ZONE_HEIGHT);
+    // Base world background behind everything — forest green.
+    g.fillStyle(0x3a6a20, 1);
+    g.fillRect(0, 0, WORLD_WIDTH, WORLD_HEIGHT);
 
-    // Forest — sample each cell's zone at its centre and fill with that colour.
+    // Forest — sample each cell's zone across the whole world (the forest now
+    // wraps around the garden on all sides, not just below it).
     for (let x = 0; x < WORLD_WIDTH; x += SAMPLE) {
-      for (let y = GARDEN_ZONE_HEIGHT; y < WORLD_HEIGHT; y += SAMPLE) {
+      for (let y = 0; y < WORLD_HEIGHT; y += SAMPLE) {
         const zone = this.worldZoneSystem.getZoneAt(x + SAMPLE / 2, y + SAMPLE / 2);
         g.fillStyle(this.worldZoneSystem.getZoneColor(zone), 1);
         g.fillRect(x, y, SAMPLE, SAMPLE);
       }
     }
+
+    // Garden — solid safe-zone square in the center, drawn over the forest.
+    g.fillStyle(this.worldZoneSystem.getZoneColor('garden'), 1);
+    g.fillRect(GARDEN_X, GARDEN_Y, GARDEN_WIDTH, GARDEN_HEIGHT);
     // A real per-zone tileset can replace this in a later art pass; the sampled
     // colour map is the placeholder until then.
   }
@@ -817,23 +808,42 @@ export default class GameScene extends Phaser.Scene {
   }
 
   // --- Zone boundary (Sprint 7) ---------------------------------------------
-  // An invisible static wall along the garden/forest line. Enemies collide
-  // with it; the player does not, so it's a hard barrier only for slimes and
-  // skeletons. Their per-frame confineToForest() clamp remains as a safety net.
-  createZoneBoundary() {
-    const wall = this.add.rectangle(
-      WORLD_WIDTH / 2,
-      GARDEN_ZONE_HEIGHT + 8,
-      WORLD_WIDTH,
-      16,
-      0x000000,
-      0
-    );
-    wall.setVisible(false);
-    this.physics.add.existing(wall, true); // static body
-    this.zoneWall = wall;
-    this.physics.add.collider(this.slimeGroup, wall);
-    this.physics.add.collider(this.skeletonGroup, wall);
+  // The garden homestead fence: a solid wooden fence on all four sides of the
+  // centered garden square, each side broken by an 80px gate gap in its middle.
+  // The fence has both a visual (brown planks) and static physics colliders. The
+  // player collides with the solid runs but can walk out through any of the four
+  // gates; enemies collide too, and their confineToForest() clamp seals the gaps
+  // so they can never follow the player inside.
+  createGardenFence() {
+    const FENCE_COLOR = 0xc0904f;
+    const THICK = 10; // fence/plank thickness (visual + body)
+    const GAP = 80; // gate gap width, centred on each side
+    this.gardenFences = this.physics.add.staticGroup();
+
+    const segment = (x, y, w, h) => {
+      this.add.rectangle(x, y, w, h, FENCE_COLOR).setDepth(4); // visual
+      const body = this.add.rectangle(x, y, w, h, 0x000000, 0).setVisible(false);
+      this.physics.add.existing(body, true); // static collider
+      this.gardenFences.add(body);
+    };
+
+    // Top & bottom: two horizontal runs flanking the centred gate gap.
+    const runH = (GARDEN_WIDTH - GAP) / 2; // length of each flank
+    [GARDEN_TOP, GARDEN_BOTTOM].forEach((y) => {
+      segment(GARDEN_LEFT + runH / 2, y, runH, THICK);
+      segment(GARDEN_RIGHT - runH / 2, y, runH, THICK);
+    });
+
+    // Left & right: two vertical runs flanking the centred gate gap.
+    const runV = (GARDEN_HEIGHT - GAP) / 2;
+    [GARDEN_LEFT, GARDEN_RIGHT].forEach((x) => {
+      segment(x, GARDEN_TOP + runV / 2, THICK, runV);
+      segment(x, GARDEN_BOTTOM - runV / 2, THICK, runV);
+    });
+
+    this.physics.add.collider(this.player, this.gardenFences);
+    this.physics.add.collider(this.slimeGroup, this.gardenFences);
+    this.physics.add.collider(this.skeletonGroup, this.gardenFences);
   }
 
   // Enemy body overlap. First-ever contact fires the attack tutorial hint once
@@ -1161,14 +1171,14 @@ export default class GameScene extends Phaser.Scene {
     // Well — fill the watering can here. Real Sprout Lands well sprite when the
     // art is present (Sprint 10), else the Sprint 2 placeholder rectangle.
     if (this.textures.exists('obj_well')) {
-      this.well = this.add.image(1050, 360, 'obj_well').setScale(2).setDepth(2);
+      this.well = this.add.image(2880, 480, 'obj_well').setScale(2).setDepth(2);
     } else {
       this.well = this.add
-        .rectangle(1050, 360, 50, 50, 0x3b6ea5)
+        .rectangle(2880, 480, 50, 50, 0x3b6ea5)
         .setStrokeStyle(3, 0x244a6e)
         .setDepth(2);
     }
-    this.addStructureLabel(1050, 360, 1050, 320, 'WELL', '#ABC4DE');
+    this.addStructureLabel(2880, 480, 2880, 440, 'WELL', '#ABC4DE');
 
     // Sleep bed — advance the day. Uses a bed slice from the Sprout Lands
     // Basic_Furniture sheet when present; the crop region is a best fit and can be
@@ -1177,16 +1187,16 @@ export default class GameScene extends Phaser.Scene {
       const furnTex = this.textures.get('furniture_sheet');
       if (!furnTex.has('bed')) furnTex.add('bed', 0, 0, 48, 64, 48);
       this.sleepObject = this.add
-        .image(2150, 360, 'furniture_sheet', 'bed')
+        .image(3520, 480, 'furniture_sheet', 'bed')
         .setDisplaySize(96, 72)
         .setDepth(2);
     } else {
       this.sleepObject = this.add
-        .rectangle(2150, 360, 72, 48, 0x8a5a3a)
+        .rectangle(3520, 480, 72, 48, 0x8a5a3a)
         .setStrokeStyle(3, 0x5a3a22)
         .setDepth(2);
     }
-    this.addStructureLabel(2150, 360, 2150, 318, 'SLEEP  [F]', '#EDD49A');
+    this.addStructureLabel(3520, 480, 3520, 438, 'SLEEP  [F]', '#EDD49A');
 
     // Workshop chest — open the upgrade overlay. Real chest sprite (48x48 sheet
     // with open frames) when present; the Sprint 9 open animation frame-swaps
@@ -1207,8 +1217,8 @@ export default class GameScene extends Phaser.Scene {
 
     // Signpost — open the achievement log. Placed near the chest but well
     // outside its interaction radius so the two never overlap.
-    const SIGN_X = 1480;
-    const SIGN_Y = 560;
+    const SIGN_X = 3120;
+    const SIGN_Y = 860;
     if (this.textures.exists('signs')) {
       // Sprout Lands sign board (frame 0), scaled up from its 16px source.
       this.signpost = this.add.sprite(SIGN_X, SIGN_Y, 'signs', 0).setScale(3).setDepth(2);
@@ -1223,8 +1233,8 @@ export default class GameScene extends Phaser.Scene {
 
     // Field Notes book (Sprint 11) — opens the Seed Dictionary. Distinct blue
     // book on a stand, set apart from the signpost and the bed grid.
-    const BOOK_X = 1340;
-    const BOOK_Y = 560;
+    const BOOK_X = 3000;
+    const BOOK_Y = 860;
     this.add.rectangle(BOOK_X, BOOK_Y + 14, 8, 36, 0x6e4a22).setDepth(2); // stand
     this.book = this.add
       .rectangle(BOOK_X, BOOK_Y - 8, 30, 22, 0x395a7a)
@@ -1452,8 +1462,8 @@ export default class GameScene extends Phaser.Scene {
     }
     this.gardenAmbient = this.add.particles(0, 0, texKey, {
       ...frameCfg,
-      x: { min: 0, max: WORLD_WIDTH },
-      y: { min: 0, max: GARDEN_ZONE_HEIGHT },
+      x: { min: GARDEN_X, max: GARDEN_X + GARDEN_WIDTH },
+      y: { min: GARDEN_Y, max: GARDEN_Y + GARDEN_HEIGHT },
       speedY: { min: -20, max: -8 },
       speedX: { min: -5, max: 5 },
       scale: { start: 0.8, end: 0 },
@@ -2213,7 +2223,7 @@ export default class GameScene extends Phaser.Scene {
     // Respawn sequence: fade out, teleport to the garden centre, fade back in.
     this.cameras.main.fadeOut(RESPAWN_FADE_MS);
     this.time.delayedCall(RESPAWN_DELAY_MS, () => {
-      this.player.respawn(WORLD_WIDTH / 2, GARDEN_ZONE_HEIGHT / 2);
+      this.player.respawn(GARDEN_X + GARDEN_WIDTH / 2, GARDEN_Y + GARDEN_HEIGHT / 2);
       this.cameras.main.fadeIn(RESPAWN_FADE_MS);
       this._respawning = false;
     });
@@ -2768,10 +2778,10 @@ export default class GameScene extends Phaser.Scene {
   }
 
   // Throttled player-position broadcast for the HUD minimap (Sprint 10c). Emitted
-  // every 500ms rather than per frame — the dot only needs coarse updates.
+  // every 300ms rather than per frame — the dot only needs coarse updates.
   updateMinimapBroadcast(delta) {
     this._playerMovedAccum += delta;
-    if (this._playerMovedAccum < 500) return;
+    if (this._playerMovedAccum < 300) return;
     this._playerMovedAccum = 0;
     EventBus.emit('player:moved', { x: this.player.x, y: this.player.y });
   }

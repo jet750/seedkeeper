@@ -6,7 +6,8 @@
 
 import Phaser from 'phaser';
 import EventBus from '../core/EventBus.js';
-import { GARDEN_ZONE_HEIGHT } from '../core/Constants.js';
+import { GARDEN_LEFT, GARDEN_RIGHT, GARDEN_TOP, GARDEN_BOTTOM } from '../core/Constants.js';
+import { spawnEnemyAlert } from './enemyIndicator.js';
 import Seed from './Seed.js';
 import PlantBundle from './PlantBundle.js';
 import { getRandomSeedDrop, getRandomBundleDrop } from '../systems/lootTable.js';
@@ -136,11 +137,12 @@ export default class Slime extends Phaser.Physics.Arcade.Sprite {
     // Forest Fog weather reduces detect range for the day (Sprint 11).
     const detect = this.detectRange * (this.scene.weatherDetectMult || 1);
     if (this.state === STATE.WANDER && dist < detect) {
-      this.startChase(); // wind-up pulse, then CHASE
+      this.startChase(); // alert tell + wind-up pulse, then CHASE
     } else if (this.state === STATE.CHASE && dist > this.loseRange) {
       this.state = STATE.WANDER;
       this._isWanderPaused = false;
       this.pickNewWanderDirection();
+      this.showLostIndicator(); // "?" — lost the player
     }
 
     // --- Behaviour ---
@@ -191,6 +193,7 @@ export default class Slime extends Phaser.Physics.Arcade.Sprite {
   // Chase anticipation: freeze and pulse for a beat, then commit to the chase.
   startChase() {
     if (this.state === STATE.ANTICIPATE || this.state === STATE.CHASE) return;
+    this.showAlertIndicator(); // "!" — spotted the player
     this.state = STATE.ANTICIPATE;
     this._isWanderPaused = false;
     this.setVelocity(0, 0);
@@ -207,14 +210,55 @@ export default class Slime extends Phaser.Physics.Arcade.Sprite {
     });
   }
 
-  // Keep slimes in the dangerous forest — they stop at the fence rather than
-  // wandering or chasing into the safe garden.
+  // Keep slimes out of the safe garden square — bounce them back off whichever
+  // garden edge is nearest. This backs up the fence colliders by also sealing the
+  // gate gaps the player walks through, so enemies can never follow inside.
   confineToForest() {
-    const minY = GARDEN_ZONE_HEIGHT + this.body.height / 2;
-    if (this.y < minY) {
-      this.y = minY;
+    if (
+      this.x <= GARDEN_LEFT ||
+      this.x >= GARDEN_RIGHT ||
+      this.y <= GARDEN_TOP ||
+      this.y >= GARDEN_BOTTOM
+    ) {
+      return; // already outside the garden rectangle
+    }
+    const dl = this.x - GARDEN_LEFT;
+    const dr = GARDEN_RIGHT - this.x;
+    const dt = this.y - GARDEN_TOP;
+    const db = GARDEN_BOTTOM - this.y;
+    const min = Math.min(dl, dr, dt, db);
+    if (min === dl) {
+      this.x = GARDEN_LEFT;
+      if (this.body.velocity.x > 0) this.setVelocityX(-Math.abs(this.body.velocity.x));
+    } else if (min === dr) {
+      this.x = GARDEN_RIGHT;
+      if (this.body.velocity.x < 0) this.setVelocityX(Math.abs(this.body.velocity.x));
+    } else if (min === dt) {
+      this.y = GARDEN_TOP;
+      if (this.body.velocity.y > 0) this.setVelocityY(-Math.abs(this.body.velocity.y));
+    } else {
+      this.y = GARDEN_BOTTOM;
       if (this.body.velocity.y < 0) this.setVelocityY(Math.abs(this.body.velocity.y));
     }
+  }
+
+  // Red "!" tell shown when the slime first spots the player (WANDER → CHASE):
+  // pops up above the slime, bounces upward, holds, then fades. A brief red tint
+  // on the body reinforces the alert.
+  showAlertIndicator() {
+    spawnEnemyAlert(this, '!', '#ff3333', false);
+    this.setTint(0xff6666);
+    this.scene.time.delayedCall(200, () => {
+      if (this.isDead) return;
+      if (this._baseTint !== null) this.setTint(this._baseTint);
+      else this.clearTint();
+    });
+  }
+
+  // Blue "?" tell shown when the slime loses the player (CHASE → WANDER). Same
+  // motion as the alert but fades faster and does not tint the body.
+  showLostIndicator() {
+    spawnEnemyAlert(this, '?', '#66aaff', true);
   }
 
   // Requested by GameScene on body overlap. Player decides whether the hit lands

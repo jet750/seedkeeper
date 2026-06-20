@@ -6,7 +6,7 @@
 
 import Phaser from 'phaser';
 import EventBus from '../core/EventBus.js';
-import { GARDEN_ZONE_HEIGHT } from '../core/Constants.js';
+import { GARDEN_LEFT, GARDEN_RIGHT, GARDEN_TOP, GARDEN_BOTTOM } from '../core/Constants.js';
 import Seed from './Seed.js';
 
 const FLASH_INTERVAL_MS = 100;
@@ -635,7 +635,13 @@ export default class Player extends Phaser.Physics.Arcade.Sprite {
   // --- Zone tracking --------------------------------------------------------
 
   computeZone() {
-    return this.y < GARDEN_ZONE_HEIGHT ? 'garden' : 'forest';
+    // Garden is now a centered rectangle, not the top band — check all four sides.
+    const inGarden =
+      this.x > GARDEN_LEFT &&
+      this.x < GARDEN_RIGHT &&
+      this.y > GARDEN_TOP &&
+      this.y < GARDEN_BOTTOM;
+    return inGarden ? 'garden' : 'forest';
   }
 
   checkZone() {

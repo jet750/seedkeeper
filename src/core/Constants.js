@@ -11,7 +11,19 @@ export const VIRTUAL_HEIGHT = 900;
 export const TILE_SIZE = 16;
 
 // Zones
-export const GARDEN_ZONE_HEIGHT = 800; // top N world-px is garden — unchanged by the world doubling
+export const GARDEN_ZONE_HEIGHT = 800; // legacy band height — still used for enemy/tree spawn gating
+
+// Garden homestead (centered square). The garden is no longer the full top band;
+// it's an 800x800 fenced square sitting near the top-center of the world, with the
+// forest wrapping around it on all sides.
+export const GARDEN_WIDTH  = 800;
+export const GARDEN_HEIGHT = 800;
+export const GARDEN_X      = (WORLD_WIDTH - GARDEN_WIDTH) / 2; // 2800 — left edge
+export const GARDEN_Y      = 200; // top edge (leaves a forest margin above)
+export const GARDEN_LEFT   = GARDEN_X;
+export const GARDEN_RIGHT  = GARDEN_X + GARDEN_WIDTH;
+export const GARDEN_TOP    = GARDEN_Y;
+export const GARDEN_BOTTOM = GARDEN_Y + GARDEN_HEIGHT;
 
 // --- Geographic zone bands (Sprint 10c — SUPERSEDED) ---
 // The straight-line biome bands below were replaced by the organic, influence-

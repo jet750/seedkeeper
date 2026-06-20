@@ -9,7 +9,8 @@
 
 import Phaser from 'phaser';
 import EventBus from '../core/EventBus.js';
-import { GARDEN_ZONE_HEIGHT } from '../core/Constants.js';
+import { GARDEN_LEFT, GARDEN_RIGHT, GARDEN_TOP, GARDEN_BOTTOM } from '../core/Constants.js';
+import { spawnEnemyAlert } from './enemyIndicator.js';
 import Seed from './Seed.js';
 import PlantBundle from './PlantBundle.js';
 import { getRandomSeedDrop, getRandomBundleDrop } from '../systems/lootTable.js';
@@ -124,9 +125,11 @@ export default class Skeleton extends Phaser.Physics.Arcade.Sprite {
     const detect = this.detectRange * (this.scene.weatherDetectMult || 1);
     if (this.state === STATE.PATROL && dist < detect) {
       this.state = STATE.CHASE;
+      this.showAlertIndicator(); // "!" — spotted the player
     } else if (this.state === STATE.CHASE && dist > this.loseRange) {
       this.state = STATE.PATROL;
       this._wpIndex = this.nearestWaypointIndex();
+      this.showLostIndicator(); // "?" — lost the player
     }
 
     // Head-turn tell: face the player whenever they're close, even mid-patrol.
@@ -172,13 +175,51 @@ export default class Skeleton extends Phaser.Physics.Arcade.Sprite {
     return best;
   }
 
-  // Keep skeletons out of the safe garden — they stop at the fence line.
+  // Keep skeletons out of the safe garden square — bounce them back off whichever
+  // garden edge is nearest, sealing the fence gate gaps the player walks through.
   confineToForest() {
-    const minY = GARDEN_ZONE_HEIGHT + this.body.height / 2;
-    if (this.y < minY) {
-      this.y = minY;
+    if (
+      this.x <= GARDEN_LEFT ||
+      this.x >= GARDEN_RIGHT ||
+      this.y <= GARDEN_TOP ||
+      this.y >= GARDEN_BOTTOM
+    ) {
+      return; // already outside the garden rectangle
+    }
+    const dl = this.x - GARDEN_LEFT;
+    const dr = GARDEN_RIGHT - this.x;
+    const dt = this.y - GARDEN_TOP;
+    const db = GARDEN_BOTTOM - this.y;
+    const min = Math.min(dl, dr, dt, db);
+    if (min === dl) {
+      this.x = GARDEN_LEFT;
+      if (this.body.velocity.x > 0) this.setVelocityX(-Math.abs(this.body.velocity.x));
+    } else if (min === dr) {
+      this.x = GARDEN_RIGHT;
+      if (this.body.velocity.x < 0) this.setVelocityX(Math.abs(this.body.velocity.x));
+    } else if (min === dt) {
+      this.y = GARDEN_TOP;
+      if (this.body.velocity.y > 0) this.setVelocityY(-Math.abs(this.body.velocity.y));
+    } else {
+      this.y = GARDEN_BOTTOM;
       if (this.body.velocity.y < 0) this.setVelocityY(Math.abs(this.body.velocity.y));
     }
+  }
+
+  // Red "!" tell when the skeleton spots the player (PATROL → CHASE): pops above
+  // the skeleton, bounces up, holds, then fades — plus a brief red body tint.
+  showAlertIndicator() {
+    spawnEnemyAlert(this, '!', '#ff3333', false);
+    this.setTint(0xff6666);
+    this.scene.time.delayedCall(200, () => {
+      if (!this.isDead) this.clearTint();
+    });
+  }
+
+  // Blue "?" tell when the skeleton loses the player (CHASE → PATROL). Same motion
+  // as the alert but fades faster and leaves the body untinted.
+  showLostIndicator() {
+    spawnEnemyAlert(this, '?', '#66aaff', true);
   }
 
   // Requested by GameScene on body overlap. Player owns the invincibility

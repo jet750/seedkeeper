@@ -10,7 +10,12 @@ import {
   VIRTUAL_WIDTH,
   VIRTUAL_HEIGHT,
   WORLD_WIDTH,
-  WORLD_HEIGHT
+  WORLD_HEIGHT,
+  GARDEN_X,
+  GARDEN_Y,
+  GARDEN_WIDTH,
+  GARDEN_HEIGHT,
+  FONT_FAMILY
 } from '../core/Constants.js';
 import WorldZoneSystem from '../systems/WorldZoneSystem.js';
 import entitiesData from '../data/entities.json';
@@ -1055,8 +1060,9 @@ export default class UIScene extends Phaser.Scene {
 
   // --- Minimap (Sprint 10c revised) -----------------------------------------
   // Top-right minimap that samples the organic WorldZoneSystem (irregular zones +
-  // the winding river/creeks) rather than flat horizontal bands. Live player dot
-  // updates on the throttled 'player:moved' event (every 500ms). M toggles it.
+  // the winding river/creeks) rather than flat horizontal bands. A static HOME
+  // marker sits at the garden centre; the live cyan player dot updates on the
+  // throttled 'player:moved' event (every 300ms). M toggles it.
 
   createMinimap() {
     const MAP_W = 120;
@@ -1107,6 +1113,30 @@ export default class UIScene extends Phaser.Scene {
         .setScrollFactor(0)
         .setDepth(52)
         .setStrokeStyle(1, 0x888888)
+    );
+
+    // Home marker at the garden centre — a yellow flag (rect + orange pennant)
+    // with a tiny "HOME" label. Static, so it's always shown while the minimap is.
+    const homeX = MAP_X + (GARDEN_X + GARDEN_WIDTH / 2) * SCALE_X;
+    const homeY = MAP_Y + (GARDEN_Y + GARDEN_HEIGHT / 2) * SCALE_Y;
+    this._minimapObjects.push(
+      this.add
+        .rectangle(homeX, homeY, 8, 6, 0xffd23f)
+        .setScrollFactor(0)
+        .setDepth(53),
+      this.add
+        .triangle(homeX, homeY - 7, 0, -4, -5, 3, 5, 3, 0xff7a1a)
+        .setScrollFactor(0)
+        .setDepth(53),
+      this.add
+        .text(homeX, homeY + 5, 'HOME', {
+          fontFamily: FONT_FAMILY,
+          fontSize: '6px',
+          color: '#ffd23f'
+        })
+        .setOrigin(0.5, 0)
+        .setScrollFactor(0)
+        .setDepth(53)
     );
 
     this.minimapScaleX = SCALE_X;
