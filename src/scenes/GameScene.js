@@ -60,6 +60,7 @@ const SKELETON_PATROL_SPREAD = 220; // px between a skeleton's patrol waypoints
 const DEATH_DROP_SCATTER = 40; // spread of seeds dropped on player death
 const SEED_RECOVERY_MS = 30000; // recovery window before death-dropped seeds vanish
 const GATE_SCALE = 2; // closed-gate draw scale at the zone boundary (Sprint 10b)
+const FENCE_SCALE = 1.6; // Sprout Lands fence/gate sprite scale (16px source) — Sprint 10d
 const RESPAWN_FADE_MS = 500;
 const RESPAWN_DELAY_MS = 1500;
 
@@ -130,6 +131,10 @@ export default class GameScene extends Phaser.Scene {
 
   create() {
     this.gameData = entitiesData;
+    // Carve whole-tree sub-frames out of the Sprout Lands tree sheet (Sprint 10d)
+    // so trees render as real art instead of vector shapes. Safe no-op if the
+    // sheet didn't load (production may not emit every tileset).
+    this.registerArtFrames();
     // Organic biome + river layout (Sprint 10c revised). Pure data — built first
     // so the world background, river, trees, and zone-based spawns can all sample
     // the same instance.
@@ -283,8 +288,10 @@ export default class GameScene extends Phaser.Scene {
     this.seeds = [];
     this.spawnSeeds();
     this.spawnGardenBeds();
+    this.createBedSoil(); // Sprint 10d — tilled soil under the beds (needs beds)
     this.spawnGardenStructures();
     this.spawnProps();
+    this.scatterTilesetProps(); // Sprint 10d — themed mushrooms/flowers near seeds
     this.createForestAmbience();
     this.createGardenAmbience();
 
@@ -474,6 +481,10 @@ export default class GameScene extends Phaser.Scene {
     // (visual + colliders) is built later by createGardenFence(), once the player
     // and enemy groups exist.
     this.createOrganicBackground();
+    // Real grass/soil tiles laid over the sampled colour map (Sprint 10d). The
+    // colour map stays underneath as a safe base so nothing gaps if a tileset is
+    // missing; tiles sit on top where they loaded.
+    this.createGroundTiles();
 
     // Faint zone labels for at-a-glance orientation in the bigger world. Placed
     // over a representative point of each organic zone (not a band edge).
@@ -523,8 +534,82 @@ export default class GameScene extends Phaser.Scene {
     // Garden — solid safe-zone square in the center, drawn over the forest.
     g.fillStyle(this.worldZoneSystem.getZoneColor('garden'), 1);
     g.fillRect(GARDEN_X, GARDEN_Y, GARDEN_WIDTH, GARDEN_HEIGHT);
-    // A real per-zone tileset can replace this in a later art pass; the sampled
-    // colour map is the placeholder until then.
+    // Sprint 10d lays real grass/soil tiles over this in createGroundTiles(); the
+    // sampled colour map remains as the fallback base beneath them.
+  }
+
+  // --- Tileset art frames (Sprint 10d) --------------------------------------
+  // The Sprout Lands tree sheet packs whole trees larger than one 16px tile, so
+  // slice named sub-frames (measured from the sheet) instead of using a 16x16
+  // grid. Guarded: a no-op when the sheet isn't loaded.
+  registerArtFrames() {
+    if (this.textures.exists('trees')) {
+      const tex = this.textures.get('trees');
+      const add = (name, x, y, w, h) => {
+        if (!tex.has(name)) tex.add(name, 0, x, y, w, h);
+      };
+      // Top row holds six 32x48 small trees; a 64x64 hero tree sits lower-right.
+      add('tree_small_a', 0, 0, 32, 48); // plain green
+      add('tree_small_b', 32, 0, 32, 48); // plain green, fuller
+      add('tree_fruit', 64, 0, 32, 48); // fruited variant for the meadow border
+      add('tree_big', 128, 48, 64, 64); // the big canopy — deep-forest landmark
+    }
+  }
+
+  // Plain grass-fill frame on every ground sheet (they share an 11x7 layout; the
+  // clean fill tile lives in the lower-left). Picked by eye from the sheets.
+  GROUND_FILL_FRAME() {
+    return 55;
+  }
+
+  // Real ground tiles over the colour map: bright grass in the garden, darker
+  // grass across the forest, soil under the bed grid, and darker pockets over the
+  // big deep-forest zones. Every layer is guarded so a missing sheet just leaves
+  // the colour map showing — never a broken tile.
+  createGroundTiles() {
+    const FILL = this.GROUND_FILL_FRAME();
+
+    // Forest floor — darker grass across the whole world (drawn after the colour
+    // map, so on top), then the garden's brighter grass over its square.
+    if (this.textures.exists('dark_grass_tiles')) {
+      this.add
+        .tileSprite(0, 0, WORLD_WIDTH, WORLD_HEIGHT, 'dark_grass_tiles', FILL)
+        .setOrigin(0, 0)
+        .setDepth(0);
+
+      // Darker pockets over the larger deep-forest zones so the danger zone reads
+      // as a deeper wood. Rectangular but the dense tree clusters hide the edges.
+      this.worldZoneSystem.zones.deep_forest
+        .filter((p) => p.r >= 350)
+        .forEach((p) => {
+          this.add
+            .tileSprite(p.x - p.r, p.y - p.r, p.r * 2, p.r * 2, 'dark_grass_tiles', FILL)
+            .setOrigin(0, 0)
+            .setTint(0x6f8a66)
+            .setDepth(0);
+        });
+    }
+
+    if (this.textures.exists('grass_tiles')) {
+      this.add
+        .tileSprite(GARDEN_X, GARDEN_Y, GARDEN_WIDTH, GARDEN_HEIGHT, 'grass_tiles', FILL)
+        .setOrigin(0, 0)
+        .setDepth(1);
+    }
+  }
+
+  // Small tilled-soil squares framing each garden bed so they read as worked
+  // earth, without paving the whole garden in dirt. Called after the beds exist;
+  // each bed draws its own darker soil square on top (depth 2). No-op without art.
+  createBedSoil() {
+    if (!this.textures.exists('soil_tiles') || !this.beds) return;
+    const FILL = this.GROUND_FILL_FRAME();
+    this.beds.forEach((bed) => {
+      this.add
+        .tileSprite(bed.x, bed.y, 76, 76, 'soil_tiles', FILL)
+        .setOrigin(0.5, 0.5)
+        .setDepth(1);
+    });
   }
 
   // --- River system (Sprint 10c revised) ------------------------------------
@@ -539,6 +624,10 @@ export default class GameScene extends Phaser.Scene {
   // Water is drawn as overlapping circles stepped along each channel, all into a
   // single Graphics so a curved band reads smoothly. Bridges sit on top.
   renderRiver() {
+    // Real animated water tiles when the sheet is present (Sprint 10d); else the
+    // painterly blue channel. The base circles always draw underneath so the
+    // curved band reads smoothly between the straight tile segments.
+    const hasWater = this.textures.exists('water_tiles');
     const g = this.add.graphics().setDepth(1);
     const drawChannel = (path, width, color) => {
       g.fillStyle(color, 1);
@@ -553,9 +642,14 @@ export default class GameScene extends Phaser.Scene {
         }
       }
     };
-    drawChannel(this.worldZoneSystem.mainRiverPath, RIVER_WIDTH, 0x2255aa);
-    drawChannel(this.worldZoneSystem.leftCreekPath, CREEK_WIDTH, 0x3366bb);
-    drawChannel(this.worldZoneSystem.rightCreekPath, CREEK_WIDTH, 0x3366bb);
+    // Pale teal base under the tiles so seams blend; the old blue when art is off.
+    const mainColor = hasWater ? 0x7ec6c0 : 0x2255aa;
+    const creekColor = hasWater ? 0x8ed2cc : 0x3366bb;
+    drawChannel(this.worldZoneSystem.mainRiverPath, RIVER_WIDTH, mainColor);
+    drawChannel(this.worldZoneSystem.leftCreekPath, CREEK_WIDTH, creekColor);
+    drawChannel(this.worldZoneSystem.rightCreekPath, CREEK_WIDTH, creekColor);
+
+    if (hasWater) this.createRiverWaterTiles();
 
     // Bridge planks at each crossing — a brown deck with plank detail lines,
     // angled along the path so it sits naturally over the curving water.
@@ -573,6 +667,43 @@ export default class GameScene extends Phaser.Scene {
         planks.lineBetween(lx, -20, lx, 20);
       }
       planks.setPosition(bridge.x, bridge.y).setAngle(bridge.angle);
+    });
+  }
+
+  // Animated water tiles (Sprint 10d): one tileSprite per river segment, sized and
+  // angled to the segment so the Sprout Lands water texture tiles along the curve.
+  // A single 4-frame cycle (~4fps) drives the ripple for all of them, and a slow
+  // tilePosition drift makes it flow — ~20 objects total, one timer, cheap.
+  createRiverWaterTiles() {
+    this.waterTiles = [];
+    const place = (path, width) => {
+      for (let i = 0; i < path.length - 1; i++) {
+        const a = path[i];
+        const b = path[i + 1];
+        const len = Math.hypot(b.x - a.x, b.y - a.y);
+        if (len < 1) continue;
+        const mx = (a.x + b.x) / 2;
+        const my = (a.y + b.y) / 2;
+        const angle = Math.atan2(b.y - a.y, b.x - a.x);
+        const tile = this.add
+          .tileSprite(mx, my, len + width, width, 'water_tiles', 0)
+          .setOrigin(0.5, 0.5)
+          .setRotation(angle)
+          .setDepth(1);
+        this.waterTiles.push(tile);
+      }
+    };
+    this.worldZoneSystem.channels.forEach(({ path, width }) => place(path, width));
+
+    // Ripple frame cycle (0→3) shared by every tile.
+    this._waterFrame = 0;
+    this.time.addEvent({
+      delay: 250,
+      loop: true,
+      callback: () => {
+        this._waterFrame = (this._waterFrame + 1) % 4;
+        for (const t of this.waterTiles) t.setFrame(this._waterFrame);
+      }
     });
   }
 
@@ -620,6 +751,9 @@ export default class GameScene extends Phaser.Scene {
   createOrganicTrees() {
     this.treeColliders = this.physics.add.staticGroup();
     const g = this.add.graphics().setDepth(3);
+    // Use real tree art when the sheet + carved frames are present (Sprint 10d),
+    // else fall back to the vector canopy drawn into `g`.
+    this._treeSprites = this.textures.exists('trees') && this.textures.get('trees').has('tree_big');
 
     const CLUSTERS = [
       // Meadow-border clusters — sparse, decorative (no collision).
@@ -662,7 +796,7 @@ export default class GameScene extends Phaser.Scene {
         );
         if (onSeed) continue;
 
-        this.drawTree(g, tx, ty);
+        this.placeTree(g, tx, ty);
         if (cluster.collide) {
           // Physics trunk narrower than the visual so the player can squeeze the
           // edges — only the trunk core is solid.
@@ -677,6 +811,35 @@ export default class GameScene extends Phaser.Scene {
     this.physics.add.collider(this.player, this.treeColliders);
     this.physics.add.collider(this.slimeGroup, this.treeColliders);
     this.physics.add.collider(this.skeletonGroup, this.treeColliders);
+  }
+
+  // Place one tree at (x, y): a real tree sprite when art is loaded (frame + size
+  // chosen by biome so the deep forest gets the big canopy and the meadow gets
+  // small/fruited trees), else the vector canopy. Sprites are depth-sorted by Y so
+  // nearer trees overlap farther ones, and all sit below the player (depth 10).
+  placeTree(g, x, y) {
+    if (!this._treeSprites) {
+      this.drawTree(g, x, y);
+      return;
+    }
+    const zone = this.worldZoneSystem.getZoneAt(x, y);
+    let frame;
+    let scale;
+    if (zone === 'deep_forest') {
+      frame = 'tree_big';
+      scale = 0.9 + Math.random() * 0.25;
+    } else if (zone === 'meadow') {
+      frame = Math.random() < 0.5 ? 'tree_fruit' : 'tree_small_a';
+      scale = 1.0 + Math.random() * 0.2;
+    } else {
+      frame = Math.random() < 0.5 ? 'tree_small_a' : 'tree_small_b';
+      scale = 1.2 + Math.random() * 0.3;
+    }
+    this.add
+      .image(x, y, 'trees', frame)
+      .setOrigin(0.5, 0.85) // root the trunk near (x, y) where the collider sits
+      .setScale(scale)
+      .setDepth(3 + (y / WORLD_HEIGHT) * 3);
   }
 
   // Draw one tree (trunk + canopy) into the shared Graphics with slight size and
@@ -819,9 +982,12 @@ export default class GameScene extends Phaser.Scene {
     const THICK = 10; // fence/plank thickness (visual + body)
     const GAP = 80; // gate gap width, centred on each side
     this.gardenFences = this.physics.add.staticGroup();
+    // Real fence sprites (Sprint 10d) when the sheet loaded, else brown planks.
+    const useSprites = this.textures.exists('fences');
 
     const segment = (x, y, w, h) => {
-      this.add.rectangle(x, y, w, h, FENCE_COLOR).setDepth(4); // visual
+      if (useSprites) this.drawFenceRun(x, y, w, h);
+      else this.add.rectangle(x, y, w, h, FENCE_COLOR).setDepth(4); // visual
       const body = this.add.rectangle(x, y, w, h, 0x000000, 0).setVisible(false);
       this.physics.add.existing(body, true); // static collider
       this.gardenFences.add(body);
@@ -841,9 +1007,105 @@ export default class GameScene extends Phaser.Scene {
       segment(x, GARDEN_BOTTOM - runV / 2, THICK, runV);
     });
 
+    if (useSprites) {
+      // Corner posts at the four garden corners tie the runs together.
+      [
+        [GARDEN_LEFT, GARDEN_TOP],
+        [GARDEN_RIGHT, GARDEN_TOP],
+        [GARDEN_LEFT, GARDEN_BOTTOM],
+        [GARDEN_RIGHT, GARDEN_BOTTOM]
+      ].forEach(([x, y]) => this.add.image(x, y, 'fences', 0).setScale(FENCE_SCALE).setDepth(4));
+    }
+
+    this.createGardenGates();
+
     this.physics.add.collider(this.player, this.gardenFences);
     this.physics.add.collider(this.slimeGroup, this.gardenFences);
     this.physics.add.collider(this.skeletonGroup, this.gardenFences);
+  }
+
+  // Lay fence-post sprites along one fence run (Sprint 10d). Horizontal runs tile
+  // the rail frames (left-end 1, middle 2, right-end 3); vertical runs stack the
+  // post frame (8). The collider body is created separately by the caller.
+  drawFenceRun(x, y, w, h) {
+    const TILE = 16;
+    if (w >= h) {
+      const left = x - w / 2;
+      const n = Math.max(1, Math.round(w / TILE));
+      for (let i = 0; i < n; i++) {
+        const frame = i === 0 ? 1 : i === n - 1 ? 3 : 2;
+        this.add
+          .image(left + i * TILE + TILE / 2, y, 'fences', frame)
+          .setScale(FENCE_SCALE)
+          .setDepth(4);
+      }
+    } else {
+      const top = y - h / 2;
+      const n = Math.max(1, Math.round(h / TILE));
+      for (let i = 0; i < n; i++) {
+        this.add
+          .image(x, top + i * TILE + TILE / 2, 'fences', 8)
+          .setScale(FENCE_SCALE)
+          .setDepth(4);
+      }
+    }
+  }
+
+  // Animated gate sprites in each of the four gate gaps (Sprint 10d). A closed
+  // gate sits in each opening and swings open when the player is near it, closing
+  // again once they move off — a small life-in-the-world touch. No-op without art.
+  createGardenGates() {
+    this.gateSprites = [];
+    if (!this.textures.exists('fence_gates')) return;
+
+    if (!this.anims.exists('gate_open')) {
+      this.anims.create({
+        key: 'gate_open',
+        frames: this.anims.generateFrameNumbers('fence_gates', { start: 0, end: 6 }),
+        frameRate: 12,
+        repeat: 0
+      });
+      this.anims.create({
+        key: 'gate_close',
+        frames: this.anims.generateFrameNumbers('fence_gates', { start: 6, end: 0 }),
+        frameRate: 12,
+        repeat: 0
+      });
+    }
+
+    const cx = GARDEN_LEFT + GARDEN_WIDTH / 2;
+    const cy = GARDEN_TOP + GARDEN_HEIGHT / 2;
+    [
+      { x: cx, y: GARDEN_TOP },
+      { x: cx, y: GARDEN_BOTTOM },
+      { x: GARDEN_LEFT, y: cy },
+      { x: GARDEN_RIGHT, y: cy }
+    ].forEach((p) => {
+      const gate = this.add
+        .sprite(p.x, p.y, 'fence_gates', 0)
+        .setScale(FENCE_SCALE)
+        .setDepth(5);
+      gate._open = false;
+      this.gateSprites.push(gate);
+    });
+  }
+
+  // Open gates the player is standing near, close the rest (Sprint 10d). Cheap —
+  // four distance checks per frame, and the animation only fires on state change.
+  updateGates() {
+    if (!this.gateSprites || this.gateSprites.length === 0) return;
+    const OPEN_DIST = 70;
+    for (const gate of this.gateSprites) {
+      const near =
+        Phaser.Math.Distance.Between(this.player.x, this.player.y, gate.x, gate.y) < OPEN_DIST;
+      if (near && !gate._open) {
+        gate._open = true;
+        gate.play('gate_open');
+      } else if (!near && gate._open) {
+        gate._open = false;
+        gate.play('gate_close');
+      }
+    }
   }
 
   // Enemy body overlap. First-ever contact fires the attack tutorial hint once
@@ -1419,6 +1681,51 @@ export default class GameScene extends Phaser.Scene {
         this.add.image(mx, my, 'props_decor', frameAt(i)).setScale(SCALE).setDepth(2);
       }
     });
+  }
+
+  // --- Tileset prop scatter (Sprint 10d) ------------------------------------
+  // Themed mushrooms / flowers from the Sprout Lands props sheet, clustered around
+  // each seed spawn so a biome's seed reads at a glance (red mushrooms by the red-
+  // mushroom seed, blue flowers by the blue-flower seed, etc.), plus a few rocks.
+  // Frames verified by eye against the sheet (row 0 mushrooms, row 1 stones, row 2
+  // bushes, row 3 flowers incl. the yellow sunflower at 38, row 4 blue/purple).
+  scatterTilesetProps() {
+    if (!this.textures.exists('mushrooms_flowers') || !this.seeds) return;
+    const FRAME_BY_PLANT = {
+      red_mushroom: 0, // red mushroom
+      glowshroom: 4, // purple mushroom
+      blue_flower: 52, // blue flower
+      sunflower: 38, // yellow sunflower
+      green_herb: 24, // green bush tuft
+      golden_wheat: 24 // grass tuft (no grain in this sheet)
+    };
+    const ROCK_FRAMES = [13, 14, 15];
+
+    this.seeds.forEach((seed) => {
+      const frame = FRAME_BY_PLANT[seed.plantType];
+      if (frame === undefined) return;
+      const count = 2 + Math.floor(Math.random() * 2); // 2–3 per seed
+      for (let i = 0; i < count; i++) {
+        const angle = Math.random() * Math.PI * 2;
+        const dist = 34 + Math.random() * 26;
+        const px = seed.x + Math.cos(angle) * dist;
+        const py = seed.y + Math.sin(angle) * dist;
+        if (this.worldZoneSystem.isNearRiver(px, py, 12)) continue;
+        if (py < GARDEN_ZONE_HEIGHT) continue; // keep decor out of the garden
+        this.add.image(px, py, 'mushrooms_flowers', frame).setScale(1.6).setDepth(2);
+      }
+    });
+
+    // A sparse rock scatter through the mid/deep forest for ground texture.
+    for (let i = 0; i < 22; i++) {
+      const px = Phaser.Math.Between(ENEMY_SPAWN_MARGIN, WORLD_WIDTH - ENEMY_SPAWN_MARGIN);
+      const py = Phaser.Math.Between(GARDEN_ZONE_HEIGHT + 200, WORLD_HEIGHT - 200);
+      if (this.worldZoneSystem.isNearRiver(px, py, 16)) continue;
+      const onSeed = this.seeds.some((s) => Phaser.Math.Distance.Between(px, py, s.x, s.y) < 50);
+      if (onSeed) continue;
+      const frame = ROCK_FRAMES[Math.floor(Math.random() * ROCK_FRAMES.length)];
+      this.add.image(px, py, 'mushrooms_flowers', frame).setScale(1.4).setDepth(2);
+    }
   }
 
   // --- Forest ambience (Sprint 10) ------------------------------------------
@@ -2713,6 +3020,12 @@ export default class GameScene extends Phaser.Scene {
     if (!this._nearGateEmitted) this.checkNearGate();
     this.updateSeedArrow(delta);
     this.updateMinimapBroadcast(delta);
+    this.updateGates(); // Sprint 10d — swing garden gates open near the player
+
+    // Sprint 10d — slow downstream drift so the river reads as flowing water.
+    if (this.waterTiles) {
+      for (const t of this.waterTiles) t.tilePositionX += delta * 0.004;
+    }
 
     if (Phaser.Input.Keyboard.JustDown(this.fKey)) {
       this.handleInteract();

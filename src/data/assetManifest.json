@@ -56,7 +56,49 @@
     },
     {
       "key": "farming_plants",
-      "path": "assets/images/farming_plants_v2.png",
+      "path": "assets/images/Farming Plants.png",
+      "frameWidth": 16,
+      "frameHeight": 16
+    },
+    {
+      "key": "grass_tiles",
+      "path": "assets/images/Grass_tiles_v2.png",
+      "frameWidth": 16,
+      "frameHeight": 16
+    },
+    {
+      "key": "dark_grass_tiles",
+      "path": "assets/images/Darker_Grass_Tiles_v2.png",
+      "frameWidth": 16,
+      "frameHeight": 16
+    },
+    {
+      "key": "soil_tiles",
+      "path": "assets/images/Soil_Ground_Tiles.png",
+      "frameWidth": 16,
+      "frameHeight": 16
+    },
+    {
+      "key": "water_tiles",
+      "path": "assets/images/Water.png",
+      "frameWidth": 16,
+      "frameHeight": 16
+    },
+    {
+      "key": "mushrooms_flowers",
+      "path": "assets/images/Mushrooms, Flowers, Stones.png",
+      "frameWidth": 16,
+      "frameHeight": 16
+    },
+    {
+      "key": "fences",
+      "path": "assets/images/Fences.png",
+      "frameWidth": 16,
+      "frameHeight": 16
+    },
+    {
+      "key": "fence_gates",
+      "path": "assets/images/Fence gates animation sprites .png",
       "frameWidth": 16,
       "frameHeight": 16
     },
@@ -98,6 +140,7 @@
     }
   ],
   "images": [
+    { "key": "trees", "path": "assets/images/Trees, stumps and bushes.png" },
     { "key": "tileset_garden", "path": "assets/images/tileset_garden.png" },
     { "key": "tileset_forest", "path": "assets/images/tileset_forest.png" },
     { "key": "tileset_fence", "path": "assets/images/tileset_fence.png" },
