@@ -13,6 +13,17 @@ import EventBus from '../core/EventBus.js';
 import GameState from '../core/GameState.js';
 import { VIRTUAL_WIDTH, VIRTUAL_HEIGHT } from '../core/Constants.js';
 import entitiesData from '../data/entities.json';
+import { ACHIEVEMENT_COUNT } from '../data/achievements.js';
+
+// Rarest → commonest, for the run-summary "Rarest Find" line.
+const RARITY_ORDER = [
+  'glowshroom',
+  'green_herb',
+  'blue_flower',
+  'golden_wheat',
+  'red_mushroom',
+  'sunflower'
+];
 
 const PLANT_ORDER = [
   'red_mushroom',
@@ -53,6 +64,9 @@ export default class WinScene extends Phaser.Scene {
       .setDepth(200)
       .setInteractive();
 
+    // Win transition fades up through a soft warm white (celebratory, not grim),
+    // then reveals the summary beneath it (Sprint 12).
+    this.playWarmIntro();
     if (isFull) this.playBloom();
 
     // --- Headline ---
@@ -61,7 +75,7 @@ export default class WinScene extends Phaser.Scene {
       : 'The forest is beginning to remember.';
     this.add
       .text(cx, 120, headline, {
-        fontFamily: '"Courier New", monospace',
+        fontFamily: '"SproutLands", "Courier New", monospace',
         fontSize: isFull ? '46px' : '40px',
         fontStyle: 'bold',
         color: COLOR_GOLD,
@@ -92,6 +106,15 @@ export default class WinScene extends Phaser.Scene {
       );
       this.makeButton(cx + 170, btnY, 300, 56, 'Return to Menu', 0x36322e, () => this.toMenu());
     }
+  }
+
+  // Warm-white wash that the summary fades in beneath (both win types).
+  playWarmIntro() {
+    const warm = this.add
+      .rectangle(0, 0, VIRTUAL_WIDTH, VIRTUAL_HEIGHT, 0xfff1d6, 0.92)
+      .setOrigin(0, 0)
+      .setDepth(250);
+    this.tweens.add({ targets: warm, alpha: 0, duration: 700, onComplete: () => warm.destroy() });
   }
 
   // Full-win celebratory screen flash that fades away.
@@ -157,26 +180,58 @@ export default class WinScene extends Phaser.Scene {
     });
   }
 
+  // Run summary (Sprint 11) — a one-page recap shown above the win buttons.
   buildStats(cx, y) {
-    const grown = this.stats.plantsGrown || {};
-    const grownList = PLANT_ORDER.filter((pt) => (grown[pt] || 0) > 0)
-      .map((pt) => entitiesData.plants[pt].name)
-      .join(', ');
+    const s = this.stats;
+    const grown = s.plantsGrown || {};
+    const kills = s.killsByType || {};
+    const totalGrown = Object.values(grown).reduce((a, b) => a + (b || 0), 0);
 
+    const nameOf = (pt) => (pt && entitiesData.plants[pt] ? entitiesData.plants[pt].name : '—');
+    const rarest = RARITY_ORDER.find((pt) => (grown[pt] || 0) > 0);
+
+    this.add
+      .text(cx, y, `YOUR RUN — DAY ${s.daysSurvived ?? '—'}`, {
+        fontFamily: '"SproutLands", "Courier New", monospace',
+        fontSize: '22px',
+        fontStyle: 'bold',
+        color: COLOR_GOLD
+      })
+      .setOrigin(0.5, 0)
+      .setDepth(202);
+
+    const pad = (label, value) => `${label.padEnd(20, ' ')}${value}`;
     const lines = [
-      `Days Survived:      ${this.stats.daysSurvived ?? '—'}`,
-      `Enemies Defeated:   ${this.stats.enemiesDefeated ?? 0}`,
-      `Upgrades Purchased: ${this.stats.upgradesPurchased ?? 0}`,
-      `Plants Grown:       ${grownList || 'none'}`
+      pad('Days Survived', s.daysSurvived ?? '—'),
+      pad(
+        'Enemies Defeated',
+        `${s.enemiesDefeated ?? 0}  (Green ${kills.green_slime || 0} · Dark ${kills.dark_slime || 0} · Skel ${kills.skeleton || 0})`
+      ),
+      pad('Seeds Collected', s.seedsCollected ?? 0),
+      pad('Plants Grown', totalGrown),
+      pad('Times Died', s.deaths ?? 0),
+      pad('Upgrades Purchased', s.upgradesPurchased ?? 0),
+      '',
+      pad('First Plant Grown', nameOf(s.firstPlantGrown)),
+      pad('Rarest Find', rarest ? nameOf(rarest) : '—')
     ];
 
     this.add
-      .text(cx, y, lines.join('\n'), {
-        fontFamily: '"Courier New", monospace',
-        fontSize: '22px',
+      .text(cx, y + 38, lines.join('\n'), {
+        fontFamily: '"SproutLands", "Courier New", monospace',
+        fontSize: '19px',
         color: COLOR_TEXT,
         align: 'left',
-        lineSpacing: 12
+        lineSpacing: 8
+      })
+      .setOrigin(0.5, 0)
+      .setDepth(202);
+
+    this.add
+      .text(cx, y + 38 + lines.length * 27 + 6, `${s.achievementsUnlocked ?? 0} / ${ACHIEVEMENT_COUNT} Achievements`, {
+        fontFamily: '"SproutLands", "Courier New", monospace',
+        fontSize: '16px',
+        color: COLOR_MUTED
       })
       .setOrigin(0.5, 0)
       .setDepth(202);
@@ -196,7 +251,7 @@ export default class WinScene extends Phaser.Scene {
       .setInteractive({ useHandCursor: true });
     this.add
       .text(cx, cy, label, {
-        fontFamily: '"Courier New", monospace',
+        fontFamily: '"SproutLands", "Courier New", monospace',
         fontSize: '22px',
         fontStyle: 'bold',
         color: COLOR_TEXT

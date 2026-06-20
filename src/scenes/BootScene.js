@@ -110,7 +110,7 @@ export default class BootScene extends Phaser.Scene {
 
     this.add
       .text(cx, cy - 80, 'SEEDKEEPER', {
-        fontFamily: '"Courier New", monospace',
+        fontFamily: '"SproutLands", "Courier New", monospace',
         fontSize: '64px',
         fontStyle: 'bold',
         color: '#8AB87E'
@@ -138,7 +138,7 @@ export default class BootScene extends Phaser.Scene {
 
     this._progressText = this.add
       .text(cx, cy + 64, 'Loading… 0%', {
-        fontFamily: '"Courier New", monospace',
+        fontFamily: '"SproutLands", "Courier New", monospace',
         fontSize: '20px',
         color: '#9B9389'
       })

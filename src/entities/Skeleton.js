@@ -9,13 +9,15 @@
 
 import Phaser from 'phaser';
 import EventBus from '../core/EventBus.js';
-import { GARDEN_ZONE_HEIGHT } from '../core/Constants.js';
+import { GARDEN_LEFT, GARDEN_RIGHT, GARDEN_TOP, GARDEN_BOTTOM } from '../core/Constants.js';
+import { spawnEnemyAlert } from './enemyIndicator.js';
 import Seed from './Seed.js';
 import PlantBundle from './PlantBundle.js';
 import { getRandomSeedDrop, getRandomBundleDrop } from '../systems/lootTable.js';
 
 const STATE = { PATROL: 'PATROL', CHASE: 'CHASE' };
 const WAYPOINT_REACHED = 12; // px — close enough to advance to the next waypoint
+const LOOK_RANGE = 200; // px — head turns toward the player within this range (Sprint 9)
 const HIT_FLASH_MS = 100;
 const KNOCKBACK_VELOCITY = 160; // heavier than a slime — takes less of a shove
 const KNOCKBACK_MS = 250;
@@ -23,20 +25,33 @@ const DAMAGE_TEXT_OFFSET = 24;
 const DEATH_FADE_MS = 400;
 const DROP_SCATTER = 30;
 
+// Drawn at 2x for zoom visibility. Visual only — the physics body is set up
+// separately below.
+const SPRITE_SCALE = 2;
+// Fixed collider radius (source px), pinned so the 2x sprite scale doesn't double
+// the hitbox. Effective in-world radius is halfWidth (= BODY_RADIUS * scaleX).
+const BODY_RADIUS = 8;
+
 export default class Skeleton extends Phaser.Physics.Arcade.Sprite {
   constructor(scene, x, y, waypoints, gameData) {
+    // Prefer the Anokolisa animated sheets (run + death, 64x64). Fall back to the
+    // legacy 16x16 skeleton_sheet, then to a generated bone placeholder.
+    const useReal = scene.textures.exists('skeleton_run');
     const hasSheet = scene.textures.exists('skeleton_sheet');
-    if (!hasSheet) ensurePlaceholderTexture(scene);
-    super(scene, x, y, hasSheet ? 'skeleton_sheet' : 'px_skeleton');
+    if (!useReal && !hasSheet) ensurePlaceholderTexture(scene);
+    super(scene, x, y, useReal ? 'skeleton_run' : hasSheet ? 'skeleton_sheet' : 'px_skeleton');
 
+    this.useReal = useReal;
     this.hasSheet = hasSheet;
-    if (!hasSheet) {
-      // TODO(asset): drop skeleton_sheet.png (16x16 frames) into /assets/images
-      // for an animated skeleton. Bone-colored placeholder in use until then.
-    }
 
     scene.add.existing(this);
     scene.physics.add.existing(this);
+
+    // Visual draw scale for zoom visibility (set before the body below; the
+    // collider radius derives from this.width, the unscaled source size). The
+    // real 64x64 frames carry transparent padding, so 2x reads as a tanky enemy.
+    this.setScale(SPRITE_SCALE);
+    if (useReal) this.setupRealAnimations();
 
     this.enemyType = 'skeleton';
 
@@ -54,9 +69,11 @@ export default class Skeleton extends Phaser.Physics.Arcade.Sprite {
     this.isDead = false;
     this._knockbackUntil = 0;
 
-    // --- Physics: circular collider centred in the sprite ---
+    // --- Physics: fixed-radius collider, centred in the sprite ---
+    // Pinned to BODY_RADIUS (not width*ratio) so the 2x sprite scale doesn't
+    // inflate the hitbox. Offset stays centred on the 16px frame.
     this.setCollideWorldBounds(true);
-    const radius = this.width * 0.42;
+    const radius = BODY_RADIUS;
     this.body.setCircle(radius, this.width / 2 - radius, this.height / 2 - radius);
     this.setDepth(9);
 
@@ -64,6 +81,31 @@ export default class Skeleton extends Phaser.Physics.Arcade.Sprite {
     this.waypoints = waypoints && waypoints.length ? waypoints : [{ x, y }];
     this._wpIndex = 0;
     this.state = STATE.PATROL;
+  }
+
+  // Create the shared walk/death animations from the Anokolisa sheets once, then
+  // start walking. Frame counts are derived from each sheet's frameTotal so a
+  // miscount can never reference a non-existent frame.
+  setupRealAnimations() {
+    const a = this.scene.anims;
+    const lastFrame = (key) => Math.max(0, this.scene.textures.get(key).frameTotal - 2);
+    if (!a.exists('skeleton_walk')) {
+      a.create({
+        key: 'skeleton_walk',
+        frames: a.generateFrameNumbers('skeleton_run', { start: 0, end: lastFrame('skeleton_run') }),
+        frameRate: 10,
+        repeat: -1
+      });
+    }
+    if (!a.exists('skeleton_die') && this.scene.textures.exists('skeleton_death')) {
+      a.create({
+        key: 'skeleton_die',
+        frames: a.generateFrameNumbers('skeleton_death', { start: 0, end: lastFrame('skeleton_death') }),
+        frameRate: 14,
+        repeat: 0
+      });
+    }
+    this.play('skeleton_walk');
   }
 
   update(dt, player) {
@@ -79,11 +121,20 @@ export default class Skeleton extends Phaser.Physics.Arcade.Sprite {
     const dist = Phaser.Math.Distance.Between(this.x, this.y, player.x, player.y);
 
     // --- Transitions ---
-    if (this.state === STATE.PATROL && dist < this.detectRange) {
+    // Forest Fog weather reduces detect range for the day (Sprint 11).
+    const detect = this.detectRange * (this.scene.weatherDetectMult || 1);
+    if (this.state === STATE.PATROL && dist < detect) {
       this.state = STATE.CHASE;
+      this.showAlertIndicator(); // "!" — spotted the player
     } else if (this.state === STATE.CHASE && dist > this.loseRange) {
       this.state = STATE.PATROL;
       this._wpIndex = this.nearestWaypointIndex();
+      this.showLostIndicator(); // "?" — lost the player
+    }
+
+    // Head-turn tell: face the player whenever they're close, even mid-patrol.
+    if (dist < LOOK_RANGE) {
+      this.setFlipX(player.x < this.x);
     }
 
     // --- Behaviour ---
@@ -124,13 +175,51 @@ export default class Skeleton extends Phaser.Physics.Arcade.Sprite {
     return best;
   }
 
-  // Keep skeletons out of the safe garden — they stop at the fence line.
+  // Keep skeletons out of the safe garden square — bounce them back off whichever
+  // garden edge is nearest, sealing the fence gate gaps the player walks through.
   confineToForest() {
-    const minY = GARDEN_ZONE_HEIGHT + this.body.height / 2;
-    if (this.y < minY) {
-      this.y = minY;
+    if (
+      this.x <= GARDEN_LEFT ||
+      this.x >= GARDEN_RIGHT ||
+      this.y <= GARDEN_TOP ||
+      this.y >= GARDEN_BOTTOM
+    ) {
+      return; // already outside the garden rectangle
+    }
+    const dl = this.x - GARDEN_LEFT;
+    const dr = GARDEN_RIGHT - this.x;
+    const dt = this.y - GARDEN_TOP;
+    const db = GARDEN_BOTTOM - this.y;
+    const min = Math.min(dl, dr, dt, db);
+    if (min === dl) {
+      this.x = GARDEN_LEFT;
+      if (this.body.velocity.x > 0) this.setVelocityX(-Math.abs(this.body.velocity.x));
+    } else if (min === dr) {
+      this.x = GARDEN_RIGHT;
+      if (this.body.velocity.x < 0) this.setVelocityX(Math.abs(this.body.velocity.x));
+    } else if (min === dt) {
+      this.y = GARDEN_TOP;
+      if (this.body.velocity.y > 0) this.setVelocityY(-Math.abs(this.body.velocity.y));
+    } else {
+      this.y = GARDEN_BOTTOM;
       if (this.body.velocity.y < 0) this.setVelocityY(Math.abs(this.body.velocity.y));
     }
+  }
+
+  // Red "!" tell when the skeleton spots the player (PATROL → CHASE): pops above
+  // the skeleton, bounces up, holds, then fades — plus a brief red body tint.
+  showAlertIndicator() {
+    spawnEnemyAlert(this, '!', '#ff3333', false);
+    this.setTint(0xff6666);
+    this.scene.time.delayedCall(200, () => {
+      if (!this.isDead) this.clearTint();
+    });
+  }
+
+  // Blue "?" tell when the skeleton loses the player (CHASE → PATROL). Same motion
+  // as the alert but fades faster and leaves the body untinted.
+  showLostIndicator() {
+    spawnEnemyAlert(this, '?', '#66aaff', true);
   }
 
   // Requested by GameScene on body overlap. Player owns the invincibility
@@ -172,6 +261,12 @@ export default class Skeleton extends Phaser.Physics.Arcade.Sprite {
     this.isDead = true;
     this.body.enable = false;
     this.setVelocity(0, 0);
+
+    // Play the crumble-to-bones death animation while the sprite fades out.
+    if (this.useReal && this.scene.textures.exists('skeleton_death')) {
+      this.setTexture('skeleton_death');
+      this.play('skeleton_die');
+    }
 
     this.scene.tweens.add({
       targets: this,

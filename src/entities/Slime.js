@@ -6,14 +6,36 @@
 
 import Phaser from 'phaser';
 import EventBus from '../core/EventBus.js';
-import { GARDEN_ZONE_HEIGHT } from '../core/Constants.js';
+import { GARDEN_LEFT, GARDEN_RIGHT, GARDEN_TOP, GARDEN_BOTTOM } from '../core/Constants.js';
+import { spawnEnemyAlert } from './enemyIndicator.js';
 import Seed from './Seed.js';
 import PlantBundle from './PlantBundle.js';
 import { getRandomSeedDrop, getRandomBundleDrop } from '../systems/lootTable.js';
 
-const STATE = { WANDER: 'WANDER', CHASE: 'CHASE' };
+const STATE = { WANDER: 'WANDER', ANTICIPATE: 'ANTICIPATE', CHASE: 'CHASE' };
 const RETARGET_MIN_MS = 2000;
 const RETARGET_MAX_MS = 3000;
+
+// Chase anticipation tell (Sprint 9): a brief freeze + scale pulse before the
+// slime commits to the chase, so the player can read the wind-up.
+const ANTICIPATE_PULSE_MS = 75;
+const ANTICIPATE_PULSE_SCALE = 1.3;
+
+// Drawn at 2x for zoom visibility. Visual only — the physics body is set up
+// separately below. The anticipation pulse multiplies this so the tell still
+// reads as a grow, not a shrink, against the larger baseline.
+const SPRITE_SCALE = 2;
+// Fixed collider radius (source px), pinned so the 2x sprite scale doesn't double
+// the hitbox. Effective in-world radius is halfWidth (= BODY_RADIUS * scaleX).
+const BODY_RADIUS = 6;
+
+// Wander personality per type (Sprint 9). Greens hold a heading for a long lazy
+// stretch and occasionally stop; darks move in short twitchy bursts with a pause
+// between each. Falls back to the generic window for any other type.
+const WANDER_PROFILE = {
+  green_slime: { holdMin: 3000, holdMax: 4000, pauseChance: 0.35, pauseMs: 500 },
+  dark_slime: { holdMin: 800, holdMax: 1200, pauseChance: 1.0, pauseMs: 400 }
+};
 
 // --- Combat (Sprint 3) ---
 const HIT_FLASH_MS = 100;
@@ -41,6 +63,10 @@ export default class Slime extends Phaser.Physics.Arcade.Sprite {
     scene.add.existing(this);
     scene.physics.add.existing(this);
 
+    // Visual draw scale for zoom visibility (set before the body below; the
+    // collider radius derives from this.width, the unscaled source size).
+    this.setScale(SPRITE_SCALE);
+
     this.slimeType = slimeType;
 
     // --- Stats (from data) ---
@@ -58,9 +84,11 @@ export default class Slime extends Phaser.Physics.Arcade.Sprite {
     this.currentChaseSpeed = this.baseChaseSpeed;
 
     // --- Physics ---
+    // Fixed-radius collider (BODY_RADIUS, not width*ratio) so the 2x sprite scale
+    // doesn't inflate the hitbox. Offset stays centred on the 16px frame.
     this.setCollideWorldBounds(true);
     this.setBounce(1, 1);
-    const radius = this.width * 0.42;
+    const radius = BODY_RADIUS;
     this.body.setCircle(
       radius,
       this.width / 2 - radius,
@@ -71,6 +99,9 @@ export default class Slime extends Phaser.Physics.Arcade.Sprite {
     // --- State machine ---
     this.state = STATE.WANDER;
     this._retargetTimer = 0;
+    this._wanderProfile = WANDER_PROFILE[slimeType] || null;
+    this._isWanderPaused = false;
+    this._pauseTimer = 0;
     this.pickNewWanderDirection();
 
     // --- Combat state ---
@@ -84,9 +115,10 @@ export default class Slime extends Phaser.Physics.Arcade.Sprite {
   pickNewWanderDirection() {
     const angle = Math.random() * Math.PI * 2;
     this._wanderDir = { x: Math.cos(angle), y: Math.sin(angle) };
-    // Randomize per slime so the group never moves in sync.
-    this._retargetTimer =
-      RETARGET_MIN_MS + Math.random() * (RETARGET_MAX_MS - RETARGET_MIN_MS);
+    // Hold window varies by personality; randomized per slime so a group never
+    // moves in lockstep.
+    const prof = this._wanderProfile || { holdMin: RETARGET_MIN_MS, holdMax: RETARGET_MAX_MS };
+    this._retargetTimer = prof.holdMin + Math.random() * (prof.holdMax - prof.holdMin);
   }
 
   update(dt, player) {
@@ -102,42 +134,131 @@ export default class Slime extends Phaser.Physics.Arcade.Sprite {
     const dist = Phaser.Math.Distance.Between(this.x, this.y, player.x, player.y);
 
     // --- Transitions ---
-    if (this.state === STATE.WANDER && dist < this.detectRange) {
-      this.state = STATE.CHASE;
+    // Forest Fog weather reduces detect range for the day (Sprint 11).
+    const detect = this.detectRange * (this.scene.weatherDetectMult || 1);
+    if (this.state === STATE.WANDER && dist < detect) {
+      this.startChase(); // alert tell + wind-up pulse, then CHASE
     } else if (this.state === STATE.CHASE && dist > this.loseRange) {
       this.state = STATE.WANDER;
+      this._isWanderPaused = false;
       this.pickNewWanderDirection();
+      this.showLostIndicator(); // "?" — lost the player
     }
 
     // --- Behaviour ---
-    if (this.state === STATE.CHASE) {
+    if (this.state === STATE.ANTICIPATE) {
+      // Frozen mid-tell — the pulse tween is doing the talking.
+      this.setVelocity(0, 0);
+    } else if (this.state === STATE.CHASE) {
       const angle = Math.atan2(player.y - this.y, player.x - this.x);
       this.setVelocity(
         Math.cos(angle) * this.currentChaseSpeed,
         Math.sin(angle) * this.currentChaseSpeed
       );
     } else {
-      this._retargetTimer -= dt * 1000;
-      if (this._retargetTimer <= 0) {
-        this.pickNewWanderDirection();
-      }
-      this.setVelocity(
-        this._wanderDir.x * this.wanderSpeed,
-        this._wanderDir.y * this.wanderSpeed
-      );
+      this.updateWander(dt);
     }
 
     this.confineToForest();
   }
 
-  // Keep slimes in the dangerous forest — they stop at the fence rather than
-  // wandering or chasing into the safe garden.
+  // WANDER movement with personality pauses. Greens stop occasionally; darks
+  // pause between every short burst, reading as alert and twitchy.
+  updateWander(dt) {
+    const dtMs = dt * 1000;
+    if (this._isWanderPaused) {
+      this.setVelocity(0, 0);
+      this._pauseTimer -= dtMs;
+      if (this._pauseTimer <= 0) {
+        this._isWanderPaused = false;
+        this.pickNewWanderDirection();
+      }
+      return;
+    }
+
+    this._retargetTimer -= dtMs;
+    if (this._retargetTimer <= 0) {
+      const prof = this._wanderProfile;
+      if (prof && Math.random() < prof.pauseChance) {
+        this._isWanderPaused = true;
+        this._pauseTimer = prof.pauseMs;
+        this.setVelocity(0, 0);
+        return;
+      }
+      this.pickNewWanderDirection();
+    }
+    this.setVelocity(this._wanderDir.x * this.wanderSpeed, this._wanderDir.y * this.wanderSpeed);
+  }
+
+  // Chase anticipation: freeze and pulse for a beat, then commit to the chase.
+  startChase() {
+    if (this.state === STATE.ANTICIPATE || this.state === STATE.CHASE) return;
+    this.showAlertIndicator(); // "!" — spotted the player
+    this.state = STATE.ANTICIPATE;
+    this._isWanderPaused = false;
+    this.setVelocity(0, 0);
+    this.scene.tweens.add({
+      targets: this,
+      scaleX: SPRITE_SCALE * ANTICIPATE_PULSE_SCALE,
+      scaleY: SPRITE_SCALE * ANTICIPATE_PULSE_SCALE,
+      duration: ANTICIPATE_PULSE_MS,
+      yoyo: true,
+      onComplete: () => {
+        if (this.isDead) return;
+        this.state = STATE.CHASE;
+      }
+    });
+  }
+
+  // Keep slimes out of the safe garden square — bounce them back off whichever
+  // garden edge is nearest. This backs up the fence colliders by also sealing the
+  // gate gaps the player walks through, so enemies can never follow inside.
   confineToForest() {
-    const minY = GARDEN_ZONE_HEIGHT + this.body.height / 2;
-    if (this.y < minY) {
-      this.y = minY;
+    if (
+      this.x <= GARDEN_LEFT ||
+      this.x >= GARDEN_RIGHT ||
+      this.y <= GARDEN_TOP ||
+      this.y >= GARDEN_BOTTOM
+    ) {
+      return; // already outside the garden rectangle
+    }
+    const dl = this.x - GARDEN_LEFT;
+    const dr = GARDEN_RIGHT - this.x;
+    const dt = this.y - GARDEN_TOP;
+    const db = GARDEN_BOTTOM - this.y;
+    const min = Math.min(dl, dr, dt, db);
+    if (min === dl) {
+      this.x = GARDEN_LEFT;
+      if (this.body.velocity.x > 0) this.setVelocityX(-Math.abs(this.body.velocity.x));
+    } else if (min === dr) {
+      this.x = GARDEN_RIGHT;
+      if (this.body.velocity.x < 0) this.setVelocityX(Math.abs(this.body.velocity.x));
+    } else if (min === dt) {
+      this.y = GARDEN_TOP;
+      if (this.body.velocity.y > 0) this.setVelocityY(-Math.abs(this.body.velocity.y));
+    } else {
+      this.y = GARDEN_BOTTOM;
       if (this.body.velocity.y < 0) this.setVelocityY(Math.abs(this.body.velocity.y));
     }
+  }
+
+  // Red "!" tell shown when the slime first spots the player (WANDER → CHASE):
+  // pops up above the slime, bounces upward, holds, then fades. A brief red tint
+  // on the body reinforces the alert.
+  showAlertIndicator() {
+    spawnEnemyAlert(this, '!', '#ff3333', false);
+    this.setTint(0xff6666);
+    this.scene.time.delayedCall(200, () => {
+      if (this.isDead) return;
+      if (this._baseTint !== null) this.setTint(this._baseTint);
+      else this.clearTint();
+    });
+  }
+
+  // Blue "?" tell shown when the slime loses the player (CHASE → WANDER). Same
+  // motion as the alert but fades faster and does not tint the body.
+  showLostIndicator() {
+    spawnEnemyAlert(this, '?', '#66aaff', true);
   }
 
   // Requested by GameScene on body overlap. Player decides whether the hit lands

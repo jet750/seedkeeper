@@ -58,12 +58,21 @@ export default class UpgradeScene extends Phaser.Scene {
       .setDepth(100)
       .setInteractive();
 
+    // Title plate — Sprout Lands dialog box behind the header, nine-sliced so the
+    // 176x48 art scales without distorting its border. The cream fill wants dark
+    // text, so the title only goes brown when the plate is actually present.
+    const hasPlate = this.textures.exists('ui_dialog_big');
+    if (hasPlate) {
+      this.add
+        .nineslice(266, 52, 'ui_dialog_big', undefined, 470, 64, 18, 18, 16, 16)
+        .setDepth(100);
+    }
     this.add
       .text(60, 36, 'SEEDKEEPER WORKSHOP', {
-        fontFamily: '"Courier New", monospace',
+        fontFamily: '"SproutLands", "Courier New", monospace',
         fontSize: '34px',
         fontStyle: 'bold',
-        color: '#EDD49A'
+        color: hasPlate ? '#4a3520' : '#EDD49A'
       })
       .setDepth(101);
 
@@ -74,6 +83,9 @@ export default class UpgradeScene extends Phaser.Scene {
       const row = Math.floor(i / 2);
       this.buildPanel(pt, GRID_X + col * COL_STRIDE, GRID_Y + row * ROW_STRIDE);
     });
+
+    // Well-upgrade track (Sprint 9) — a wide compact bar below the plant grid.
+    this.buildWellPanel();
 
     this.makeButton(
       VIRTUAL_WIDTH / 2,
@@ -96,6 +108,7 @@ export default class UpgradeScene extends Phaser.Scene {
     this._onBank = () => {
       this.refreshSummary();
       PLANT_ORDER.forEach((pt) => this.refreshPanel(pt));
+      this.refreshWellPanel();
     };
     EventBus.on('bank:updated', this._onBank);
     this.events.once('shutdown', () => EventBus.off('bank:updated', this._onBank));
@@ -110,7 +123,7 @@ export default class UpgradeScene extends Phaser.Scene {
       this.add.circle(x, 56, 11, color).setDepth(101);
       this.summaryRefs[pt] = this.add
         .text(x + 18, 56, '0', {
-          fontFamily: '"Courier New", monospace',
+          fontFamily: '"SproutLands", "Courier New", monospace',
           fontSize: '20px',
           color: '#F5EFE6'
         })
@@ -123,6 +136,95 @@ export default class UpgradeScene extends Phaser.Scene {
     PLANT_ORDER.forEach((pt) => {
       this.summaryRefs[pt].setText(`${this.bank(pt)}`);
     });
+  }
+
+  // --- Well-upgrade bar (Sprint 9) ------------------------------------------
+  // A standalone track paid for in blue flowers. Sits in the gap below the
+  // plant grid; the buy button is rebuilt each refresh like the plant rows.
+
+  buildWellPanel() {
+    const cx = VIRTUAL_WIDTH / 2;
+    const cy = 794;
+    const w = 1440;
+    const h = 60;
+    this.add.rectangle(cx, cy, w, h, COLOR_PANEL).setStrokeStyle(2, 0x6b92bc).setDepth(100);
+    const leftX = cx - w / 2 + 22;
+    this.add.circle(leftX, cy, 12, hexToNum(this.gameData.plants.blue_flower.color)).setDepth(101);
+    this.add
+      .text(leftX + 24, cy - 17, 'WELL UPGRADES', {
+        fontFamily: '"SproutLands", "Courier New", monospace',
+        fontSize: '14px',
+        fontStyle: 'bold',
+        color: '#ABC4DE'
+      })
+      .setOrigin(0, 0)
+      .setDepth(101);
+    this.wellInfoText = this.add
+      .text(leftX + 24, cy + 3, '', {
+        fontFamily: '"SproutLands", "Courier New", monospace',
+        fontSize: '15px',
+        color: '#D1CCC6'
+      })
+      .setOrigin(0, 0)
+      .setDepth(101);
+    this._wellActionObjs = [];
+    this.refreshWellPanel();
+  }
+
+  refreshWellPanel() {
+    if (!this.wellInfoText) return;
+    const tiers = this.gameData.well_upgrades.tiers;
+    const lvl = this.gameScene.wellLevel || 0;
+    const current = tiers[lvl];
+    const next = tiers[lvl + 1];
+
+    const cx = VIRTUAL_WIDTH / 2;
+    const w = 1440;
+    const cy = 794;
+    const rightX = cx + w / 2 - 22;
+
+    if (this._wellActionObjs) this._wellActionObjs.forEach((o) => o.destroy());
+    this._wellActionObjs = [];
+
+    if (!next) {
+      this.wellInfoText.setText(`${current.name} · Water Capacity ${current.capacity}  ·  fully upgraded`);
+      const t = this.add
+        .text(rightX, cy, 'MAXED', {
+          fontFamily: '"SproutLands", "Courier New", monospace',
+          fontSize: '16px',
+          fontStyle: 'bold',
+          color: '#8AB87E'
+        })
+        .setOrigin(1, 0.5)
+        .setDepth(102);
+      this._wellActionObjs.push(t);
+      return;
+    }
+
+    this.wellInfoText.setText(
+      `${current.name} (cap ${current.capacity})  →  ${next.name} (cap ${next.capacity})   ·   ${next.cost} Blue Flower`
+    );
+    const cost = next.cost;
+    const affordable = (this.gameScene.plantBank[next.currency] || 0) >= cost;
+    this._wellActionObjs = this.makeButton(
+      rightX - 90,
+      cy,
+      180,
+      36,
+      `BUY  ${cost}`,
+      affordable ? COLOR_AFFORD : COLOR_DISABLED,
+      affordable,
+      () => this.onWellBuy(),
+      affordable ? '#141210' : '#7a746c'
+    );
+  }
+
+  onWellBuy() {
+    this.gameScene.purchaseWellUpgrade();
+    // purchase emits bank:updated → _onBank refreshes everything; refresh now too.
+    this.refreshSummary();
+    this.refreshWellPanel();
+    PLANT_ORDER.forEach((p) => this.refreshPanel(p));
   }
 
   // --- Panels ---------------------------------------------------------------
@@ -140,7 +242,7 @@ export default class UpgradeScene extends Phaser.Scene {
 
     this.add
       .text(px + 62, py + 22, plant.name, {
-        fontFamily: '"Courier New", monospace',
+        fontFamily: '"SproutLands", "Courier New", monospace',
         fontSize: '22px',
         fontStyle: 'bold',
         color: '#F5EFE6'
@@ -149,7 +251,7 @@ export default class UpgradeScene extends Phaser.Scene {
 
     const resourceText = this.add
       .text(px + PANEL_W - 20, py + 24, '', {
-        fontFamily: '"Courier New", monospace',
+        fontFamily: '"SproutLands", "Courier New", monospace',
         fontSize: '20px',
         color: '#EDD49A'
       })
@@ -158,7 +260,7 @@ export default class UpgradeScene extends Phaser.Scene {
 
     const statLabel = this.add
       .text(px + 24, py + 70, '', {
-        fontFamily: '"Courier New", monospace',
+        fontFamily: '"SproutLands", "Courier New", monospace',
         fontSize: '15px',
         color: '#D1CCC6',
         lineSpacing: 4
@@ -167,7 +269,7 @@ export default class UpgradeScene extends Phaser.Scene {
 
     const gearLabel = this.add
       .text(px + 24, py + 124, '', {
-        fontFamily: '"Courier New", monospace',
+        fontFamily: '"SproutLands", "Courier New", monospace',
         fontSize: '15px',
         color: '#D1CCC6',
         lineSpacing: 4
@@ -255,7 +357,7 @@ export default class UpgradeScene extends Phaser.Scene {
     if (this.isMaxed(pt, track)) {
       const t = this.add
         .text(rightX, rowY, 'MAXED', {
-          fontFamily: '"Courier New", monospace',
+          fontFamily: '"SproutLands", "Courier New", monospace',
           fontSize: '16px',
           fontStyle: 'bold',
           color: '#8AB87E'
@@ -329,14 +431,27 @@ export default class UpgradeScene extends Phaser.Scene {
     return this.gameData.upgrades[pt].gear.tiers[lv.gear + 1].cost;
   }
 
+  // Button background uses the Sprout Lands square-button art (nine-sliced from a
+  // neutral cream frame so it scales to any width without distortion, then tinted
+  // to keep the affordable/disabled/confirm colour coding). Falls back to a plain
+  // rectangle when the sheet is absent, so the purchase flow never depends on art.
   makeButton(cx, cy, w, h, label, baseColor, enabled, onClick, textColor) {
-    const rect = this.add
-      .rectangle(cx, cy, w, h, baseColor)
-      .setStrokeStyle(2, 0x000000)
-      .setDepth(101);
+    const isSprite = this.textures.exists('ui_btn_square');
+    let bg;
+    if (isSprite) {
+      bg = this.add
+        .nineslice(cx, cy, 'ui_btn_square', 2, w, h, 10, 10, 10, 10)
+        .setTint(baseColor)
+        .setDepth(101);
+    } else {
+      bg = this.add
+        .rectangle(cx, cy, w, h, baseColor)
+        .setStrokeStyle(2, 0x000000)
+        .setDepth(101);
+    }
     const text = this.add
       .text(cx, cy, label, {
-        fontFamily: '"Courier New", monospace',
+        fontFamily: '"SproutLands", "Courier New", monospace',
         fontSize: '15px',
         fontStyle: 'bold',
         color: textColor || '#141210'
@@ -345,14 +460,20 @@ export default class UpgradeScene extends Phaser.Scene {
       .setDepth(102);
 
     if (enabled) {
-      rect.setInteractive({ useHandCursor: true });
-      rect.on('pointerover', () => rect.setStrokeStyle(2, 0xeac34f));
-      rect.on('pointerout', () => rect.setStrokeStyle(2, 0x000000));
-      rect.on('pointerup', onClick);
+      bg.setInteractive({ useHandCursor: true });
+      if (isSprite) {
+        // Hover brightens the button to its natural cream; out restores the tint.
+        bg.on('pointerover', () => bg.setTint(0xffffff));
+        bg.on('pointerout', () => bg.setTint(baseColor));
+      } else {
+        bg.on('pointerover', () => bg.setStrokeStyle(2, 0xeac34f));
+        bg.on('pointerout', () => bg.setStrokeStyle(2, 0x000000));
+      }
+      bg.on('pointerup', onClick);
     } else {
-      rect.setAlpha(0.55);
+      bg.setAlpha(0.55);
     }
-    return [rect, text];
+    return [bg, text];
   }
 
   close() {

@@ -40,7 +40,11 @@
     "scaling": {
       "densityPerDay": 0.1,
       "startDay_darkSlime": 3,
-      "startDay_skeleton": 5
+      "startDay_skeleton": 5,
+      "greenSlimeBaseCount": 5,
+      "greenSlimePerDay": 0.5,
+      "greenSlimeMaxCount": 12,
+      "greenSlimeRespawnMs": 30000
     }
   },
   "daySystem": {
@@ -140,5 +144,21 @@
         { "id": "golden_can", "name": "Golden Can", "cost": 10, "bedsPerUse": 99 }
       ]}
     }
-  }
+  },
+  "well_upgrades": {
+    "tiers": [
+      { "id": "well_basic",   "name": "Basic Well",    "capacity": 1, "cost": 0,  "currency": null },
+      { "id": "well_bucket",  "name": "Deep Bucket",   "capacity": 2, "cost": 4,  "currency": "blue_flower" },
+      { "id": "well_cistern", "name": "Rain Cistern",  "capacity": 4, "cost": 10, "currency": "blue_flower" },
+      { "id": "well_spring",  "name": "Garden Spring", "capacity": 8, "cost": 18, "currency": "blue_flower" }
+    ]
+  },
+  "weather": [
+    { "id": "cloudy", "name": "Cloudy Day",    "icon": "☁️",  "description": "Overcast skies slow plant growth today.",            "effect": "growthPenalty",   "value": 1 },
+    { "id": "rain",   "name": "Rain Overnight","icon": "🌧️", "description": "The rain watered everything. Beds soaked overnight.", "effect": "freeWater",       "value": 1 },
+    { "id": "sunny",  "name": "Bright Sun",    "icon": "☀️",  "description": "Perfect growing conditions. Watering pays off more.",  "effect": "growthBonus",     "value": 0.15 },
+    { "id": "fog",    "name": "Forest Fog",    "icon": "🌫️", "description": "Enemies are disoriented. Detect range reduced today.", "effect": "enemyDetectMult", "value": 0.6 },
+    { "id": "wind",   "name": "Strong Wind",   "icon": "🍃",  "description": "Seeds drift on the wind. Respawn timers shortened.",   "effect": "respawnMult",     "value": 0.7 },
+    { "id": "clear",  "name": "Clear Day",     "icon": "🌤️", "description": "Nothing unusual. A good day to explore.",              "effect": "none",            "value": 0 }
+  ]
 }

@@ -1,14 +1,16 @@
 // MenuScene.js
 //
-// Title screen with three save slots backed by real localStorage data
-// (Sprint 4). Empty slots read "— New Game —"; saved slots show day + playtime.
-// Clicking a slot loads its save (or a fresh default) and launches GameScene
-// with { slotIndex, save }.
+// Title screen (Sprint 4; overhauled in Sprint 12). An animated garden parallax
+// sits behind a bouncing logo, a fading subtitle, and a floating seed. The three
+// save slots are proper cards: occupied slots show day, playtime and a row of
+// plant-progress dots with [Continue] + a hold-to-confirm [Delete]; empty slots
+// show a clean New Game card. A gear opens the shared Settings overlay and a
+// Credits link (Sprint 13) opens the credits. Clicking a card launches GameScene.
 
 import Phaser from 'phaser';
 import GameState from '../core/GameState.js';
 import SaveSystem from '../core/SaveSystem.js';
-import { VIRTUAL_WIDTH, VIRTUAL_HEIGHT } from '../core/Constants.js';
+import { VIRTUAL_WIDTH, VIRTUAL_HEIGHT, FONT_FAMILY, UI_ACCENT_GOLD } from '../core/Constants.js';
 import entitiesData from '../data/entities.json';
 
 const PLANT_ORDER = [
@@ -20,6 +22,10 @@ const PLANT_ORDER = [
   'sunflower'
 ];
 
+const CARD_W = 640;
+const CARD_H = 124;
+const DELETE_HOLD_MS = 1500; // hold-to-confirm window — guards against accidental loss
+
 export default class MenuScene extends Phaser.Scene {
   constructor() {
     super('MenuScene');
@@ -27,7 +33,7 @@ export default class MenuScene extends Phaser.Scene {
 
   create() {
     // If we arrived here from a finished run, settle the state machine back to
-    // MENU through a valid transition (GAME_OVER → MENU).
+    // MENU through a valid transition (GAME_OVER / WIN → MENU).
     if (GameState.is('GAME_OVER') || GameState.is('WIN')) {
       GameState.transition('MENU');
     }
@@ -35,93 +41,266 @@ export default class MenuScene extends Phaser.Scene {
     const cx = VIRTUAL_WIDTH / 2;
 
     this.cameras.main.setBackgroundColor('#0a1a0a');
+    this.cameras.main.fadeIn(500, 0, 0, 0);
 
-    // Title
-    this.add
-      .text(cx, 170, 'SEEDKEEPER', {
-        fontFamily: '"Courier New", monospace',
-        fontSize: '108px',
-        fontStyle: 'bold',
-        color: '#8AB87E'
-      })
-      .setOrigin(0.5);
+    this.buildBackground();
+    this.buildTitle(cx);
 
-    this.add
-      .text(cx, 260, 'Tend the garden. Brave the forest. Beat the day.', {
-        fontFamily: '"Courier New", monospace',
-        fontSize: '22px',
-        color: '#9B9389'
-      })
-      .setOrigin(0.5);
-
-    // Three save-slot buttons, populated from real save metadata.
+    // Three save-slot cards, populated from real save metadata.
     const slots = SaveSystem.getSlotsMetadata();
-    const startY = 400;
-    const gap = 96;
-    slots.forEach((slot, i) => {
-      this.createSlotButton(cx, startY + i * gap, slot);
-    });
+    const startY = 392;
+    const gap = CARD_H + 24;
+    slots.forEach((slot, i) => this.buildSlotCard(cx, startY + i * gap, slot));
 
-    this.add
-      .text(cx, VIRTUAL_HEIGHT - 44, 'Click a slot to begin · WASD move · Space attack · F interact', {
-        fontFamily: '"Courier New", monospace',
-        fontSize: '17px',
-        color: '#4D4843'
-      })
-      .setOrigin(0.5);
+    this.buildFooter(cx);
   }
 
-  createSlotButton(x, y, slot) {
-    const width = 560;
-    const height = 72;
+  // --- Background -----------------------------------------------------------
 
+  buildBackground() {
+    if (this.textures.exists('tileset_garden')) {
+      this.bgLayer = this.add
+        .tileSprite(0, 0, VIRTUAL_WIDTH, VIRTUAL_HEIGHT, 'tileset_garden')
+        .setOrigin(0, 0)
+        .setAlpha(0.4);
+      this.tweens.add({
+        targets: this.bgLayer,
+        tilePositionX: 240,
+        duration: 24000,
+        repeat: -1,
+        ease: 'Linear'
+      });
+    }
+    // Dark wash so the title/cards stay legible over the busy parallax.
+    this.add
+      .rectangle(0, 0, VIRTUAL_WIDTH, VIRTUAL_HEIGHT, 0x0a1a0a, 0.55)
+      .setOrigin(0, 0);
+  }
+
+  // --- Title treatment ------------------------------------------------------
+
+  buildTitle(cx) {
+    // Title drops in from above with a bounce.
+    const title = this.add
+      .text(cx, -120, 'SEEDKEEPER', {
+        fontFamily: FONT_FAMILY,
+        fontSize: '108px',
+        fontStyle: 'bold',
+        color: '#8AB87E',
+        stroke: '#1a2a12',
+        strokeThickness: 8,
+        shadow: { offsetX: 3, offsetY: 4, color: '#000000', blur: 10, fill: true }
+      })
+      .setOrigin(0.5);
+    this.tweens.add({ targets: title, y: 175, duration: 850, ease: 'Bounce.easeOut', delay: 150 });
+
+    // Subtitle fades in once the title has landed.
+    const subtitle = this.add
+      .text(cx, 262, 'Tend the garden. Brave the forest. Restore the world.', {
+        fontFamily: FONT_FAMILY,
+        fontSize: '22px',
+        color: '#b8d4a0'
+      })
+      .setOrigin(0.5)
+      .setAlpha(0);
+    this.tweens.add({ targets: subtitle, alpha: 1, duration: 600, delay: 950 });
+
+    // A seed floats gently above the logo.
+    const seed = this.add.circle(cx, 118, 8, 0x88cc66).setStrokeStyle(2, 0x4f7344);
+    this.tweens.add({
+      targets: seed,
+      y: 106,
+      duration: 1200,
+      yoyo: true,
+      repeat: -1,
+      ease: 'Sine.easeInOut'
+    });
+  }
+
+  // --- Save-slot cards ------------------------------------------------------
+
+  buildSlotCard(x, y, slot) {
     const bg = this.add
-      .rectangle(x, y, width, height, 0x221e1b)
+      .rectangle(x, y, CARD_W, CARD_H, 0x221e1b, 0.96)
       .setStrokeStyle(2, 0x36322e)
       .setInteractive({ useHandCursor: true });
 
-    const slotName = `Slot ${slot.slotIndex + 1}`;
-    const detail = slot.isEmpty
-      ? '— New Game —'
-      : `Day ${slot.dayNumber}  •  ${this.formatTime(slot.totalPlaytime || 0)}`;
+    const leftX = x - CARD_W / 2 + 28;
+    const topY = y - CARD_H / 2 + 22;
 
-    const label = this.add
-      .text(x, y, `${slotName}    ${detail}`, {
-        fontFamily: '"Courier New", monospace',
+    if (slot.isEmpty) {
+      this.add
+        .text(x, y - 18, 'NEW GAME', {
+          fontFamily: FONT_FAMILY,
+          fontSize: '30px',
+          fontStyle: 'bold',
+          color: '#D1CCC6'
+        })
+        .setOrigin(0.5);
+      this.add
+        .text(x, y + 22, `Slot ${slot.slotIndex + 1}  ·  [ START ]`, {
+          fontFamily: FONT_FAMILY,
+          fontSize: '18px',
+          color: '#9B9389'
+        })
+        .setOrigin(0.5);
+
+      this.applyCardHover(bg);
+      bg.on('pointerup', () => this.startGame(slot.slotIndex));
+      return;
+    }
+
+    // Occupied slot — title + meta.
+    this.add
+      .text(leftX, topY, `SLOT ${slot.slotIndex + 1}`, {
+        fontFamily: FONT_FAMILY,
         fontSize: '24px',
-        color: slot.isEmpty ? '#9B9389' : '#D1CCC6'
+        fontStyle: 'bold',
+        color: '#EDD49A'
+      })
+      .setOrigin(0, 0);
+    this.add
+      .text(leftX, topY + 32, `Day ${slot.dayNumber}   •   ${this.formatTime(slot.totalPlaytime || 0)} played`, {
+        fontFamily: FONT_FAMILY,
+        fontSize: '17px',
+        color: '#D1CCC6'
+      })
+      .setOrigin(0, 0);
+
+    // Plant-progress dots — filled in colour once grown at least once.
+    const dotGap = 26;
+    const dotY = topY + 78;
+    PLANT_ORDER.forEach((pt, i) => {
+      const grown = slot.plantsGrownEver && (slot.plantsGrownEver[pt] || 0) >= 1;
+      const color = grown ? parseInt(entitiesData.plants[pt].color.replace('#', ''), 16) : 0x3a3531;
+      this.add.circle(leftX + 8 + i * dotGap, dotY, 7, color).setStrokeStyle(1, 0x57514b);
+    });
+
+    // Continue button (right) — clicking the card body also continues.
+    const contX = x + CARD_W / 2 - 110;
+    const cont = this.add
+      .rectangle(contX, y - 22, 150, 42, 0x3a7d44)
+      .setStrokeStyle(2, 0x000000)
+      .setInteractive({ useHandCursor: true });
+    this.add
+      .text(contX, y - 22, 'CONTINUE', {
+        fontFamily: FONT_FAMILY,
+        fontSize: '17px',
+        fontStyle: 'bold',
+        color: '#F5EFE6'
+      })
+      .setOrigin(0.5);
+    cont.on('pointerover', () => cont.setStrokeStyle(2, UI_ACCENT_GOLD));
+    cont.on('pointerout', () => cont.setStrokeStyle(2, 0x000000));
+    cont.on('pointerup', () => this.startGame(slot.slotIndex));
+
+    this.buildDeleteButton(contX, y + 26, slot.slotIndex);
+
+    this.applyCardHover(bg);
+    bg.on('pointerup', () => this.startGame(slot.slotIndex));
+  }
+
+  // Hold-to-confirm delete: the button fills red over 1.5s; releasing early
+  // cancels. Prevents the cheap-game "one tap wipes your save" mistake.
+  buildDeleteButton(cx, cy, slotIndex) {
+    const w = 150;
+    const h = 36;
+    const base = this.add
+      .rectangle(cx, cy, w, h, 0x2d2926)
+      .setStrokeStyle(2, 0x6a2a2a)
+      .setInteractive({ useHandCursor: true });
+    // Fill grows from the left edge as the player holds.
+    const fill = this.add
+      .rectangle(cx - w / 2, cy, 0, h, 0x8a3a3a)
+      .setOrigin(0, 0.5);
+    const label = this.add
+      .text(cx, cy, 'DELETE (hold)', {
+        fontFamily: FONT_FAMILY,
+        fontSize: '14px',
+        fontStyle: 'bold',
+        color: '#e0a0a0'
       })
       .setOrigin(0.5);
 
-    bg.on('pointerover', () => {
-      bg.setStrokeStyle(2, 0xd4a83f);
-      bg.setFillStyle(0x2d2926);
-      label.setColor('#EDD49A');
-    });
-    bg.on('pointerout', () => {
-      bg.setStrokeStyle(2, 0x36322e);
-      bg.setFillStyle(0x221e1b);
-      label.setColor(slot.isEmpty ? '#9B9389' : '#D1CCC6');
-    });
-    bg.on('pointerup', () => this.startGame(slot.slotIndex));
-
-    // Plant-progress dots for occupied slots (Sprint 7) — one per plant type,
-    // filled in its colour once grown at least once, hollow grey otherwise.
-    if (!slot.isEmpty && slot.plantsGrownEver) {
-      const dotGap = 22;
-      const rowW = (PLANT_ORDER.length - 1) * dotGap;
-      const startX = x - rowW / 2;
-      const dotY = y + height / 2 + 14;
-      PLANT_ORDER.forEach((pt, i) => {
-        const grown = (slot.plantsGrownEver[pt] || 0) >= 1;
-        const color = grown
-          ? parseInt(entitiesData.plants[pt].color.replace('#', ''), 16)
-          : 0x3a3531;
-        this.add
-          .circle(startX + i * dotGap, dotY, 6, color)
-          .setStrokeStyle(1, 0x57514b);
+    let holdTween = null;
+    const cancel = () => {
+      if (holdTween) {
+        holdTween.stop();
+        holdTween = null;
+      }
+      fill.width = 0;
+      label.setText('DELETE (hold)');
+    };
+    base.on('pointerdown', () => {
+      label.setText('HOLD…');
+      holdTween = this.tweens.add({
+        targets: fill,
+        width: w,
+        duration: DELETE_HOLD_MS,
+        ease: 'Linear',
+        onComplete: () => {
+          SaveSystem.clear(slotIndex);
+          this.scene.restart();
+        }
       });
-    }
+    });
+    base.on('pointerup', cancel);
+    base.on('pointerout', cancel);
+  }
+
+  applyCardHover(bg) {
+    bg.on('pointerover', () => bg.setStrokeStyle(2, UI_ACCENT_GOLD));
+    bg.on('pointerout', () => bg.setStrokeStyle(2, 0x36322e));
+  }
+
+  // --- Footer (controls hint, settings, credits) ----------------------------
+
+  buildFooter(cx) {
+    this.add
+      .text(cx, VIRTUAL_HEIGHT - 40, 'Click a slot to begin  ·  WASD move  ·  Space attack  ·  F interact  ·  Esc pause', {
+        fontFamily: FONT_FAMILY,
+        fontSize: '16px',
+        color: '#6d675f'
+      })
+      .setOrigin(0.5);
+
+    // Settings gear (bottom-right).
+    const gear = this.add
+      .text(VIRTUAL_WIDTH - 28, VIRTUAL_HEIGHT - 36, '⚙ Settings', {
+        fontFamily: FONT_FAMILY,
+        fontSize: '18px',
+        color: '#9B9389'
+      })
+      .setOrigin(1, 0.5)
+      .setInteractive({ useHandCursor: true });
+    gear.on('pointerover', () => gear.setColor('#EDD49A'));
+    gear.on('pointerout', () => gear.setColor('#9B9389'));
+    gear.on('pointerup', () => this.openSettings());
+
+    // Credits link (bottom-left, Sprint 13).
+    const credits = this.add
+      .text(28, VIRTUAL_HEIGHT - 36, 'Credits', {
+        fontFamily: FONT_FAMILY,
+        fontSize: '18px',
+        color: '#9B9389'
+      })
+      .setOrigin(0, 0.5)
+      .setInteractive({ useHandCursor: true });
+    credits.on('pointerover', () => credits.setColor('#EDD49A'));
+    credits.on('pointerout', () => credits.setColor('#9B9389'));
+    credits.on('pointerup', () => {
+      // CreditsScene is registered in Sprint 13; guard so the link is inert
+      // until then rather than throwing.
+      if (this.scene.get('CreditsScene')) {
+        this.scene.launch('CreditsScene', { from: 'menu' });
+        this.scene.bringToTop('CreditsScene');
+      }
+    });
+  }
+
+  openSettings() {
+    this.scene.launch('SettingsScene', { from: 'menu' });
+    this.scene.bringToTop('SettingsScene');
   }
 
   formatTime(seconds) {

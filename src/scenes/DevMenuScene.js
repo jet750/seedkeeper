@@ -96,7 +96,7 @@ export default class DevMenuScene extends Phaser.Scene {
     this.track(
       this.add
         .text(CONTENT_X, y, '⚠ DEV MODE', {
-          fontFamily: '"Courier New", monospace',
+          fontFamily: '"SproutLands", "Courier New", monospace',
           fontSize: '16px',
           fontStyle: 'bold',
           color: '#ff4d4d'
@@ -106,7 +106,7 @@ export default class DevMenuScene extends Phaser.Scene {
     this.track(
       this.add
         .text(PANEL_X + PANEL_W - PAD, y + 2, '~ toggle', {
-          fontFamily: '"Courier New", monospace',
+          fontFamily: '"SproutLands", "Courier New", monospace',
           fontSize: '11px',
           color: '#9B9389'
         })
@@ -141,7 +141,7 @@ export default class DevMenuScene extends Phaser.Scene {
     y = this.sectionHeader('DAY CONTROL', y);
     this.dayValueText = this.add
       .text(CONTENT_X, y, '', {
-        fontFamily: '"Courier New", monospace',
+        fontFamily: '"SproutLands", "Courier New", monospace',
         fontSize: '13px',
         color: '#F5EFE6'
       })
@@ -159,7 +159,7 @@ export default class DevMenuScene extends Phaser.Scene {
     this.track(
       this.add
         .text(CONTENT_X, y, '⚠ backward skip resets timer only', {
-          fontFamily: '"Courier New", monospace',
+          fontFamily: '"SproutLands", "Courier New", monospace',
           fontSize: '10px',
           color: '#C0392B'
         })
@@ -184,7 +184,7 @@ export default class DevMenuScene extends Phaser.Scene {
     PLANT_ORDER.forEach((pt) => {
       const label = this.add
         .text(CONTENT_X, y + 4, '', {
-          fontFamily: '"Courier New", monospace',
+          fontFamily: '"SproutLands", "Courier New", monospace',
           fontSize: '11px',
           color: '#D1CCC6'
         })
@@ -250,7 +250,7 @@ export default class DevMenuScene extends Phaser.Scene {
     this.track(
       this.add
         .text(CONTENT_X, y, label, {
-          fontFamily: '"Courier New", monospace',
+          fontFamily: '"SproutLands", "Courier New", monospace',
           fontSize: '13px',
           fontStyle: 'bold',
           color: COLOR_HEADER
@@ -271,7 +271,7 @@ export default class DevMenuScene extends Phaser.Scene {
       .setInteractive({ useHandCursor: true });
     const text = this.add
       .text(x + w / 2, y + h / 2, label, {
-        fontFamily: '"Courier New", monospace',
+        fontFamily: '"SproutLands", "Courier New", monospace',
         fontSize: '12px',
         color: opts.textColor || '#F5EFE6'
       })

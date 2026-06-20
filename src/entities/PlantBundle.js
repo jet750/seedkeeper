@@ -12,6 +12,12 @@ import EventBus from '../core/EventBus.js';
 
 const DESPAWN_MS = 45000;
 const SHRINK_WARNING_MS = 10000; // final stretch shrinks as a warning
+const MAGNET_ARC_MS = 150; // Sprint 9 — bundle arcs to the player before banking
+
+// Drawn 1.5x for zoom visibility. The glow pulse and despawn-shrink tweens below
+// multiply this so they animate relative to the larger baseline instead of
+// snapping back to 1x.
+const SPRITE_SCALE = 1.5;
 
 function hexToNumber(hex) {
   return parseInt(hex.replace('#', ''), 16);
@@ -30,10 +36,12 @@ export default class PlantBundle extends Phaser.Physics.Arcade.Image {
     super(scene, x, y, 'px_bundle');
     scene.add.existing(this);
     scene.physics.add.existing(this);
+    this.setScale(SPRITE_SCALE); // zoom visibility — visual only; body set below
 
     this.plantType = plantType;
     this.plantData = gameData.plants[plantType];
     this.collected = false;
+    this.collecting = false; // true while the magnet arc is in flight (Sprint 9)
 
     this.setTint(hexToNumber(this.plantData.color));
     this.setDepth(7);
@@ -44,7 +52,7 @@ export default class PlantBundle extends Phaser.Physics.Arcade.Image {
     // "×1" quantity tag above the bundle.
     this.label = scene.add
       .text(x, y - 16, '×1', {
-        fontFamily: '"Courier New", monospace',
+        fontFamily: '"SproutLands", "Courier New", monospace',
         fontSize: '13px',
         fontStyle: 'bold',
         color: '#F5EFE6',
@@ -57,8 +65,8 @@ export default class PlantBundle extends Phaser.Physics.Arcade.Image {
     // Glowing pulse so it reads as special, not a seed.
     this.pulse = scene.tweens.add({
       targets: this,
-      scaleX: { from: 1, to: 1.35 },
-      scaleY: { from: 1, to: 1.35 },
+      scaleX: { from: SPRITE_SCALE, to: SPRITE_SCALE * 1.35 },
+      scaleY: { from: SPRITE_SCALE, to: SPRITE_SCALE * 1.35 },
       duration: 600,
       ease: 'Sine.easeInOut',
       yoyo: true,
@@ -84,11 +92,35 @@ export default class PlantBundle extends Phaser.Physics.Arcade.Image {
     }
     this.scene.tweens.add({
       targets: this,
-      scaleX: 0.2,
-      scaleY: 0.2,
+      scaleX: SPRITE_SCALE * 0.2,
+      scaleY: SPRITE_SCALE * 0.2,
       alpha: 0.5,
       duration: SHRINK_WARNING_MS,
       ease: 'Linear'
+    });
+  }
+
+  // Magnet collect (Sprint 9): disable the body so the overlap can't re-fire,
+  // tween onto the player, then run the bank-credit callback from GameScene.
+  collectWithArc(player, onArrived) {
+    if (this.collected || this.collecting) return;
+    this.collecting = true;
+    if (this.body) this.body.enable = false;
+    if (this.label) this.label.setVisible(false);
+    if (this.pulse) {
+      this.pulse.remove();
+      this.pulse = null;
+    }
+    this.scene.tweens.add({
+      targets: this,
+      x: player.x,
+      y: player.y,
+      duration: MAGNET_ARC_MS,
+      ease: 'Quad.easeIn',
+      onComplete: () => {
+        this.collecting = false;
+        if (onArrived) onArrived();
+      }
     });
   }
 

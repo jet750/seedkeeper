@@ -23,12 +23,86 @@
       "path": "assets/images/props_decor.png",
       "frameWidth": 16,
       "frameHeight": 16
+    },
+    {
+      "key": "obj_chest",
+      "path": "assets/images/obj_chest.png",
+      "frameWidth": 48,
+      "frameHeight": 48
+    },
+    {
+      "key": "ui_slot_frame",
+      "path": "assets/images/ui_slot_frame.png",
+      "frameWidth": 48,
+      "frameHeight": 48
+    },
+    {
+      "key": "fx_dust",
+      "path": "assets/images/fx_dust.png",
+      "frameWidth": 12,
+      "frameHeight": 12
+    },
+    {
+      "key": "furniture_sheet",
+      "path": "assets/images/furniture_sheet.png",
+      "frameWidth": 16,
+      "frameHeight": 16
+    },
+    {
+      "key": "fence_gate",
+      "path": "assets/images/fence_gate.png",
+      "frameWidth": 16,
+      "frameHeight": 48
+    },
+    {
+      "key": "farming_plants",
+      "path": "assets/images/farming_plants_v2.png",
+      "frameWidth": 16,
+      "frameHeight": 16
+    },
+    {
+      "key": "signs",
+      "path": "assets/images/signs.png",
+      "frameWidth": 16,
+      "frameHeight": 16
+    },
+    {
+      "key": "skeleton_run",
+      "path": "assets/images/skeleton_run.png",
+      "frameWidth": 64,
+      "frameHeight": 64
+    },
+    {
+      "key": "skeleton_idle",
+      "path": "assets/images/skeleton_idle.png",
+      "frameWidth": 32,
+      "frameHeight": 32
+    },
+    {
+      "key": "skeleton_death",
+      "path": "assets/images/skeleton_death.png",
+      "frameWidth": 64,
+      "frameHeight": 64
+    },
+    {
+      "key": "weather_icons",
+      "path": "assets/images/ui_weather_icons_small.png",
+      "frameWidth": 32,
+      "frameHeight": 32
+    },
+    {
+      "key": "ui_btn_square",
+      "path": "assets/images/ui_buttons_square.png",
+      "frameWidth": 48,
+      "frameHeight": 48
     }
   ],
   "images": [
     { "key": "tileset_garden", "path": "assets/images/tileset_garden.png" },
     { "key": "tileset_forest", "path": "assets/images/tileset_forest.png" },
-    { "key": "tileset_fence", "path": "assets/images/tileset_fence.png" }
+    { "key": "tileset_fence", "path": "assets/images/tileset_fence.png" },
+    { "key": "obj_well", "path": "assets/images/obj_well.png" },
+    { "key": "ui_dialog_big", "path": "assets/images/ui_dialog_big.png" }
   ],
   "audio": [
     { "key": "bgm_garden", "path": "assets/audio/bgm_garden.mp3" },
@@ -44,6 +118,8 @@
     { "key": "sfx_death_player", "path": "assets/audio/sfx_death_player.wav" },
     { "key": "sfx_sleep", "path": "assets/audio/sfx_sleep.wav" },
     { "key": "sfx_water", "path": "assets/audio/sfx_water.wav" },
+    { "key": "sfx_step", "path": "assets/audio/sfx_step.wav" },
+    { "key": "sfx_step_2", "path": "assets/audio/sfx_step_2.wav" },
     { "key": "sfx_warning_bell", "path": "assets/audio/sfx_warning_bell.wav" },
     { "key": "sfx_urgent_pulse", "path": "assets/audio/sfx_urgent_pulse.wav" },
     { "key": "sfx_achievement", "path": "assets/audio/sfx_achievement.wav" }

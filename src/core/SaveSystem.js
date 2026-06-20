@@ -7,6 +7,7 @@
 
 const SAVE_VERSION = 1;
 const SAVE_KEY_PREFIX = 'seedkeeper_save_';
+const SETTINGS_KEY = 'seedkeeper_settings'; // global audio settings (Sprint 12)
 
 function freshBank() {
   return {
@@ -51,12 +52,18 @@ const SaveSystem = {
         { plantType: null, daysRemaining: 0, watered: false, ready: false }
       ],
       plantsGrownEver: freshBank(),
+      wellLevel: 0,
+      todayWeather: null,
+      dailySeedCollected: null,
+      dailySeedToastShown: null,
+      discoveredPlants: [],
       newGamePlus: false,
       demoWinTriggered: false,
-      settings: { masterVolume: 1.0, sfxVolume: 0.8, musicVolume: 0.5, muted: false },
+      settings: { masterVolume: 1.0, sfxVolume: 0.8, musicVolume: 0.5, footstepVolume: 0.25, muted: false },
       achievements: [],
       achievementDays: {},
       stats: { killCount: 0, deathCount: 0, timerExpiredCount: 0, darkSlimeKills: 0 },
+      tutorialsSeen: [], // Sprint 12 — ids of first-run hints already shown in this slot
       savedAt: 0
     };
   },
@@ -91,14 +98,23 @@ const SaveSystem = {
     // Backfill fields added after a save was first written so older slots load
     // cleanly. Idempotent — only fills what is missing.
     if (data.demoWinTriggered === undefined) data.demoWinTriggered = false;
+    if (data.wellLevel === undefined) data.wellLevel = 0;
+    if (data.todayWeather === undefined) data.todayWeather = null;
+    if (data.dailySeedCollected === undefined) data.dailySeedCollected = null;
+    if (data.dailySeedToastShown === undefined) data.dailySeedToastShown = null;
+    if (!Array.isArray(data.discoveredPlants)) data.discoveredPlants = [];
     if (!data.settings) {
-      data.settings = { masterVolume: 1.0, sfxVolume: 0.8, musicVolume: 0.5, muted: false };
+      data.settings = { masterVolume: 1.0, sfxVolume: 0.8, musicVolume: 0.5, footstepVolume: 0.25, muted: false };
     }
+    // Footstep volume added after the first settings shipped — backfill it so
+    // older slots get a sensible default rather than undefined.
+    if (data.settings.footstepVolume === undefined) data.settings.footstepVolume = 0.25;
     if (!Array.isArray(data.achievements)) data.achievements = [];
     if (!data.achievementDays) data.achievementDays = {};
     if (!data.stats) {
       data.stats = { killCount: 0, deathCount: 0, timerExpiredCount: 0, darkSlimeKills: 0 };
     }
+    if (!Array.isArray(data.tutorialsSeen)) data.tutorialsSeen = [];
     // Future: if (data.version < 2) { ... data.version = 2; }
     return data;
   },
@@ -124,6 +140,33 @@ const SaveSystem = {
 
   clear(slotIndex) {
     localStorage.removeItem(SAVE_KEY_PREFIX + slotIndex);
+  },
+
+  // --- Global audio settings (Sprint 12) ------------------------------------
+  // Per-slot saves keep their own `settings`, but the title-screen settings menu
+  // runs with no slot loaded, so volumes also live in a global key. The most
+  // recent change (menu or in-game) is mirrored here and used as the default for
+  // a freshly started run that has no settings yet.
+  defaultSettings() {
+    return { masterVolume: 1.0, sfxVolume: 0.8, musicVolume: 0.5, footstepVolume: 0.25, muted: false };
+  },
+
+  loadSettings() {
+    try {
+      const raw = localStorage.getItem(SETTINGS_KEY);
+      if (!raw) return this.defaultSettings();
+      return { ...this.defaultSettings(), ...JSON.parse(raw) };
+    } catch {
+      return this.defaultSettings();
+    }
+  },
+
+  saveSettings(settings) {
+    try {
+      localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
+    } catch (err) {
+      console.warn('[save] failed to write global settings', err);
+    }
   }
 };
 

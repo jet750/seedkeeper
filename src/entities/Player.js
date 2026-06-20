@@ -6,11 +6,28 @@
 
 import Phaser from 'phaser';
 import EventBus from '../core/EventBus.js';
-import { GARDEN_ZONE_HEIGHT } from '../core/Constants.js';
+import { GARDEN_LEFT, GARDEN_RIGHT, GARDEN_TOP, GARDEN_BOTTOM } from '../core/Constants.js';
 import Seed from './Seed.js';
 
 const FLASH_INTERVAL_MS = 100;
 const INVINCIBILITY_MS = 1000;
+
+// --- Game feel (Sprint 9) ---
+const IDLE_THRESHOLD_MS = 3000; // stand still this long → idle animation
+const IDLE_BOB_SCALE_Y = 0.92; // gentle squash when no idle frames exist
+const IDLE_BOB_MS = 600;
+const STEP_INTERVAL_BASE_MS = 320; // footstep cadence at base speed
+const STEP_VOLUME = 0.3;
+
+// Drawn at 2x so the Seedkeeper reads clearly at the current camera zoom.
+// Visual scale only — the physics body is configured independently below. The
+// idle squash + stopIdle reset use this as their baseline so the 2x holds.
+const SPRITE_SCALE = 2;
+// Fixed collider radius (source px). Pinned to a constant so the 2x sprite scale
+// doesn't inflate the hitbox: Phaser's effective collision radius is halfWidth
+// (= BODY_RADIUS * scaleX), so this lands ~16px in-world — close to the original
+// pre-zoom collider on the 48px frame.
+const BODY_RADIUS = 8;
 
 // --- Melee attack (Sprint 3) ---
 const ATTACK_ARC_RADIUS = 50; // px reach of the swing
@@ -23,6 +40,13 @@ const DIRECTION_ANGLES = {
   left: Math.PI,
   up: -Math.PI / 2
 };
+
+// --- Input buffering (Sprint 12 controller feel) ---
+// A press landing just before its cooldown clears is held this long and fires
+// the instant the cooldown expires, so combat/dash never feel like they "ate"
+// an input. Tuned short so it assists timing without auto-firing stale presses.
+const ATTACK_BUFFER_MS = 120;
+const DASH_BUFFER_MS = 100;
 
 // --- Ranged / dash (Sprint 4) ---
 const RANGED_COOLDOWN_MS = 400; // min time between shots
@@ -52,6 +76,11 @@ export default class Player extends Phaser.Physics.Arcade.Sprite {
     scene.add.existing(this);
     scene.physics.add.existing(this);
 
+    // Visual draw scale for zoom visibility. Set before the physics body below;
+    // the circle radius is derived from this.width (source frame size, unaffected
+    // by scale), so the collider math is unchanged.
+    this.setScale(SPRITE_SCALE);
+
     // --- Stats (from data, never hardcoded) ---
     const stats = gameData.player;
     this.maxHP = stats.maxHP;
@@ -62,6 +91,13 @@ export default class Player extends Phaser.Physics.Arcade.Sprite {
     this.attackDamage = stats.attackDamage;
     this.attackCooldown = stats.attackCooldown; // ms between swings (weapon overrides)
     this.attackCooldownRemaining = 0;
+
+    // Input buffers (Sprint 12) — set when a press lands during cooldown, drained
+    // the instant the matching cooldown clears.
+    this.attackBuffer = false;
+    this.attackBufferTimer = 0;
+    this.dashBuffer = false;
+    this.dashBufferTimer = 0;
 
     // --- Upgrades & gear (Sprint 4) ---
     // Stat multipliers/bonuses recomputed from scratch on each upgrade (no drift).
@@ -98,7 +134,21 @@ export default class Player extends Phaser.Physics.Arcade.Sprite {
     // --- Inventory (Sprint 2) ---
     this.gameData = gameData;
     this.seedSlots = new Array(stats.seedSlots).fill(null); // e.g. ['red_mushroom', null, null]
-    this.hasWater = false;
+
+    // --- Water charges (Sprint 9 well-upgrade) ---
+    // Replaces the old binary hasWater. A well visit fills `waterCharges` up to
+    // `waterCapacity`; each bed watering spends one. Capacity is raised by the
+    // well-upgrade track (see GameScene.applyWellUpgrade).
+    this.waterCapacity = 1;
+    this.waterCharges = 0;
+
+    // --- Idle + footsteps (Sprint 9 game feel) ---
+    this.idleTimer = 0;
+    this.isIdling = false;
+    this.idleThreshold = IDLE_THRESHOLD_MS;
+    this._idleTween = null;
+    this.stepTimer = 0;
+    this.stepCount = 0; // alternates the two footstep samples
 
     // --- State ---
     this.facing = 'down';
@@ -108,9 +158,12 @@ export default class Player extends Phaser.Physics.Arcade.Sprite {
     this._invEndEvent = null;
     this._flashOn = false;
 
-    // --- Physics body: circular collider centred in the sprite ---
+    // --- Physics body: fixed-radius circular collider, centred in the sprite ---
+    // Re-asserted to BODY_RADIUS (not width*ratio) so the 2x sprite scale doesn't
+    // double the hitbox. updateBounds() leaves `radius` alone, so the offset below
+    // (width/2 - radius) keeps the circle centred on the 48px frame at any scale.
     this.setCollideWorldBounds(true);
-    const radius = this.width * 0.32;
+    const radius = BODY_RADIUS;
     this.body.setCircle(
       radius,
       this.width / 2 - radius,
@@ -195,7 +248,26 @@ export default class Player extends Phaser.Physics.Arcade.Sprite {
       this.dashCooldownRemaining = Math.max(0, this.dashCooldownRemaining - dtMs);
     }
 
-    if (Phaser.Input.Keyboard.JustDown(this.keys.attack)) this.attack();
+    // Attack with input buffering (Sprint 12): if the cooldown is still running
+    // the press is held briefly and fired the instant it clears.
+    if (Phaser.Input.Keyboard.JustDown(this.keys.attack)) {
+      if (this.attackCooldownRemaining <= 0) {
+        this.attack();
+      } else {
+        this.attackBuffer = true;
+        this.attackBufferTimer = ATTACK_BUFFER_MS;
+      }
+    }
+    if (this.attackBuffer) {
+      if (this.attackCooldownRemaining <= 0) {
+        this.attack();
+        this.attackBuffer = false;
+      } else {
+        this.attackBufferTimer -= dtMs;
+        if (this.attackBufferTimer <= 0) this.attackBuffer = false;
+      }
+    }
+
     if (Phaser.Input.Keyboard.JustDown(this.keys.ranged)) this.fireRanged();
 
     // dt is provided for frame-rate independence; Arcade Physics integrates
@@ -216,14 +288,39 @@ export default class Player extends Phaser.Physics.Arcade.Sprite {
       dy /= len;
       this.lastMoveDir = { x: dx, y: dy };
       this.updateFacing(dx, dy);
+      // Any movement breaks the idle pose immediately.
+      this.idleTimer = 0;
+      if (this.isIdling) this.stopIdle();
       this.playMove();
+      this.updateFootsteps(dtMs);
     } else {
+      this.stepTimer = 0;
+      this.idleTimer += dtMs;
+      if (this.idleTimer >= this.idleThreshold && !this.isIdling) {
+        this.startIdle();
+      }
       this.playIdle();
     }
 
-    // Dash trigger (must be moving). While dashing, the dash velocity rides —
-    // normal movement is suspended until the dash window ends.
-    if (moving && Phaser.Input.Keyboard.JustDown(this.keys.dash)) this.tryDash();
+    // Dash trigger (must be moving), with input buffering (Sprint 12). While
+    // dashing, the dash velocity rides — normal movement is suspended until the
+    // dash window ends.
+    if (moving && Phaser.Input.Keyboard.JustDown(this.keys.dash)) {
+      if (this.canDash()) this.dash();
+      else if (this.dashEnabled) {
+        this.dashBuffer = true;
+        this.dashBufferTimer = DASH_BUFFER_MS;
+      }
+    }
+    if (this.dashBuffer) {
+      if (moving && this.canDash()) {
+        this.dash();
+        this.dashBuffer = false;
+      } else {
+        this.dashBufferTimer -= dtMs;
+        if (this.dashBufferTimer <= 0 || !moving) this.dashBuffer = false;
+      }
+    }
 
     if (!this.isDashing) {
       if (moving) this.setVelocity(dx * this.speed, dy * this.speed);
@@ -247,6 +344,61 @@ export default class Player extends Phaser.Physics.Arcade.Sprite {
 
   playIdle() {
     if (this.hasSheet) this.anims.play(`idle_${this.facing}`, true);
+  }
+
+  // --- Idle animation (Sprint 9) --------------------------------------------
+  // After idleThreshold ms of stillness, play a directional idle anim if the
+  // sheet has one, else a subtle squash-bob tween on the placeholder.
+  startIdle() {
+    this.isIdling = true;
+    if (this.hasSheet && this.anims.exists(`idle_${this.facing}`)) {
+      this.anims.play(`idle_${this.facing}`, true);
+      return;
+    }
+    this._idleTween = this.scene.tweens.add({
+      targets: this,
+      scaleY: SPRITE_SCALE * IDLE_BOB_SCALE_Y,
+      duration: IDLE_BOB_MS,
+      yoyo: true,
+      repeat: -1,
+      ease: 'Sine.easeInOut'
+    });
+  }
+
+  stopIdle() {
+    this.isIdling = false;
+    this.idleTimer = 0;
+    if (this._idleTween) {
+      this._idleTween.stop();
+      this._idleTween = null;
+    }
+    this.setScale(SPRITE_SCALE); // restore the 2x baseline, not 1x
+  }
+
+  // --- Footsteps (Sprint 9) -------------------------------------------------
+  // Randomised pitch per step; cadence scales with effective speed so faster
+  // boots tap out a quicker rhythm. Silent until sfx_step.* lands in /assets.
+  updateFootsteps(dtMs) {
+    this.stepTimer += dtMs;
+    const baseSpeed = this.gameData.player.speed;
+    const stepInterval = STEP_INTERVAL_BASE_MS * (baseSpeed / Math.max(1, this.speed));
+    if (this.stepTimer < stepInterval) return;
+    this.stepTimer = 0;
+    // Footstep loudness is its own channel (Settings → Footsteps), independent of
+    // the SFX slider so the constant walk tap can be dialled down on its own.
+    // Effective = footstep × master, silenced when muted or the slider is at 0.
+    const s = this.scene.audioSettings || {};
+    const vol = s.muted ? 0 : (s.footstepVolume ?? STEP_VOLUME) * (s.masterVolume ?? 1);
+    if (vol <= 0) return;
+    // Alternate the two step samples with randomised pitch so a walk taps out a
+    // left/right rhythm rather than one repeated click. Silent until the sfx land.
+    const stepKey = this.stepCount % 2 === 0 ? 'sfx_step' : 'sfx_step_2';
+    this.stepCount++;
+    const key = this.scene.cache.audio.exists(stepKey) ? stepKey : 'sfx_step';
+    if (this.scene.cache.audio.exists(key)) {
+      const rate = 0.9 + Math.random() * 0.2;
+      this.scene.sound.play(key, { volume: vol, rate });
+    }
   }
 
   // --- Melee attack (Sprint 3) ----------------------------------------------
@@ -357,6 +509,46 @@ export default class Player extends Phaser.Physics.Arcade.Sprite {
     this.wateringCan = { bedsPerUse: tier.bedsPerUse || 1 };
   }
 
+  // --- Water charges (Sprint 9) ---------------------------------------------
+
+  // Well-upgrade track raises how many waterings a single well visit grants.
+  setWaterCapacity(capacity) {
+    this.waterCapacity = capacity;
+    if (this.waterCharges > this.waterCapacity) this.waterCharges = this.waterCapacity;
+    EventBus.emit('player:waterChanged', {
+      charges: this.waterCharges,
+      capacity: this.waterCapacity
+    });
+  }
+
+  // Top up to capacity at the well.
+  fillWater() {
+    this.waterCharges = this.waterCapacity;
+    EventBus.emit('player:waterFilled', {
+      charges: this.waterCharges,
+      capacity: this.waterCapacity
+    });
+  }
+
+  // Spend one charge to water a bed. Returns false when dry.
+  useWater() {
+    if (this.waterCharges <= 0) return false;
+    this.waterCharges--;
+    EventBus.emit('player:waterUsed', {
+      charges: this.waterCharges,
+      capacity: this.waterCapacity
+    });
+    return true;
+  }
+
+  // 0 = basic, 1 = copper, 2 = golden — scales watering acceleration odds.
+  getWateringCanTier() {
+    const id = this.equippedGear.wateringCan;
+    if (id === 'golden_can') return 2;
+    if (id === 'copper_can') return 1;
+    return 0;
+  }
+
   // Grow/shrink the inventory, preserving existing seeds.
   resizeSeedSlots(newLength) {
     const next = new Array(newLength).fill(null);
@@ -396,8 +588,12 @@ export default class Player extends Phaser.Physics.Arcade.Sprite {
 
   // --- Dash (Sprint 4) ------------------------------------------------------
 
+  canDash() {
+    return this.dashEnabled && this.dashCooldownRemaining <= 0 && !this.isDashing;
+  }
+
   tryDash() {
-    if (!this.dashEnabled || this.dashCooldownRemaining > 0 || this.isDashing) return;
+    if (!this.canDash()) return;
     this.dash();
   }
 
@@ -425,7 +621,7 @@ export default class Player extends Phaser.Physics.Arcade.Sprite {
         if (this.hasSheet && this.anims.currentFrame) {
           ghost.setFrame(this.anims.currentFrame.index);
         }
-        ghost.setAlpha(0.35).setTint(DASH_TRAIL_TINT).setDepth(9);
+        ghost.setScale(SPRITE_SCALE).setAlpha(0.35).setTint(DASH_TRAIL_TINT).setDepth(9);
         this.scene.tweens.add({
           targets: ghost,
           alpha: 0,
@@ -439,7 +635,13 @@ export default class Player extends Phaser.Physics.Arcade.Sprite {
   // --- Zone tracking --------------------------------------------------------
 
   computeZone() {
-    return this.y < GARDEN_ZONE_HEIGHT ? 'garden' : 'forest';
+    // Garden is now a centered rectangle, not the top band — check all four sides.
+    const inGarden =
+      this.x > GARDEN_LEFT &&
+      this.x < GARDEN_RIGHT &&
+      this.y > GARDEN_TOP &&
+      this.y < GARDEN_BOTTOM;
+    return inGarden ? 'garden' : 'forest';
   }
 
   checkZone() {
@@ -568,6 +770,8 @@ export default class Player extends Phaser.Physics.Arcade.Sprite {
     if (this.isDead) return;
     this.isDead = true;
     this.invincible = true;
+    this.stopIdle();
+    this.idleTimer = 0;
     this.setVelocity(0, 0);
     this.clearTint();
     this.setTint(0x666666);
@@ -589,6 +793,9 @@ export default class Player extends Phaser.Physics.Arcade.Sprite {
       this._invEndEvent = null;
     }
     this.clearTint();
+    this.stopIdle();
+    this.idleTimer = 0;
+    this.stepTimer = 0;
     this.setPosition(x, y);
     this.currentHP = this.maxHP;
     this.attackCooldownRemaining = 0;

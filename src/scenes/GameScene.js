@@ -14,20 +14,33 @@ import {
   WORLD_WIDTH,
   WORLD_HEIGHT,
   GARDEN_ZONE_HEIGHT,
-  TILE_SIZE,
+  GARDEN_X,
+  GARDEN_Y,
+  GARDEN_WIDTH,
+  GARDEN_HEIGHT,
+  GARDEN_LEFT,
+  GARDEN_RIGHT,
+  GARDEN_TOP,
+  GARDEN_BOTTOM,
+  VIRTUAL_WIDTH,
+  VIRTUAL_HEIGHT,
+  FONT_FAMILY,
   isDevModeActive
 } from '../core/Constants.js';
+import WorldZoneSystem, { RIVER_WIDTH, CREEK_WIDTH } from '../systems/WorldZoneSystem.js';
 import Player from '../entities/Player.js';
 import Slime from '../entities/Slime.js';
 import Skeleton from '../entities/Skeleton.js';
-import Seed from '../entities/Seed.js';
+import Seed, { SEED_SCALE } from '../entities/Seed.js';
 import GardenBed from '../entities/GardenBed.js';
+import WorldDetail from '../entities/WorldDetail.js';
 import Projectile from '../entities/Projectile.js';
 import DaySystem from '../systems/DaySystem.js';
 import CombatSystem from '../systems/CombatSystem.js';
 import ParticleSystem from '../systems/ParticleSystem.js';
 import AudioSystem from '../systems/AudioSystem.js';
 import AchievementSystem from '../systems/AchievementSystem.js';
+import TutorialSystem from '../systems/TutorialSystem.js';
 import SaveSystem from '../core/SaveSystem.js';
 import entitiesData from '../data/entities.json';
 
@@ -46,10 +59,23 @@ const DEEP_FOREST_THRESHOLD = 0.7; // skeletons spawn below this fraction of WOR
 const SKELETON_PATROL_SPREAD = 220; // px between a skeleton's patrol waypoints
 const DEATH_DROP_SCATTER = 40; // spread of seeds dropped on player death
 const SEED_RECOVERY_MS = 30000; // recovery window before death-dropped seeds vanish
+const GATE_SCALE = 2; // closed-gate draw scale at the zone boundary (Sprint 10b)
 const RESPAWN_FADE_MS = 500;
 const RESPAWN_DELAY_MS = 1500;
-const SHAKE_DURATION_MS = 250;
-const SHAKE_INTENSITY = 0.004;
+
+// Screenshake profiles (Sprint 13) — different impacts feel different. duration
+// in ms, intensity as a fraction of viewport. Selected via shake(profileName).
+const SHAKE_PROFILES = {
+  player_hit: { duration: 250, intensity: 0.004 },
+  player_death: { duration: 500, intensity: 0.01 },
+  sword_hit: { duration: 120, intensity: 0.003 },
+  dagger_hit: { duration: 80, intensity: 0.002 },
+  hands_hit: { duration: 60, intensity: 0.001 },
+  skeleton_hit: { duration: 180, intensity: 0.005 },
+  day_timer_expire: { duration: 400, intensity: 0.006 },
+  bundle_collect: { duration: 80, intensity: 0.002 },
+  upgrade_purchase: { duration: 150, intensity: 0.003 }
+};
 const ENEMY_DEATH_COLORS = {
   green_slime: '#8AB87E',
   dark_slime: '#8833cc',
@@ -75,14 +101,20 @@ const DEFAULT_BANK = {
   sunflower: 0
 };
 const PROJECTILE_POOL_SIZE = 10;
-// Garden bed grid layout (row-wraps as satchel upgrades add beds).
-const BED_BASE_X = 1340;
-const BED_BASE_Y = 260;
+// Garden bed grid layout (row-wraps as satchel upgrades add beds). Anchored to the
+// centered garden homestead: the 4-bed top row is centred on the garden's x-axis
+// (BED_BASE_X + 1.5*COL_GAP == garden centre 3200) and sits in the upper third.
+const BED_BASE_X = 2960;
+const BED_BASE_Y = 320;
 const BED_COL_GAP = 160;
 const BED_ROW_GAP = 150;
 const BEDS_PER_ROW = 4;
-const CHEST_X = 1600;
-const CHEST_Y = 560;
+// Workshop chest — lower-right of the garden interior.
+const CHEST_X = 3340;
+const CHEST_Y = 860;
+// obj_chest.png is a 48x48 sheet: row 0 is a closed→open progression.
+const CHEST_CLOSED_FRAME = 0;
+const CHEST_OPEN_FRAME = 4;
 
 export default class GameScene extends Phaser.Scene {
   constructor() {
@@ -98,6 +130,10 @@ export default class GameScene extends Phaser.Scene {
 
   create() {
     this.gameData = entitiesData;
+    // Organic biome + river layout (Sprint 10c revised). Pure data — built first
+    // so the world background, river, trees, and zone-based spawns can all sample
+    // the same instance.
+    this.worldZoneSystem = new WorldZoneSystem();
     this.currentZone = 'garden';
     this._respawning = false;
     this._postTimerApplied = false;
@@ -108,17 +144,42 @@ export default class GameScene extends Phaser.Scene {
     this._upgradeOpen = false;
     this._winOpen = false;
     this._signpostOpen = false;
+    this._lastPromptText = null; // contextual F-prompt dedupe (Sprint 9)
+    this._dictionaryOpen = false;
+    this._worldDetailOpen = false;
+    this._plantPickerOpen = false; // Sprint 10c — planting seed picker open
+    this._plantPickerBed = null; // bed the open picker is planting into
+    this._playerMovedAccum = 0; // throttle accumulator for minimap player:moved
+    this._paused = false; // Sprint 12 — pause menu open
+    // Sprint 12 first-run tutorial trigger latches (once-per-run derivations).
+    this._nearGateEmitted = false;
+    this._firstEnemyContactEmitted = false;
+    this._firstFillEmitted = false;
     this._busHandlers = [];
 
-    // --- Win / New Game+ / run-stats state (Sprint 5) ---
+    // --- Weather day-scoped modifiers (Sprint 11) ---
+    this.weatherDetectMult = 1; // fog → 0.6 (read by enemies)
+    this.weatherRespawnMult = 1; // wind → 0.7 (read by seeds)
+    this._weatherAccelBonus = 0; // sunny → +0.15 watering accelerate chance
+    this._pendingGrowthPenalty = false; // cloudy → +1 day on the next night
+
+    // --- Win / New Game+ / run-stats state (Sprint 5 + Sprint 11 run summary) ---
     this.newGamePlus = !!this.saveData.newGamePlus;
     this._demoWinTriggered = !!this.saveData.demoWinTriggered;
     this._fullWinTriggered = false;
-    this.runStats = { enemiesDefeated: 0, upgradesPurchased: 0 };
+    this.runStats = {
+      enemiesDefeated: 0,
+      upgradesPurchased: 0,
+      seedsCollected: 0,
+      deaths: 0,
+      firstPlantGrown: null,
+      killsByType: { green_slime: 0, dark_slime: 0, skeleton: 0 }
+    };
     this.audioSettings = {
       masterVolume: 1.0,
       sfxVolume: 0.8,
       musicVolume: 0.5,
+      footstepVolume: 0.25,
       muted: false,
       ...(this.saveData.settings || {})
     };
@@ -127,7 +188,14 @@ export default class GameScene extends Phaser.Scene {
     this.plantBank = { ...DEFAULT_BANK, ...(this.saveData.bank || {}) };
     this.upgradeLevels = JSON.parse(JSON.stringify(this.saveData.upgrades));
     this.plantsGrownEver = { ...DEFAULT_BANK, ...(this.saveData.plantsGrownEver || {}) };
+    this.wellLevel = this.saveData.wellLevel || 0; // Sprint 9 well-upgrade tier index
+    // Sprint 11 retention state.
+    this.discoveredPlants = [...(this.saveData.discoveredPlants || [])];
+    this._dailySeedCollected = this.saveData.dailySeedCollected || null;
+    this._dailySeedToastShown = this.saveData.dailySeedToastShown || null;
     this._playtimeMs = (this.saveData.totalPlaytime || 0) * 1000;
+    // Sprint 12 — first-run hints already shown in this slot (mutated by TutorialSystem).
+    this.tutorialsSeen = [...(this.saveData.tutorialsSeen || [])];
 
     // Single source of truth for all active enemies (slimes + skeletons). The
     // CombatSystem and enemy-scaling logic both read this array.
@@ -140,14 +208,30 @@ export default class GameScene extends Phaser.Scene {
     // --- Player ---
     this.player = new Player(
       this,
-      WORLD_WIDTH / 2,
-      GARDEN_ZONE_HEIGHT / 2,
+      GARDEN_X + GARDEN_WIDTH / 2,
+      GARDEN_Y + GARDEN_HEIGHT / 2,
       this.gameData
     );
 
     // --- Camera ---
     this.cameras.main.setBounds(0, 0, WORLD_WIDTH, WORLD_HEIGHT);
     this.cameras.main.startFollow(this.player, true, 0.1, 0.1);
+    // Closer view on the player (Sprint 10c fix) — was 2.0; 2.5 still leaves
+    // enough lead time to react to enemies approaching at the camera edge.
+    this.cameras.main.setZoom(2.5);
+    // Menu → game transition: reveal the world with a smooth fade-in (Sprint 12).
+    this.cameras.main.fadeIn(700, 0, 0, 0);
+
+    // --- Day/night atmosphere tint (Sprint 9) ---
+    // A screen-fixed colour wash over the world (below the HUD scene). Garden
+    // warms and forest cools slightly more with each passing day. Deliberately
+    // subtle — felt, not noticed. Phaser cameras have no setTint, so this is a
+    // scrollFactor-0 overlay rather than a camera filter.
+    this.dayTint = this.add
+      .rectangle(0, 0, VIRTUAL_WIDTH, VIRTUAL_HEIGHT, 0xffffff, 0)
+      .setOrigin(0, 0)
+      .setScrollFactor(0)
+      .setDepth(50);
 
     // --- Slimes ---
     this.spawnSlimes();
@@ -155,7 +239,7 @@ export default class GameScene extends Phaser.Scene {
     this.physics.add.overlap(
       this.player,
       this.slimeGroup,
-      (player, slime) => slime.touchPlayer(),
+      (player, slime) => this.onEnemyTouch(slime),
       null,
       this
     );
@@ -167,7 +251,7 @@ export default class GameScene extends Phaser.Scene {
     this.physics.add.overlap(
       this.player,
       this.skeletonGroup,
-      (player, skeleton) => skeleton.touchPlayer(),
+      (player, skeleton) => this.onEnemyTouch(skeleton),
       null,
       this
     );
@@ -191,8 +275,9 @@ export default class GameScene extends Phaser.Scene {
       this
     );
 
-    // --- Hard zone boundary (Sprint 7) — invisible wall enemies can't cross ---
-    this.createZoneBoundary();
+    // --- Garden fence (centered homestead) — 4-sided fence with gate gaps that
+    // blocks the player (except at the gates) and keeps enemies out ---
+    this.createGardenFence();
 
     // --- Sprint 2 world objects ---
     this.seeds = [];
@@ -200,14 +285,45 @@ export default class GameScene extends Phaser.Scene {
     this.spawnGardenBeds();
     this.spawnGardenStructures();
     this.spawnProps();
+    this.createForestAmbience();
+    this.createGardenAmbience();
+
+    // --- Sprint 11 world systems ---
+    this.createRockFormations(); // physics-collider cover geometry
+
+    // --- Sprint 10c organic world structure ---
+    // Built here (after the player, enemy groups and seeds exist) so colliders
+    // wire immediately and tree placement can avoid burying seeds.
+    this.createRiverSystem(); // winding river + creeks + bridges + collision
+    this.createOrganicTrees(); // clustered tree barriers with navigable gaps
+
+    this.createWorldDetails(); // examinable storytelling objects
+    this.maybeSpawnDailySeed(); // once-a-day glowing gift
 
     // --- Day timer (extracted system) ---
     this.daySystem = new DaySystem(this, this.gameData);
     this.daySystem.dayNumber = this.saveData.dayNumber || 1;
+    // Weather for the current day: restore the saved one, or pick a quiet
+    // starting weather on a fresh game (no day-1 wake-up toast). Modifiers apply
+    // either way; the HUD icon is pushed in syncHud().
+    if (this.saveData.todayWeather) {
+      this.daySystem.restoreWeather(this.saveData.todayWeather);
+    } else {
+      const pool = this.gameData.weather;
+      this.daySystem.todayWeather = pool[Math.floor(Math.random() * pool.length)];
+    }
+    this.applyWeatherEffects(this.daySystem.todayWeather);
 
     // --- Achievements (Sprint 6) — mounted after daySystem so unlocks can
     // stamp the current day. Driven purely by EventBus events. ---
     this.achievementSystem = new AchievementSystem(this, this.saveData);
+
+    // --- First-run tutorial (Sprint 12) — pure EventBus; shows each hint once
+    // per slot, tracked in this.tutorialsSeen (persisted via save:requested). ---
+    this.tutorialSystem = new TutorialSystem(
+      () => this.daySystem.dayNumber,
+      this.tutorialsSeen
+    );
 
     // --- Apply saved upgrades to the freshly-built player ---
     this.applyAllUpgrades();
@@ -220,8 +336,11 @@ export default class GameScene extends Phaser.Scene {
 
     // --- Interaction input ---
     this.fKey = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.F);
-    // M toggles global mute (persisted in settings, applied via the SoundManager).
-    this.input.keyboard.on('keydown-M', () => this.toggleMute());
+    // M now toggles the HUD minimap (handled in UIScene, Sprint 10c). Mute moved
+    // to the Settings overlay so the two no longer fight over the same key.
+    // Esc opens the pause menu during normal play (Sprint 12). Guarded so it
+    // never fights an open overlay or the sleep fade — those own Esc themselves.
+    this.input.keyboard.on('keydown-ESC', () => this.tryOpenPause());
 
     // --- EventBus wiring ---
     this.subscribe('player:zoneChanged', (d) => this.onZoneChanged(d));
@@ -252,14 +371,43 @@ export default class GameScene extends Phaser.Scene {
     this.subscribe('inventory:swapConfirmed', (d) => this.executeSwap(d.dropSlotIndex));
     this.subscribe('inventory:swapCancelled', () => this.onSwapCancelled());
 
+    // --- Planting picker (Sprint 10c) ---
+    this.subscribe('bed:plantConfirmed', (d) => this.onPlantConfirmed(d));
+    this.subscribe('bed:plantCancelled', () => this.onPlantPickerCancelled());
+
+    // --- Pause menu (Sprint 12) ---
+    this.subscribe('pause:resume', () => this.onPauseResume());
+
+    // --- Screenshake on melee impact (Sprint 13) ---
+    this.subscribe('combat:meleeLanded', (d) => this.onMeleeLanded(d));
+
+    // --- Weather + retention (Sprint 11) ---
+    this.subscribe('weather:changed', (d) => this.onWeatherChanged(d));
+    this.subscribe('dictionary:closed', () => { this._dictionaryOpen = false; });
+    this.subscribe('worlddetail:closed', () => { this._worldDetailOpen = false; });
+
     // --- HUD scene ---
     this.scene.launch('UIScene', { dayNumber: this.daySystem.dayNumber });
-    // Push the full restored HUD state once UIScene has booted and subscribed.
-    this.time.delayedCall(0, () => this.syncHud());
+    // Push the full restored HUD state once UIScene has booted and subscribed,
+    // then fire the first-run tutorial's 'game:started' trigger (movement hint).
+    this.time.delayedCall(0, () => {
+      this.syncHud();
+      EventBus.emit('game:started', {});
+    });
 
     // --- Developer cheat menu (parallel scene; inert unless dev mode active) ---
     this.scene.launch('DevMenuScene');
-    if (isDevModeActive()) this.setupDevHandlers();
+    if (isDevModeActive()) {
+      this.setupDevHandlers();
+      // FPS monitor — dev builds only; absent from the production build (Sprint 13).
+      this._fpsText = this.add
+        .text(12, 96, '', { fontFamily: FONT_FAMILY, fontSize: '12px', color: '#00ff00' })
+        .setScrollFactor(0)
+        .setDepth(1000);
+    }
+
+    // Seed the initial atmosphere tint for the loaded zone + day.
+    this.applyDayTint();
 
     this.events.once('shutdown', this.shutdown, this);
     this.events.once('destroy', this.shutdown, this);
@@ -282,6 +430,16 @@ export default class GameScene extends Phaser.Scene {
     }
     EventBus.emit('ngplus:status', { active: this.newGamePlus });
     EventBus.emit('audio:muteChanged', { muted: this.audioSettings.muted });
+    EventBus.emit('player:waterChanged', {
+      charges: this.player.waterCharges,
+      capacity: this.player.waterCapacity
+    });
+    if (this.daySystem && this.daySystem.todayWeather) {
+      // Icon-only sync (no wake-up toast) so a reloaded run shows current weather.
+      EventBus.emit('weather:changed', { weather: this.daySystem.todayWeather, isNewDay: false });
+    }
+    // Seed the minimap dot at the player's current position (Sprint 10c).
+    EventBus.emit('player:moved', { x: this.player.x, y: this.player.y });
   }
 
   // --- Placeholder textures (Sprint 2 additive — leaves BootScene untouched) -
@@ -306,79 +464,230 @@ export default class GameScene extends Phaser.Scene {
   // --- World construction ---------------------------------------------------
 
   buildWorld() {
-    // TODO Sprint 5: replace placeholder geometry with a Tiled map once
-    // /assets/tilemaps/world.json exists. The tileSprite branches below already
-    // pick up real tileset art automatically when the PNGs land in /assets; the
-    // object-layer extraction (seeds/beds/gate/chest/well/sleep) is the remaining
-    // work and is deferred until the map is authored in Tiled (mapeditor.org).
-    const forestY = GARDEN_ZONE_HEIGHT;
-    const forestHeight = WORLD_HEIGHT - GARDEN_ZONE_HEIGHT;
+    // TODO Sprint 5/10d: replace placeholder geometry with a Tiled map / real
+    // tileset art. createOrganicBackground() samples the WorldZoneSystem into a
+    // colour map for now; the river, bridges and tree clusters are built later in
+    // create() (they need the player and enemy groups to exist).
 
-    if (this.textures.exists('tileset_garden')) {
-      this.add
-        .tileSprite(0, 0, WORLD_WIDTH, GARDEN_ZONE_HEIGHT, 'tileset_garden')
-        .setOrigin(0, 0)
-        .setDepth(0);
-    } else {
-      // TODO(asset): tileset_garden.png — solid fill placeholder in use.
-      // Garden is a warmer, lighter green than the forest (Sprint 7 polish).
-      this.add
-        .rectangle(0, 0, WORLD_WIDTH, GARDEN_ZONE_HEIGHT, 0x4a7c3f)
-        .setOrigin(0, 0)
-        .setDepth(0);
-    }
+    // Organic biome map (Sprint 10c revised) — irregular zones sampled from the
+    // WorldZoneSystem instead of flat horizontal bands. The 4-sided garden fence
+    // (visual + colliders) is built later by createGardenFence(), once the player
+    // and enemy groups exist.
+    this.createOrganicBackground();
 
-    if (this.textures.exists('tileset_forest')) {
-      // Same grass tile as the garden, tinted darker/cooler so the dangerous
-      // forest reads distinctly from the safe garden at a glance.
-      this.add
-        .tileSprite(0, forestY, WORLD_WIDTH, forestHeight, 'tileset_forest')
-        .setOrigin(0, 0)
-        .setTint(0x5f7a5a)
-        .setDepth(0);
-    } else {
-      // TODO(asset): tileset_forest.png — solid fill placeholder in use.
-      // Forest is a darker, cooler green so the zones read at a glance.
-      this.add
-        .rectangle(0, forestY, WORLD_WIDTH, forestHeight, 0x2d4a2d)
-        .setOrigin(0, 0)
-        .setDepth(0);
-    }
+    // Faint zone labels for at-a-glance orientation in the bigger world. Placed
+    // over a representative point of each organic zone (not a band edge).
+    this.addZoneLabel('GARDEN', 400, '#4f7344', 0.25);
+    this.addZoneLabel('MEADOW', 1000, '#3d6b28', 0.30);
+    this.addZoneLabel('FOREST', 1380, '#24412a', 0.35);
+    this.addZoneLabel('DEEP WOODS', 2120, '#16280c', 0.45);
+  }
 
-    if (this.textures.exists('tileset_fence')) {
-      this.add
-        .tileSprite(0, forestY - TILE_SIZE / 2, WORLD_WIDTH, TILE_SIZE, 'tileset_fence')
-        .setOrigin(0, 0)
-        .setDepth(1);
-    } else {
-      // TODO(asset): tileset_fence.png — colored boundary line in use.
-      // A clearly visible 10px fence line marks the safe-zone boundary.
-      this.add
-        .rectangle(0, forestY, WORLD_WIDTH, 10, 0xc0904f)
-        .setOrigin(0, 0.5)
-        .setDepth(1);
-    }
-
+  // A single faint, centered biome name drawn into the ground layer.
+  addZoneLabel(text, y, color, alpha) {
     this.add
-      .text(WORLD_WIDTH / 2, GARDEN_ZONE_HEIGHT / 2, 'GARDEN', {
-        fontFamily: '"Courier New", monospace',
+      .text(WORLD_WIDTH / 2, y, text, {
+        fontFamily: '"SproutLands", "Courier New", monospace',
         fontSize: '120px',
         fontStyle: 'bold',
-        color: '#4f7344'
+        color
       })
       .setOrigin(0.5)
-      .setAlpha(0.25)
+      .setAlpha(alpha)
       .setDepth(0);
-    this.add
-      .text(WORLD_WIDTH / 2, forestY + forestHeight / 2, 'FOREST', {
-        fontFamily: '"Courier New", monospace',
-        fontSize: '120px',
-        fontStyle: 'bold',
-        color: '#24412a'
-      })
-      .setOrigin(0.5)
-      .setAlpha(0.4)
-      .setDepth(0);
+  }
+
+  // --- Organic world background (Sprint 10c revised) ------------------------
+  // A pixel-sampled biome map: the forest is sampled on a coarse grid and each
+  // cell filled with its zone colour, giving soft, irregular borders. Drawn into
+  // a single Graphics (one GameObject) rather than thousands of rectangles. The
+  // garden is now a centered square drawn on top; the river is rendered separately.
+  createOrganicBackground() {
+    const SAMPLE = 64;
+    const g = this.add.graphics().setDepth(0);
+
+    // Base world background behind everything — forest green.
+    g.fillStyle(0x3a6a20, 1);
+    g.fillRect(0, 0, WORLD_WIDTH, WORLD_HEIGHT);
+
+    // Forest — sample each cell's zone across the whole world (the forest now
+    // wraps around the garden on all sides, not just below it).
+    for (let x = 0; x < WORLD_WIDTH; x += SAMPLE) {
+      for (let y = 0; y < WORLD_HEIGHT; y += SAMPLE) {
+        const zone = this.worldZoneSystem.getZoneAt(x + SAMPLE / 2, y + SAMPLE / 2);
+        g.fillStyle(this.worldZoneSystem.getZoneColor(zone), 1);
+        g.fillRect(x, y, SAMPLE, SAMPLE);
+      }
+    }
+
+    // Garden — solid safe-zone square in the center, drawn over the forest.
+    g.fillStyle(this.worldZoneSystem.getZoneColor('garden'), 1);
+    g.fillRect(GARDEN_X, GARDEN_Y, GARDEN_WIDTH, GARDEN_HEIGHT);
+    // A real per-zone tileset can replace this in a later art pass; the sampled
+    // colour map is the placeholder until then.
+  }
+
+  // --- River system (Sprint 10c revised) ------------------------------------
+  // Renders the winding main river + the two creeks it forks into, lays the
+  // bridge planks at the three crossings, then builds the collision band that
+  // blocks the water everywhere except the bridge gaps.
+  createRiverSystem() {
+    this.renderRiver();
+    this.createRiverCollision();
+  }
+
+  // Water is drawn as overlapping circles stepped along each channel, all into a
+  // single Graphics so a curved band reads smoothly. Bridges sit on top.
+  renderRiver() {
+    const g = this.add.graphics().setDepth(1);
+    const drawChannel = (path, width, color) => {
+      g.fillStyle(color, 1);
+      for (let i = 0; i < path.length - 1; i++) {
+        const a = path[i];
+        const b = path[i + 1];
+        const steps = Math.ceil(Math.hypot(b.x - a.x, b.y - a.y) / 10);
+        for (let t = 0; t <= steps; t++) {
+          const px = Phaser.Math.Linear(a.x, b.x, t / steps);
+          const py = Phaser.Math.Linear(a.y, b.y, t / steps);
+          g.fillCircle(px, py, width / 2);
+        }
+      }
+    };
+    drawChannel(this.worldZoneSystem.mainRiverPath, RIVER_WIDTH, 0x2255aa);
+    drawChannel(this.worldZoneSystem.leftCreekPath, CREEK_WIDTH, 0x3366bb);
+    drawChannel(this.worldZoneSystem.rightCreekPath, CREEK_WIDTH, 0x3366bb);
+
+    // Bridge planks at each crossing — a brown deck with plank detail lines,
+    // angled along the path so it sits naturally over the curving water.
+    this.worldZoneSystem.bridges.forEach((bridge) => {
+      this.add
+        .rectangle(bridge.x, bridge.y, bridge.length, 44, 0x8b6914)
+        .setStrokeStyle(2, 0x5a3a10)
+        .setAngle(bridge.angle)
+        .setDepth(2);
+      const planks = this.add.graphics().setDepth(2);
+      planks.lineStyle(2, 0x6b4a10, 1);
+      const n = Math.floor(bridge.length / 14);
+      for (let i = 1; i < n; i++) {
+        const lx = -bridge.length / 2 + i * 14;
+        planks.lineBetween(lx, -20, lx, 20);
+      }
+      planks.setPosition(bridge.x, bridge.y).setAngle(bridge.angle);
+    });
+  }
+
+  // Collision band: a run of small static blockers stepped along each channel,
+  // skipping the bridge gaps so the only way across is over a bridge. Small AABB
+  // blocks follow the curve where one rotated body could not (arcade bodies stay
+  // axis-aligned regardless of the GameObject's angle).
+  createRiverCollision() {
+    this.riverColliders = this.physics.add.staticGroup();
+
+    const addBlockers = (path, width) => {
+      const block = Math.max(28, width * 0.8); // a touch narrower than the water
+      const stepLen = block * 0.7; // overlap so the band has no gaps
+      for (let i = 0; i < path.length - 1; i++) {
+        const a = path[i];
+        const b = path[i + 1];
+        const segLen = Math.hypot(b.x - a.x, b.y - a.y);
+        const steps = Math.max(1, Math.round(segLen / stepLen));
+        for (let t = 0; t <= steps; t++) {
+          const px = Phaser.Math.Linear(a.x, b.x, t / steps);
+          const py = Phaser.Math.Linear(a.y, b.y, t / steps);
+          if (this.worldZoneSystem.isOnBridge(px, py)) continue; // leave the crossing open
+          const body = this.add.rectangle(px, py, block, block, 0x000000, 0);
+          body.setVisible(false);
+          this.physics.add.existing(body, true);
+          this.riverColliders.add(body);
+        }
+      }
+    };
+
+    this.worldZoneSystem.channels.forEach(({ path, width }) => addBlockers(path, width));
+
+    this.physics.add.collider(this.player, this.riverColliders);
+    this.physics.add.collider(this.slimeGroup, this.riverColliders);
+    this.physics.add.collider(this.skeletonGroup, this.riverColliders);
+  }
+
+  // --- Organic tree clusters (Sprint 10c revised) ---------------------------
+  // Trees scatter in clusters (centre, radius, density) rather than rows. Meadow-
+  // border clusters are sparse + decorative; mid-forest clusters are denser
+  // barriers; the deep-forest pockets are densest. sqrt() radius sampling spreads
+  // trees evenly to the cluster edge, and random placement keeps clusters
+  // passable rather than solid walls. Visuals batch into one Graphics; only
+  // collidable trees get a (small) static body.
+  createOrganicTrees() {
+    this.treeColliders = this.physics.add.staticGroup();
+    const g = this.add.graphics().setDepth(3);
+
+    const CLUSTERS = [
+      // Meadow-border clusters — sparse, decorative (no collision).
+      { x: 300, y: 1050, r: 150, density: 0.3, collide: false },
+      { x: 2800, y: 950, r: 120, density: 0.3, collide: false },
+      { x: 1100, y: 1200, r: 100, density: 0.25, collide: false },
+      // Mid-forest barriers — denser, with collision.
+      { x: 600, y: 1350, r: 180, density: 0.5, collide: true },
+      { x: 1300, y: 1400, r: 160, density: 0.45, collide: true },
+      { x: 2000, y: 1350, r: 170, density: 0.5, collide: true },
+      { x: 2600, y: 1420, r: 150, density: 0.45, collide: true },
+      // Deep-forest pockets — densest.
+      { x: 500, y: 2050, r: 300, density: 0.6, collide: true },
+      { x: 1600, y: 2150, r: 280, density: 0.55, collide: true },
+      { x: 2700, y: 2050, r: 300, density: 0.6, collide: true },
+      // Scattered individuals bridging the clusters.
+      { x: 900, y: 1650, r: 80, density: 0.4, collide: true },
+      { x: 1950, y: 1680, r: 80, density: 0.4, collide: true },
+      { x: 1200, y: 1950, r: 100, density: 0.45, collide: true },
+      { x: 2150, y: 1950, r: 100, density: 0.45, collide: true }
+    ];
+
+    const PER_CLUSTER_CAP = 60; // bound the densest pockets for physics sanity
+    CLUSTERS.forEach((cluster) => {
+      const raw = Math.floor((Math.PI * cluster.r * cluster.r * cluster.density) / 2600);
+      const count = Math.min(raw, PER_CLUSTER_CAP);
+      for (let i = 0; i < count; i++) {
+        const angle = Math.random() * Math.PI * 2;
+        const dist = Math.sqrt(Math.random()) * cluster.r; // uniform area fill
+        const tx = cluster.x + Math.cos(angle) * dist;
+        const ty = cluster.y + Math.sin(angle) * dist;
+
+        if (tx < 20 || tx > WORLD_WIDTH - 20) continue;
+        if (ty < GARDEN_ZONE_HEIGHT + 50 || ty > WORLD_HEIGHT - 20) continue; // never in the garden
+        if (this.worldZoneSystem.isNearRiver(tx, ty, 24)) continue; // not in the water
+        if (this.worldZoneSystem.isOnBridge(tx, ty)) continue; // keep crossings clear
+        // Never bury a seed under a trunk.
+        const onSeed = this.seeds.some(
+          (s) => Phaser.Math.Distance.Between(tx, ty, s.x, s.y) < 50
+        );
+        if (onSeed) continue;
+
+        this.drawTree(g, tx, ty);
+        if (cluster.collide) {
+          // Physics trunk narrower than the visual so the player can squeeze the
+          // edges — only the trunk core is solid.
+          const trunk = this.add.rectangle(tx, ty + 6, 14, 12, 0x000000, 0);
+          trunk.setVisible(false);
+          this.physics.add.existing(trunk, true);
+          this.treeColliders.add(trunk);
+        }
+      }
+    });
+
+    this.physics.add.collider(this.player, this.treeColliders);
+    this.physics.add.collider(this.slimeGroup, this.treeColliders);
+    this.physics.add.collider(this.skeletonGroup, this.treeColliders);
+  }
+
+  // Draw one tree (trunk + canopy) into the shared Graphics with slight size and
+  // shade variation so a cluster doesn't look stamped.
+  drawTree(g, x, y) {
+    const h = 26 + Math.random() * 14;
+    const canopyR = 15 + Math.random() * 9;
+    g.fillStyle(0x1a4a0a, 1);
+    g.fillRect(x - 4, y - h / 2, 8, h);
+    g.fillStyle(Math.random() < 0.5 ? 0x2a6a1a : 0x246016, 1);
+    g.fillCircle(x, y - h / 2, canopyR);
   }
 
   setupBounds() {
@@ -388,20 +697,19 @@ export default class GameScene extends Phaser.Scene {
   spawnSlimes() {
     this.slimeGroup = this.physics.add.group();
 
-    const spots = [
-      { x: 620, y: 1120 },
-      { x: 1580, y: 1320 },
-      { x: 2580, y: 1160 },
-      { x: 1040, y: 1900 },
-      { x: 2240, y: 2040 }
-    ];
-    spots.forEach((p) => this.spawnSlime('green_slime', p.x, p.y));
+    // Green slimes roam the meadow + mid-forest (Sprint 10c revised) — placed via
+    // the organic zone system so they never start in the water or deep forest.
+    const initialGreens = 5;
+    for (let i = 0; i < initialGreens; i++) {
+      const pos = this.getSpawnPositionInZone(['meadow', 'mid_forest']);
+      this.spawnSlime('green_slime', pos.x, pos.y);
+    }
 
     // New Game+ seeds the forest with extra green slimes from day 1 so the run
     // is visibly denser even before day-based scaling kicks in.
     if (this.newGamePlus) {
       const mult = this.gameData.newGamePlus.enemyDensityMult || 1;
-      const extra = Math.round(spots.length * (mult - 1));
+      const extra = Math.round(initialGreens * (mult - 1));
       for (let i = 0; i < extra; i++) this.spawnSlime('green_slime');
     }
   }
@@ -411,7 +719,11 @@ export default class GameScene extends Phaser.Scene {
   // array. Used by the initial placement and by day-based dark-slime scaling.
   spawnSlime(type, x, y) {
     if (x === undefined || y === undefined) {
-      const pos = this.randomForestPosition();
+      // Spawn (and respawn) each slime type in its biome band (Sprint 10c).
+      const pos =
+        type === 'dark_slime'
+          ? this.randomDarkSlimePosition()
+          : this.randomGreenSlimePosition();
       x = pos.x;
       y = pos.y;
     }
@@ -431,8 +743,18 @@ export default class GameScene extends Phaser.Scene {
     const margin = ENEMY_SPAWN_MARGIN;
     const deepMinY = Math.ceil(WORLD_HEIGHT * DEEP_FOREST_THRESHOLD);
     const devSpawn = devX !== undefined && devY !== undefined;
-    const baseX = devSpawn ? devX : Phaser.Math.Between(margin, WORLD_WIDTH - margin);
-    const baseY = devSpawn ? devY : Phaser.Math.Between(deepMinY, WORLD_HEIGHT - margin);
+    // Normal skeletons spawn inside a deep-forest pocket (Sprint 10c revised);
+    // the dev menu drops one at an explicit position.
+    let baseX;
+    let baseY;
+    if (devSpawn) {
+      baseX = devX;
+      baseY = devY;
+    } else {
+      const pos = this.getSpawnPositionInZone(['deep_forest']);
+      baseX = pos.x;
+      baseY = pos.y;
+    }
 
     // Three patrol waypoints fanned around the spawn point. Normal skeletons keep
     // their patrol in the deep forest; dev-placed ones may patrol the whole
@@ -461,37 +783,151 @@ export default class GameScene extends Phaser.Scene {
     };
   }
 
+  // Green slimes roam the meadow + mid-forest (Sprint 10c revised).
+  randomGreenSlimePosition() {
+    return this.getSpawnPositionInZone(['meadow', 'mid_forest']);
+  }
+
+  // Dark slimes roam the mid + deep forest — the dangerous lower map (Sprint 10c).
+  randomDarkSlimePosition() {
+    return this.getSpawnPositionInZone(['mid_forest', 'deep_forest']);
+  }
+
+  // Reject-sample a forest point until it lands in one of `zoneNames` and clear of
+  // the river (Sprint 10c revised). Falls back to a safe mid-map point if no valid
+  // spot turns up, so spawning never returns undefined.
+  getSpawnPositionInZone(zoneNames) {
+    const margin = ENEMY_SPAWN_MARGIN;
+    for (let attempt = 0; attempt < 60; attempt++) {
+      const x = Phaser.Math.Between(margin, WORLD_WIDTH - margin);
+      const y = Phaser.Math.Between(GARDEN_ZONE_HEIGHT + margin, WORLD_HEIGHT - margin);
+      if (this.worldZoneSystem.isNearRiver(x, y)) continue;
+      if (zoneNames.includes(this.worldZoneSystem.getZoneAt(x, y))) return { x, y };
+    }
+    return { x: WORLD_WIDTH / 2, y: GARDEN_ZONE_HEIGHT + 400 };
+  }
+
   // --- Zone boundary (Sprint 7) ---------------------------------------------
-  // An invisible static wall along the garden/forest line. Enemies collide
-  // with it; the player does not, so it's a hard barrier only for slimes and
-  // skeletons. Their per-frame confineToForest() clamp remains as a safety net.
-  createZoneBoundary() {
-    const wall = this.add.rectangle(
+  // The garden homestead fence: a solid wooden fence on all four sides of the
+  // centered garden square, each side broken by an 80px gate gap in its middle.
+  // The fence has both a visual (brown planks) and static physics colliders. The
+  // player collides with the solid runs but can walk out through any of the four
+  // gates; enemies collide too, and their confineToForest() clamp seals the gaps
+  // so they can never follow the player inside.
+  createGardenFence() {
+    const FENCE_COLOR = 0xc0904f;
+    const THICK = 10; // fence/plank thickness (visual + body)
+    const GAP = 80; // gate gap width, centred on each side
+    this.gardenFences = this.physics.add.staticGroup();
+
+    const segment = (x, y, w, h) => {
+      this.add.rectangle(x, y, w, h, FENCE_COLOR).setDepth(4); // visual
+      const body = this.add.rectangle(x, y, w, h, 0x000000, 0).setVisible(false);
+      this.physics.add.existing(body, true); // static collider
+      this.gardenFences.add(body);
+    };
+
+    // Top & bottom: two horizontal runs flanking the centred gate gap.
+    const runH = (GARDEN_WIDTH - GAP) / 2; // length of each flank
+    [GARDEN_TOP, GARDEN_BOTTOM].forEach((y) => {
+      segment(GARDEN_LEFT + runH / 2, y, runH, THICK);
+      segment(GARDEN_RIGHT - runH / 2, y, runH, THICK);
+    });
+
+    // Left & right: two vertical runs flanking the centred gate gap.
+    const runV = (GARDEN_HEIGHT - GAP) / 2;
+    [GARDEN_LEFT, GARDEN_RIGHT].forEach((x) => {
+      segment(x, GARDEN_TOP + runV / 2, THICK, runV);
+      segment(x, GARDEN_BOTTOM - runV / 2, THICK, runV);
+    });
+
+    this.physics.add.collider(this.player, this.gardenFences);
+    this.physics.add.collider(this.slimeGroup, this.gardenFences);
+    this.physics.add.collider(this.skeletonGroup, this.gardenFences);
+  }
+
+  // Enemy body overlap. First-ever contact fires the attack tutorial hint once
+  // (Sprint 12); the enemy then requests damage as usual (Player owns i-frames).
+  onEnemyTouch(enemy) {
+    if (!this._firstEnemyContactEmitted) {
+      this._firstEnemyContactEmitted = true;
+      EventBus.emit('tutorial:enemyContact', {});
+    }
+    if (enemy && enemy.touchPlayer) enemy.touchPlayer();
+  }
+
+  // --- Pause menu (Sprint 12) -----------------------------------------------
+
+  // Esc during normal play opens the pause overlay. Guarded against every modal
+  // state and the sleep fade so it never double-handles an Esc those already own.
+  tryOpenPause() {
+    if (!GameState.is('PLAYING')) return;
+    if (this._sleeping || this._paused) return;
+    if (
+      this._upgradeOpen ||
+      this._winOpen ||
+      this._signpostOpen ||
+      this._dictionaryOpen ||
+      this._worldDetailOpen ||
+      this._swapPickerOpen ||
+      this._plantPickerOpen
+    ) {
+      return;
+    }
+    this._paused = true;
+    this.player.setVelocity(0, 0);
+    GameState.transition('PAUSED'); // PLAYING → PAUSED
+    this.physics.pause();
+    this.scene.launch('PauseScene', {
+      dayNumber: this.daySystem.dayNumber,
+      zone: this.currentZone
+    });
+    this.scene.bringToTop('PauseScene');
+  }
+
+  onPauseResume() {
+    if (!this._paused) return;
+    this._paused = false;
+    if (GameState.is('PAUSED')) {
+      GameState.transition('PLAYING');
+      this.physics.resume();
+    }
+  }
+
+  // First-day-only nudge toward the gate: fires once when the player gets close
+  // to the garden/forest crossing (Sprint 12 tutorial).
+  checkNearGate() {
+    if (this.daySystem.dayNumber !== 1) {
+      this._nearGateEmitted = true; // past day 1 the hint is irrelevant — stop checking
+      return;
+    }
+    const d = Phaser.Math.Distance.Between(
+      this.player.x,
+      this.player.y,
       WORLD_WIDTH / 2,
-      GARDEN_ZONE_HEIGHT + 8,
-      WORLD_WIDTH,
-      16,
-      0x000000,
-      0
+      GARDEN_ZONE_HEIGHT
     );
-    wall.setVisible(false);
-    this.physics.add.existing(wall, true); // static body
-    this.zoneWall = wall;
-    this.physics.add.collider(this.slimeGroup, wall);
-    this.physics.add.collider(this.skeletonGroup, wall);
+    if (d < 80) {
+      this._nearGateEmitted = true;
+      EventBus.emit('tutorial:nearGate', {});
+    }
   }
 
   // --- Plant bundles (Sprint 7) ---------------------------------------------
   // Player overlap: credit the bank directly (bundles skip the grow cycle).
   collectBundle(bundle) {
-    if (!bundle || bundle.collected) return;
-    const pt = bundle.plantType;
-    this.plantBank[pt] = (this.plantBank[pt] || 0) + 1;
-    EventBus.emit('bank:updated', { bank: { ...this.plantBank } });
-    bundle.collect(); // emits bundle:collected, then self-destructs
+    if (!bundle || bundle.collected || bundle.collecting) return;
+    // Magnet arc (Sprint 9): the bundle flies to the player, then banks on arrival.
+    bundle.collectWithArc(this.player, () => {
+      const pt = bundle.plantType;
+      this.plantBank[pt] = (this.plantBank[pt] || 0) + 1;
+      EventBus.emit('bank:updated', { bank: { ...this.plantBank } });
+      bundle.collect(); // emits bundle:collected, then self-destructs
+    });
   }
 
   onBundleCollected({ plantType, position }) {
+    this.shake('bundle_collect');
     const plant = this.gameData.plants[plantType];
     const name = plant ? plant.name : plantType;
     EventBus.emit('ui:floatText', {
@@ -509,33 +945,64 @@ export default class GameScene extends Phaser.Scene {
     this.seeds.push(seed);
   }
 
+  // Drop a seed from the tracked list when it's destroyed for good (death-drop
+  // despawn, daily-special pickup). World seeds respawn in place and are never
+  // destroyed mid-run, so they stay registered.
+  unregisterSeed(seed) {
+    const i = this.seeds.indexOf(seed);
+    if (i > -1) this.seeds.splice(i, 1);
+  }
+
   spawnSeeds() {
-    // Geographic grouping per design — each entry is a fixed world position and
-    // the zone reason it lives there.
+    // Seeds sit in their organic biome (Sprint 10c revised). Meadow pockets are
+    // easy entrance seeds; mid-forest is moderate risk; the best seeds (glowshroom)
+    // live deep in the three forest pockets, reachable only across the bridges.
     const placements = [
-      // red_mushroom ×3 — deep forest, near dark tree clusters (center-left, low)
-      ['red_mushroom', 820, 1980],
-      ['red_mushroom', 1050, 2180],
-      ['red_mushroom', 640, 2080],
-      // blue_flower ×2 — water/stream area, forest bottom-left
-      ['blue_flower', 340, 2250],
-      ['blue_flower', 560, 2360],
-      // golden_wheat ×3 — open clearing, spread out, lower tree density (mid)
-      ['golden_wheat', 1820, 1480],
-      ['golden_wheat', 2120, 1640],
-      ['golden_wheat', 2440, 1460],
-      // green_herb ×2 — near forest entrance, just past the garden gate (shallow)
-      ['green_herb', 1280, 920],
-      ['green_herb', 1920, 980],
-      // glowshroom ×2 — deepest forest, far from the garden gate (bottom-right)
-      ['glowshroom', 2900, 2250],
-      ['glowshroom', 2680, 2360],
-      // sunflower ×3 — open meadow patches, mid-forest
-      ['sunflower', 2240, 1880],
-      ['sunflower', 720, 1500],
-      ['sunflower', 1600, 1720]
+      // MEADOW POCKETS — easy reach.
+      ['green_herb', 700, 1050],
+      ['green_herb', 2500, 950],
+      ['sunflower', 1500, 1100],
+      ['sunflower', 400, 1280],
+      ['sunflower', 2750, 1350],
+      // MID FOREST — moderate risk.
+      ['red_mushroom', 600, 1400],
+      ['red_mushroom', 2000, 1380],
+      ['red_mushroom', 1400, 1450],
+      ['blue_flower', 250, 1480],
+      ['blue_flower', 2950, 1460],
+      ['golden_wheat', 1100, 1350],
+      ['golden_wheat', 2200, 1400],
+      // DEEP FOREST POCKETS — high risk, best seeds.
+      ['glowshroom', 450, 2050], // left pocket
+      ['glowshroom', 1650, 2150], // center pocket
+      ['glowshroom', 2750, 2000], // right pocket
+      ['red_mushroom', 1200, 1900],
+      ['blue_flower', 2100, 1950]
     ];
-    placements.forEach(([type, x, y]) => new Seed(this, x, y, type, this.gameData));
+    placements.forEach(([type, x, y]) => {
+      const pos = this.clearOfRiver(x, y);
+      // eslint-disable-next-line no-new
+      new Seed(this, pos.x, pos.y, type, this.gameData);
+    });
+  }
+
+  // Nudge a point off the water so a seed never strands mid-river. Returns the
+  // original point when already clear, else the nearest clear point found by
+  // searching outward rings (favouring vertical moves toward the seed's biome).
+  clearOfRiver(x, y) {
+    if (!this.worldZoneSystem.isNearRiver(x, y, 16)) return { x, y };
+    const dirs = [
+      [0, -1], [0, 1], [-1, 0], [1, 0],
+      [-0.7, -0.7], [0.7, -0.7], [-0.7, 0.7], [0.7, 0.7]
+    ];
+    for (let radius = 40; radius <= 200; radius += 40) {
+      for (const [dx, dy] of dirs) {
+        const nx = Phaser.Math.Clamp(x + dx * radius, 40, WORLD_WIDTH - 40);
+        const ny = Phaser.Math.Clamp(y + dy * radius, GARDEN_ZONE_HEIGHT + 40, WORLD_HEIGHT - 40);
+        if (!this.worldZoneSystem.isNearRiver(nx, ny, 16)) return { x: nx, y: ny };
+      }
+    }
+    return { x, y };
   }
 
   updateSeeds() {
@@ -544,7 +1011,7 @@ export default class GameScene extends Phaser.Scene {
     const collectRange = this.getHarvestRange();
 
     for (const seed of this.seeds) {
-      if (!seed.active || seed.collected) continue;
+      if (!seed.active || seed.collected || seed.collecting) continue;
       seed.updateProximity(this.player);
       if (!seed.collectible) continue;
 
@@ -557,15 +1024,7 @@ export default class GameScene extends Phaser.Scene {
       if (d > collectRange) continue;
 
       if (this.player.hasEmptySlot()) {
-        if (this.player.addSeed(seed.plantType)) {
-          const recovered = seed.isDespawning;
-          seed.collect();
-          EventBus.emit('seed:collected', {
-            plantType: seed.plantType,
-            position: { x: seed.x, y: seed.y }
-          });
-          if (recovered) EventBus.emit('seed:recovered', { plantType: seed.plantType });
-        }
+        this.beginSeedCollect(seed);
       } else if (d < candidateDist) {
         candidateDist = d;
         candidate = seed;
@@ -581,6 +1040,28 @@ export default class GameScene extends Phaser.Scene {
     if (candidate && candidate === this._swapSnoozedSeed) candidate = null;
 
     this.handleSwapPicker(candidate);
+  }
+
+  // Magnet collect (Sprint 9): arc the seed onto the player, then add it to
+  // inventory on arrival. The add is deferred to arrival so the seed:collected
+  // particles + sfx fire where the seed lands. If the slot was claimed by another
+  // arriving seed in the same window, re-arm the seed instead of dropping it.
+  beginSeedCollect(seed) {
+    seed.collectWithArc(this.player, () => {
+      if (!this.player.addSeed(seed.plantType)) {
+        seed.cancelArc();
+        return;
+      }
+      const recovered = seed.isDespawning;
+      const wasDaily = seed.isDailySpecial;
+      seed.collect();
+      EventBus.emit('seed:collected', {
+        plantType: seed.plantType,
+        position: { x: seed.x, y: seed.y }
+      });
+      if (recovered) EventBus.emit('seed:recovered', { plantType: seed.plantType });
+      if (wasDaily) this.markDailySeedCollected();
+    });
   }
 
   // Full inventory near a collectible seed → show the swap picker (Sprint 7,
@@ -621,6 +1102,7 @@ export default class GameScene extends Phaser.Scene {
       return;
     }
     const recovered = seed.isDespawning;
+    const wasDaily = seed.isDailySpecial;
     const dropped = this.player.dropSeed(dropSlotIndex); // chosen seed lands at the player's feet
     this.player.addSeed(seed.plantType); // fills the freed slot
     seed.collect();
@@ -629,6 +1111,7 @@ export default class GameScene extends Phaser.Scene {
       position: { x: seed.x, y: seed.y }
     });
     if (recovered) EventBus.emit('seed:recovered', { plantType: seed.plantType });
+    if (wasDaily) this.markDailySeedCollected();
     this._swapCandidate = null;
     // Don't immediately re-prompt a swap for the seed we just dropped at our feet.
     this._swapSnoozedSeed = dropped;
@@ -685,37 +1168,93 @@ export default class GameScene extends Phaser.Scene {
     // polish) — registered here and toggled by updateStructureLabels().
     this._structureLabels = [];
 
-    // Well — fill the watering can here.
-    this.well = this.add
-      .rectangle(1050, 360, 50, 50, 0x3b6ea5)
-      .setStrokeStyle(3, 0x244a6e)
-      .setDepth(2);
-    this.addStructureLabel(1050, 360, 1050, 320, 'WELL', '#ABC4DE');
+    // Well — fill the watering can here. Real Sprout Lands well sprite when the
+    // art is present (Sprint 10), else the Sprint 2 placeholder rectangle.
+    if (this.textures.exists('obj_well')) {
+      this.well = this.add.image(2880, 480, 'obj_well').setScale(2).setDepth(2);
+    } else {
+      this.well = this.add
+        .rectangle(2880, 480, 50, 50, 0x3b6ea5)
+        .setStrokeStyle(3, 0x244a6e)
+        .setDepth(2);
+    }
+    this.addStructureLabel(2880, 480, 2880, 440, 'WELL', '#ABC4DE');
 
-    // Sleep bed — advance the day.
-    this.sleepObject = this.add
-      .rectangle(2150, 360, 72, 48, 0x8a5a3a)
-      .setStrokeStyle(3, 0x5a3a22)
-      .setDepth(2);
-    this.addStructureLabel(2150, 360, 2150, 318, 'SLEEP  [F]', '#EDD49A');
+    // Sleep bed — advance the day. Uses a bed slice from the Sprout Lands
+    // Basic_Furniture sheet when present; the crop region is a best fit and can be
+    // nudged (x/y/w/h below) if it lands off the bed.
+    if (this.textures.exists('furniture_sheet')) {
+      const furnTex = this.textures.get('furniture_sheet');
+      if (!furnTex.has('bed')) furnTex.add('bed', 0, 0, 48, 64, 48);
+      this.sleepObject = this.add
+        .image(3520, 480, 'furniture_sheet', 'bed')
+        .setDisplaySize(96, 72)
+        .setDepth(2);
+    } else {
+      this.sleepObject = this.add
+        .rectangle(3520, 480, 72, 48, 0x8a5a3a)
+        .setStrokeStyle(3, 0x5a3a22)
+        .setDepth(2);
+    }
+    this.addStructureLabel(3520, 480, 3520, 438, 'SLEEP  [F]', '#EDD49A');
 
-    // Workshop chest — open the upgrade overlay.
-    this.chest = this.add
-      .rectangle(CHEST_X, CHEST_Y, 64, 48, 0x6e4a22)
-      .setStrokeStyle(3, 0xd4a83f)
-      .setDepth(2);
+    // Workshop chest — open the upgrade overlay. Real chest sprite (48x48 sheet
+    // with open frames) when present; the Sprint 9 open animation frame-swaps
+    // instead of the scaleY tween in that case.
+    this._chestIsSprite = this.textures.exists('obj_chest');
+    if (this._chestIsSprite) {
+      this.chest = this.add
+        .sprite(CHEST_X, CHEST_Y, 'obj_chest', CHEST_CLOSED_FRAME)
+        .setScale(1.5)
+        .setDepth(2);
+    } else {
+      this.chest = this.add
+        .rectangle(CHEST_X, CHEST_Y, 64, 48, 0x6e4a22)
+        .setStrokeStyle(3, 0xd4a83f)
+        .setDepth(2);
+    }
     this.addStructureLabel(CHEST_X, CHEST_Y, CHEST_X, CHEST_Y - 38, 'WORKSHOP  [F]', '#EDD49A');
 
     // Signpost — open the achievement log. Placed near the chest but well
     // outside its interaction radius so the two never overlap.
-    const SIGN_X = 1480;
-    const SIGN_Y = 560;
-    this.add.rectangle(SIGN_X, SIGN_Y + 14, 8, 40, 0x6e4a22).setDepth(2); // post
-    this.signpost = this.add
-      .rectangle(SIGN_X, SIGN_Y - 8, 48, 30, 0x8a6a3a)
-      .setStrokeStyle(2, 0x5a3a22)
-      .setDepth(2);
+    const SIGN_X = 3120;
+    const SIGN_Y = 860;
+    if (this.textures.exists('signs')) {
+      // Sprout Lands sign board (frame 0), scaled up from its 16px source.
+      this.signpost = this.add.sprite(SIGN_X, SIGN_Y, 'signs', 0).setScale(3).setDepth(2);
+    } else {
+      this.add.rectangle(SIGN_X, SIGN_Y + 14, 8, 40, 0x6e4a22).setDepth(2); // post
+      this.signpost = this.add
+        .rectangle(SIGN_X, SIGN_Y - 8, 48, 30, 0x8a6a3a)
+        .setStrokeStyle(2, 0x5a3a22)
+        .setDepth(2);
+    }
     this.addStructureLabel(SIGN_X, SIGN_Y, SIGN_X, SIGN_Y - 36, 'LOG  [F]', '#EDD49A');
+
+    // Field Notes book (Sprint 11) — opens the Seed Dictionary. Distinct blue
+    // book on a stand, set apart from the signpost and the bed grid.
+    const BOOK_X = 3000;
+    const BOOK_Y = 860;
+    this.add.rectangle(BOOK_X, BOOK_Y + 14, 8, 36, 0x6e4a22).setDepth(2); // stand
+    this.book = this.add
+      .rectangle(BOOK_X, BOOK_Y - 8, 30, 22, 0x395a7a)
+      .setStrokeStyle(2, 0xabc4de)
+      .setDepth(2);
+    this.addStructureLabel(BOOK_X, BOOK_Y, BOOK_X, BOOK_Y - 34, 'FIELD NOTES  [F]', '#ABC4DE');
+
+    // Solid garden props get a small static collider so the player routes around
+    // them (Sprint 10c). Interaction stays distance-based, so this never blocks
+    // the [F] prompt — only the body of the object is impassable.
+    this.addPropCollision(this.signpost, 10, 20);
+    this.addPropCollision(this.book, 24, 16);
+  }
+
+  // Give a static prop a narrow collider and route the player around it.
+  addPropCollision(obj, w, h) {
+    if (!obj) return;
+    this.physics.add.existing(obj, true); // static body
+    obj.body.setSize(w, h);
+    if (this.player) this.physics.add.collider(this.player, obj);
   }
 
   // Register a structure label (hidden by default; revealed within
@@ -723,7 +1262,7 @@ export default class GameScene extends Phaser.Scene {
   addStructureLabel(sx, sy, lx, ly, text, color) {
     const t = this.add
       .text(lx, ly, text, {
-        fontFamily: '"Courier New", monospace',
+        fontFamily: '"SproutLands", "Courier New", monospace',
         fontSize: '14px',
         color,
         backgroundColor: 'rgba(20,18,16,0.7)',
@@ -743,6 +1282,86 @@ export default class GameScene extends Phaser.Scene {
         PROXIMITY_LABEL_DIST;
       if (t.visible !== near) t.setVisible(near);
     }
+  }
+
+  // --- Contextual F prompt (Sprint 9) ---------------------------------------
+  // Each frame, find the single nearest interactable in range and push a fully
+  // resolved prompt to the HUD. Nearest wins; informational states (no [F])
+  // render greyed. Events are deduped so the HUD only updates on change.
+  updateInteractPrompt() {
+    const p = this.player;
+    let best = null;
+    let bestDist = Infinity;
+
+    const consider = (obj, range, build) => {
+      if (!obj) return;
+      const d = Phaser.Math.Distance.Between(p.x, p.y, obj.x, obj.y);
+      if (d > range || d >= bestDist) return;
+      const info = build();
+      if (info) {
+        best = info;
+        bestDist = d;
+      }
+    };
+
+    consider(this.chest, INTERACT_RANGE, () => ({ text: '[F] Open Workshop', actionable: true }));
+    consider(this.signpost, INTERACT_RANGE, () => ({ text: '[F] View achievements', actionable: true }));
+    consider(this.sleepObject, INTERACT_RANGE, () => ({
+      text: `[F] Sleep — advance to Day ${this.daySystem.dayNumber + 1}`,
+      actionable: true
+    }));
+    consider(this.well, INTERACT_RANGE, () => this.wellPrompt());
+    consider(this.book, INTERACT_RANGE, () => ({ text: '[F] Read Field Notes', actionable: true }));
+
+    const bed = this.nearestBed(INTERACT_RANGE);
+    if (bed) consider(bed, INTERACT_RANGE, () => this.bedPrompt(bed));
+
+    const wd = this.nearestWorldDetail(INTERACT_RANGE);
+    if (wd) consider(wd, INTERACT_RANGE, () => ({ text: '[F] Examine', actionable: true }));
+
+    if (best) {
+      if (best.text !== this._lastPromptText) {
+        this._lastPromptText = best.text;
+        EventBus.emit('interact:nearObject', { text: best.text, actionable: best.actionable });
+      }
+    } else if (this._lastPromptText !== null) {
+      this._lastPromptText = null;
+      EventBus.emit('interact:leftObject', {});
+    }
+  }
+
+  wellPrompt() {
+    if (this.player.waterCharges < this.player.waterCapacity) {
+      return { text: '[F] Fill watering can', actionable: true };
+    }
+    return { text: 'Watering can full ✓', actionable: false };
+  }
+
+  bedPrompt(bed) {
+    if (bed.isReady()) {
+      return { text: `[F] Harvest ${this.plantName(bed.plantType)}`, actionable: true };
+    }
+    if (bed.isEmpty()) {
+      const idx = this.player.getOldestSeed();
+      if (idx === -1) return { text: 'Need a seed to plant', actionable: false };
+      if (this.distinctSeedCount() >= 2) {
+        return { text: '[F] Choose a seed to plant', actionable: true };
+      }
+      return { text: `[F] Plant ${this.plantName(this.player.seedSlots[idx])}`, actionable: true };
+    }
+    // Growing / planted.
+    const days = Math.ceil(bed.daysRemaining);
+    const dayWord = days === 1 ? 'day' : 'days';
+    if (bed.watered) return { text: 'Watered today ✓', actionable: false };
+    if (this.player.waterCharges > 0) {
+      return { text: `[F] Water — ${days} ${dayWord} left`, actionable: true };
+    }
+    return { text: `${days} ${dayWord} remaining`, actionable: false };
+  }
+
+  plantName(plantType) {
+    const plant = this.gameData.plants[plantType];
+    return plant ? plant.name : plantType;
   }
 
   // --- Decorative props (Sprint 8) ------------------------------------------
@@ -765,11 +1384,17 @@ export default class GameScene extends Phaser.Scene {
       this.add.image(x, y, 'props_decor', frameAt(i)).setScale(SCALE).setDepth(2);
     });
 
-    // Forest decor — skip any spot within 40px of a seed spawn.
+    // Forest decor (Sprint 10 enrichment) — denser scatter across the whole
+    // forest band. Skip any spot within 40px of a seed spawn.
     const forestSpots = [
+      // shallow forest, near the gate
       [1100, 1100], [1500, 1200], [2000, 1150], [2600, 1050], [450, 1300],
+      // mid forest
       [900, 1700], [1300, 1450], [2300, 1300], [2800, 1500], [500, 1900],
-      [1700, 2000], [2150, 2150], [2550, 1900], [1000, 2350], [1400, 2250]
+      [1900, 1600], [2450, 1700], [700, 1600], [1600, 1900], [2150, 1450],
+      // deep forest
+      [1700, 2000], [2150, 2150], [2550, 1900], [1000, 2350], [1400, 2250],
+      [600, 2200], [2750, 2100], [1850, 2300], [2400, 2300]
     ];
     forestSpots.forEach(([x, y], i) => {
       const tooClose = this.seeds.some(
@@ -778,6 +1403,76 @@ export default class GameScene extends Phaser.Scene {
       if (tooClose) return;
       this.add.image(x, y, 'props_decor', frameAt(i + 3)).setScale(SCALE).setDepth(2);
     });
+
+    // Mushroom clusters as a geographic hint near the glowshroom seed spawns
+    // (deep forest, across the river). Tight rings of the small-mushroom frames.
+    const glowshroomZones = [[700, 1700], [2500, 1800]];
+    glowshroomZones.forEach(([cx, cy]) => {
+      for (let i = 0; i < 4; i++) {
+        const a = (i / 4) * Math.PI * 2;
+        const mx = cx + Math.cos(a) * 70;
+        const my = cy + Math.sin(a) * 55;
+        const tooClose = this.seeds.some(
+          (s) => Phaser.Math.Distance.Between(mx, my, s.x, s.y) < 40
+        );
+        if (tooClose) continue;
+        this.add.image(mx, my, 'props_decor', frameAt(i)).setScale(SCALE).setDepth(2);
+      }
+    });
+  }
+
+  // --- Forest ambience (Sprint 10) ------------------------------------------
+  // Sparse drifting motes over the forest, using the Mystic Woods dust particle
+  // sheet. Pure atmosphere — barely noticeable. No-op if the sheet is absent.
+  // (No far/parallax background art shipped in the packs, so 3A is skipped.)
+  createForestAmbience() {
+    if (!this.textures.exists('fx_dust')) return;
+    this.add.particles(0, 0, 'fx_dust', {
+      frame: [0, 1, 2, 3],
+      x: { min: 0, max: WORLD_WIDTH },
+      y: GARDEN_ZONE_HEIGHT,
+      speedY: { min: 15, max: 35 },
+      speedX: { min: -15, max: 15 },
+      angle: { min: 0, max: 360 },
+      rotate: { min: 0, max: 360 },
+      scale: { min: 0.6, max: 1.2 },
+      alpha: { start: 0.6, end: 0 },
+      lifespan: { min: 4000, max: 7000 },
+      frequency: 700, // ~one mote at a time — very sparse
+      quantity: 1
+    }).setDepth(8);
+  }
+
+  // --- Garden ambience (Sprint 13) ------------------------------------------
+  // Warm pollen/dust motes drifting up through the safe zone so the garden feels
+  // inhabited. Reuses the dust sheet when present, else a tiny generated pixel.
+  createGardenAmbience() {
+    let texKey = 'fx_dust';
+    let frameCfg = { frame: [0, 1, 2, 3] };
+    if (!this.textures.exists('fx_dust')) {
+      if (!this.textures.exists('px_pollen')) {
+        const g = this.make.graphics({ x: 0, y: 0, add: false });
+        g.fillStyle(0xffffff, 1);
+        g.fillRect(0, 0, 2, 2);
+        g.generateTexture('px_pollen', 2, 2);
+        g.destroy();
+      }
+      texKey = 'px_pollen';
+      frameCfg = {};
+    }
+    this.gardenAmbient = this.add.particles(0, 0, texKey, {
+      ...frameCfg,
+      x: { min: GARDEN_X, max: GARDEN_X + GARDEN_WIDTH },
+      y: { min: GARDEN_Y, max: GARDEN_Y + GARDEN_HEIGHT },
+      speedY: { min: -20, max: -8 },
+      speedX: { min: -5, max: 5 },
+      scale: { start: 0.8, end: 0 },
+      alpha: { start: 0.3, end: 0 },
+      lifespan: { min: 3000, max: 6000 },
+      frequency: 1200,
+      quantity: 1,
+      tint: [0xffffaa, 0xaaffaa, 0xffddaa] // warm pollen colours
+    }).setDepth(6);
   }
 
   // --- Interaction (F key) --------------------------------------------------
@@ -808,6 +1503,9 @@ export default class GameScene extends Phaser.Scene {
   }
 
   handleInteract() {
+    // The planting picker owns input while open — F does nothing until the
+    // player chooses a seed or cancels (Sprint 10c).
+    if (this._plantPickerOpen) return;
     // Priority: chest > sleep > well > garden bed > seed swap. Objects are
     // spatially separated so only one is ever in range, but ordering keeps it
     // deterministic.
@@ -817,6 +1515,10 @@ export default class GameScene extends Phaser.Scene {
     }
     if (this.signpost && this.within(this.signpost, INTERACT_RANGE)) {
       this.openSignpost();
+      return;
+    }
+    if (this.book && this.within(this.book, INTERACT_RANGE)) {
+      this.openSeedDict();
       return;
     }
     if (this.sleepObject && this.within(this.sleepObject, INTERACT_RANGE)) {
@@ -829,6 +1531,10 @@ export default class GameScene extends Phaser.Scene {
     }
     const bed = this.nearestBed(INTERACT_RANGE);
     if (bed && this.interactBed(bed)) return;
+
+    // Lowest priority: examine a forest world-detail object (Sprint 11).
+    const detail = this.nearestWorldDetail(INTERACT_RANGE);
+    if (detail) this.openWorldDetail(detail);
   }
 
   interactBed(bed) {
@@ -838,31 +1544,97 @@ export default class GameScene extends Phaser.Scene {
     }
     if (bed.isEmpty()) {
       const idx = this.player.getOldestSeed();
-      if (idx === -1) return false;
+      if (idx === -1) return false; // no seeds — prompt already shows "Need a seed"
+      // Two or more DIFFERENT seed types → let the player choose (and compare
+      // grow times) via the picker. One type (even if several) plants directly.
+      if (this.distinctSeedCount() >= 2) {
+        this.openPlantPicker(bed);
+        return true;
+      }
       const plantType = this.player.removeSeedAt(idx);
       bed.plant(plantType);
       return true;
     }
-    if (bed.isGrowing() && this.player.hasWater) {
+    if (bed.isGrowing() && this.player.waterCharges > 0) {
       this.waterBedsFrom(bed);
-      this.player.hasWater = false;
-      EventBus.emit('player:usedWater', {});
+      this.player.useWater(); // spend one charge (multi-bed soak still costs one)
       return true;
     }
     return false;
   }
 
+  // --- Planting picker (Sprint 10c) -----------------------------------------
+  // With 2+ different seeds, F over an empty bed opens a centered picker so the
+  // player can compare grow times and choose. UIScene draws it; GameScene owns
+  // the bed and performs the plant on confirmation.
+
+  distinctSeedCount() {
+    const types = new Set(this.player.seedSlots.filter((s) => s !== null));
+    return types.size;
+  }
+
+  openPlantPicker(bed) {
+    if (this._plantPickerOpen) return;
+    this._plantPickerOpen = true;
+    this._plantPickerBed = bed;
+    this.player.setVelocity(0, 0);
+    EventBus.emit('bed:plantPrompt', {
+      bedIndex: bed.bedIndex,
+      slots: [...this.player.seedSlots],
+      hasGoldenCan: this.player.equippedGear.wateringCan === 'golden_can'
+    });
+  }
+
+  // UIScene confirmed a choice — plant the chosen slot into the bed.
+  onPlantConfirmed({ bedIndex, plantType, slotIndex }) {
+    this._plantPickerOpen = false;
+    this._plantPickerBed = null;
+    const bed = this.beds[bedIndex];
+    if (!bed || !bed.isEmpty()) return; // bed changed under us — abort safely
+    // Re-validate the slot still holds the chosen type (inventory may have
+    // shifted); fall back to the first matching slot.
+    let idx = slotIndex;
+    if (this.player.seedSlots[idx] !== plantType) {
+      idx = this.player.seedSlots.indexOf(plantType);
+      if (idx === -1) return;
+    }
+    const pt = this.player.removeSeedAt(idx);
+    bed.plant(pt);
+  }
+
+  // UIScene cancelled (Esc / Cancel) — just clear our open state.
+  onPlantPickerCancelled() {
+    this._plantPickerOpen = false;
+    this._plantPickerBed = null;
+  }
+
+  // Walked away from the bed with the picker open → close it without planting.
+  updatePlantPicker() {
+    if (!this._plantPickerOpen) return;
+    const bed = this._plantPickerBed;
+    if (!bed) return;
+    const d = Phaser.Math.Distance.Between(this.player.x, this.player.y, bed.x, bed.y);
+    if (d > SWAP_TIMEOUT_DIST) {
+      this._plantPickerOpen = false;
+      this._plantPickerBed = null;
+      EventBus.emit('bed:plantPromptClose', {}); // tell UIScene to dismiss
+    }
+  }
+
   // Water the targeted bed, plus extra growing beds up to the can's bedsPerUse
-  // (Sprint 4 watering-can upgrade — golden can soaks the whole garden).
+  // (Sprint 4 watering-can upgrade — golden can soaks the whole garden). The
+  // can tier rides along so each bed rolls the Sprint 9 acceleration odds.
   waterBedsFrom(primary) {
+    const canTier = this.player.getWateringCanTier();
+    const bonus = this._weatherAccelBonus; // Bright Sun adds accelerate chance
     const perUse = this.player.wateringCan.bedsPerUse || 1;
-    primary.water();
+    primary.water(canTier, bonus);
     let watered = 1;
     if (perUse > 1) {
       for (const bed of this.beds) {
         if (watered >= perUse) break;
         if (bed !== primary && bed.isGrowing() && !bed.watered) {
-          bed.water();
+          bed.water(canTier, bonus);
           watered++;
         }
       }
@@ -870,9 +1642,249 @@ export default class GameScene extends Phaser.Scene {
   }
 
   getWater() {
-    if (this.player.hasWater) return;
-    this.player.hasWater = true;
-    EventBus.emit('player:gotWater', {});
+    if (this.player.waterCharges >= this.player.waterCapacity) return;
+    this.player.fillWater();
+  }
+
+  // --- Weather (Sprint 11) --------------------------------------------------
+
+  onWeatherChanged({ weather }) {
+    this.applyWeatherEffects(weather);
+    // UIScene owns the wake-up toast + persistent HUD icon.
+  }
+
+  // Reset the day-scoped modifiers, then set the one this weather drives. The
+  // cloudy growth penalty is applied at the next night (see onDayAdvanced) so
+  // it is intentionally not toggled here.
+  applyWeatherEffects(weather) {
+    this.weatherDetectMult = 1;
+    this.weatherRespawnMult = 1;
+    this._weatherAccelBonus = 0;
+    if (!weather) return;
+    switch (weather.effect) {
+      case 'growthPenalty':
+        this._pendingGrowthPenalty = true;
+        break;
+      case 'freeWater':
+        this.applyFreeWater();
+        break;
+      case 'growthBonus':
+        this._weatherAccelBonus = weather.value;
+        break;
+      case 'enemyDetectMult':
+        this.weatherDetectMult = weather.value;
+        break;
+      case 'respawnMult':
+        this.weatherRespawnMult = weather.value;
+        break;
+      default:
+        break;
+    }
+  }
+
+  // Rain: every growing bed gets watered overnight for free (still rolls the
+  // Sprint 9 accelerate/double checks).
+  applyFreeWater() {
+    if (!this.beds) return;
+    const canTier = this.player.getWateringCanTier();
+    this.beds.forEach((bed) => {
+      if (bed.isGrowing() && !bed.watered) bed.water(canTier, this._weatherAccelBonus);
+    });
+  }
+
+  // --- World details (Sprint 11) --------------------------------------------
+
+  createWorldDetails() {
+    this.worldDetails = [];
+    // Fixed forest placements, each ≥100px from seed spawns and off the paths.
+    const defs = [
+      {
+        x: 1350, y: 1000, frame: 0,
+        hasCollision: true, // a post — solid, walk around it
+        title: 'An Old Marker',
+        text: "A weathered post, half-rotted into the soil. Something is carved into the wood — initials, maybe, or a tally. It's been here longer than the overgrowth."
+      },
+      {
+        x: 380, y: 2120, frame: 1,
+        hasCollision: true, // stacked stones — solid
+        title: 'Stacked Stones',
+        text: 'Seven flat stones balanced deliberately beside the stream. Someone took care with this. The moss on the bottom stone is years old.'
+      },
+      {
+        x: 1000, y: 2350, frame: 2,
+        hasCollision: true, // a fallen trunk — solid
+        title: 'A Fallen Giant',
+        text: 'The tree came down in a storm — the root ball still half-raised from the earth, trailing soil like a torn hem. New saplings already grow from the trunk.'
+      },
+      {
+        x: 2600, y: 2050, frame: 3,
+        title: 'Something Buried',
+        text: "A flat stone lies flush with the ground, deliberate in a way natural stones aren't. Whatever was placed here was placed with intention."
+      },
+      {
+        x: 2780, y: 2180, frame: 4,
+        title: 'A Rusted Can',
+        text: 'A watering can, orange with rust, wedged between two roots. The spout still points at a patch of earth where nothing grows anymore.'
+      }
+    ];
+    defs.forEach((d) => {
+      this.worldDetails.push(
+        new WorldDetail(this, d.x, d.y, {
+          sprite: 'props_decor',
+          frame: d.frame,
+          scale: 2,
+          range: 56,
+          hasCollision: !!d.hasCollision,
+          title: d.title,
+          text: d.text
+        })
+      );
+    });
+  }
+
+  nearestWorldDetail(range) {
+    if (!this.worldDetails) return null;
+    let best = null;
+    let bestDist = range;
+    for (const d of this.worldDetails) {
+      const dist = d.distanceTo(this.player);
+      if (dist < bestDist) {
+        bestDist = dist;
+        best = d;
+      }
+    }
+    return best;
+  }
+
+  // Non-modal popup — the world keeps running; UIScene auto-closes it after 6s
+  // or on Esc, then emits worlddetail:closed.
+  openWorldDetail(detail) {
+    if (this._worldDetailOpen) return;
+    this._worldDetailOpen = true;
+    EventBus.emit('worlddetail:opened', {
+      title: detail.config.title,
+      text: detail.config.text
+    });
+  }
+
+  // --- Rock formations (Sprint 11) ------------------------------------------
+  // Static collider clusters that create cover geometry. Generated rock texture
+  // (no confidently-sliceable rock sprite in the packs — see CREDITS TODO).
+  createRockFormations() {
+    if (!this.textures.exists('px_rock')) {
+      const g = this.make.graphics({ x: 0, y: 0, add: false });
+      g.fillStyle(0x6b6660, 1);
+      g.fillRoundedRect(1, 5, 26, 21, 8);
+      g.fillStyle(0x847d74, 1);
+      g.fillRoundedRect(5, 2, 15, 12, 6);
+      g.lineStyle(2, 0x47443f, 1);
+      g.strokeRoundedRect(1, 5, 26, 21, 8);
+      g.generateTexture('px_rock', 28, 28);
+      g.destroy();
+    }
+
+    this.rockGroup = this.physics.add.staticGroup();
+    const formations = [
+      // Scattered meadow rocks (Sprint 10c) — cover geometry in the entrance band.
+      { x: 600, y: GARDEN_ZONE_HEIGHT + 150, count: 3 },
+      { x: 2600, y: GARDEN_ZONE_HEIGHT + 250, count: 3 },
+      // Mid + deep forest formations.
+      { x: 800, y: GARDEN_ZONE_HEIGHT + 400, count: 3 },
+      { x: 2400, y: GARDEN_ZONE_HEIGHT + 800, count: 4 },
+      { x: 1200, y: GARDEN_ZONE_HEIGHT + 1200, count: 3 },
+      { x: 2800, y: GARDEN_ZONE_HEIGHT + 600, count: 5 }
+    ];
+    formations.forEach(({ x, y, count }) => {
+      for (let i = 0; i < count; i++) {
+        const rx = x + (Math.random() - 0.5) * 120;
+        const ry = y + (Math.random() - 0.5) * 80;
+        // Keep rocks off seed spawns so nothing becomes uncollectible.
+        const tooClose = this.seeds.some(
+          (s) => Phaser.Math.Distance.Between(rx, ry, s.x, s.y) < 60
+        );
+        if (tooClose) continue;
+        const rock = this.rockGroup.create(rx, ry, 'px_rock');
+        rock.setScale(1.6).setDepth(3);
+        rock.refreshBody();
+      }
+    });
+
+    // Player and both enemy groups route around rocks (chase geometry).
+    this.physics.add.collider(this.player, this.rockGroup);
+    this.physics.add.collider(this.slimeGroup, this.rockGroup);
+    this.physics.add.collider(this.skeletonGroup, this.rockGroup);
+  }
+
+  // --- Daily special seed (Sprint 11) ---------------------------------------
+
+  maybeSpawnDailySeed() {
+    const today = new Date().toDateString();
+    if (this._dailySeedCollected === today) return; // already claimed today
+    this.spawnDailySpecialSeed();
+  }
+
+  spawnDailySpecialSeed() {
+    const dateStr = new Date().toDateString();
+    const hash = dateStr.split('').reduce((acc, c) => acc + c.charCodeAt(0), 0);
+    const x = 400 + (hash % (WORLD_WIDTH - 800));
+    const y = GARDEN_ZONE_HEIGHT + 600 + (hash % (WORLD_HEIGHT - GARDEN_ZONE_HEIGHT - 800));
+    const rarePlants = ['glowshroom', 'green_herb', 'glowshroom', 'green_herb', 'blue_flower'];
+    const plantType = rarePlants[hash % rarePlants.length];
+
+    const seed = new Seed(this, x, y, plantType, this.gameData);
+    seed.setScale(SEED_SCALE * 1.4); // 1.4x bigger than a normal seed so the daily gift stands out
+    seed.isDailySpecial = true;
+    seed.nameTagOverride = "✨ Today's Gift";
+    this._dailySeed = seed;
+
+    // Pulsing glow so it reads as special at a distance.
+    this.tweens.add({
+      targets: seed,
+      alpha: 0.6,
+      duration: 800,
+      yoyo: true,
+      repeat: -1,
+      ease: 'Sine.easeInOut'
+    });
+  }
+
+  markDailySeedCollected() {
+    this._dailySeedCollected = new Date().toDateString();
+    this.saveData.dailySeedCollected = this._dailySeedCollected;
+    this._dailySeed = null;
+    this.autoSave();
+  }
+
+  // First forest entry each day teases the special seed (once per day).
+  maybeDailySeedToast() {
+    const today = new Date().toDateString();
+    if (this._dailySeedToastShown === today) return;
+    if (this._dailySeedCollected === today) return;
+    if (!this._dailySeed || !this._dailySeed.active) return;
+    this._dailySeedToastShown = today;
+    this.saveData.dailySeedToastShown = today;
+    EventBus.emit('ui:notice', {
+      text: '✨ A special seed has appeared somewhere in the forest today.'
+    });
+    this.autoSave();
+  }
+
+  // --- Seed dictionary (Sprint 11) ------------------------------------------
+
+  discoverPlant(plantType) {
+    if (!plantType || this.discoveredPlants.includes(plantType)) return;
+    this.discoveredPlants.push(plantType);
+    EventBus.emit('dictionary:newEntry', { plantType });
+    this.autoSave();
+  }
+
+  openSeedDict() {
+    if (this._dictionaryOpen) return;
+    this._dictionaryOpen = true;
+    this.player.setVelocity(0, 0);
+    if (this._swapPickerOpen) this.closeSwapPicker(false);
+    this.scene.launch('SeedDictScene');
+    this.scene.bringToTop('SeedDictScene');
   }
 
   sleep() {
@@ -896,8 +1908,30 @@ export default class GameScene extends Phaser.Scene {
       // Timer stays paused until the player re-enters the forest.
       this.daySystem.setTimerActive(false);
 
-      this.cameras.main.fadeIn(SLEEP_FADE_MS, 0, 0, 0);
-      this._sleeping = false;
+      // Hold on black for a beat (Sprint 12) so the morning doesn't snap back too
+      // fast, then fade in and wash a warm "opening your eyes" flash over it.
+      this.time.delayedCall(300, () => {
+        this.cameras.main.fadeIn(SLEEP_FADE_MS, 0, 0, 0);
+        this.cameras.main.once('camerafadeincomplete', () => this.screenFlash(0xfff1d6, 0.2, 400));
+        this._sleeping = false;
+      });
+    });
+  }
+
+  // Screen-fixed colour wash that fades out — used for the gate-crossing flash,
+  // the morning-light wake flash, and the death vignette pulse (Sprint 12). Sits
+  // above the world but below the parallel HUD scene.
+  screenFlash(color, alpha, duration) {
+    const f = this.add
+      .rectangle(0, 0, VIRTUAL_WIDTH, VIRTUAL_HEIGHT, color, alpha)
+      .setOrigin(0, 0)
+      .setScrollFactor(0)
+      .setDepth(60);
+    this.tweens.add({
+      targets: f,
+      alpha: 0,
+      duration,
+      onComplete: () => f.destroy()
     });
   }
 
@@ -955,6 +1989,19 @@ export default class GameScene extends Phaser.Scene {
     this.autoSave();
   }
 
+  // Applied live by the Settings overlay (Sprint 12). Mutates the same settings
+  // object AudioSystem holds (so SFX volume tracks immediately), retunes the
+  // current music bed, mirrors mute to the SoundManager, and persists the slot.
+  applyAudioSettings(settings) {
+    Object.assign(this.audioSettings, settings);
+    this.sound.mute = !!this.audioSettings.muted;
+    if (this.bgm && this.currentBgmKey && this.bgm[this.currentBgmKey]) {
+      this.bgm[this.currentBgmKey].setVolume(this.musicVol());
+    }
+    EventBus.emit('audio:muteChanged', { muted: this.audioSettings.muted });
+    this.autoSave();
+  }
+
   // --- EventBus reactions ---------------------------------------------------
 
   subscribe(event, handler) {
@@ -964,10 +2011,18 @@ export default class GameScene extends Phaser.Scene {
 
   onZoneChanged({ zone }) {
     this.currentZone = zone;
+    this.applyDayTint();
+    this.animateGate(zone);
     // The gate chime is played by AudioSystem on 'player:zoneChanged'.
     this.crossfadeTo(zone === 'forest' ? 'bgm_forest' : 'bgm_garden');
     // Timer counts only in the forest, and never restarts once already expired.
     this.daySystem.setTimerActive(zone === 'forest' && this.daySystem.timerRemaining > 0);
+    // Brief screen-edge flash acknowledging the zone crossing (Sprint 12).
+    this.screenFlash(0xffffff, 0.1, 200);
+    // First-run tutorial: distinct triggers per direction (Sprint 12).
+    EventBus.emit(zone === 'forest' ? 'tutorial:enteredForest' : 'tutorial:enteredGarden', {});
+    // First forest entry of the day teases the daily special seed.
+    if (zone === 'forest') this.maybeDailySeedToast();
     // Auto-save whenever the player reaches the safety of the garden.
     if (zone === 'garden') this.autoSave();
   }
@@ -977,9 +2032,24 @@ export default class GameScene extends Phaser.Scene {
     this.autoSave();
   }
 
+  // Swing the boundary gate: edge-on (narrow) while in the forest, full width
+  // (closed) back in the garden. No-op until the fence_gate art is present.
+  animateGate(zone) {
+    if (!this.gateSprite) return;
+    this.tweens.killTweensOf(this.gateSprite);
+    this.tweens.add({
+      targets: this.gateSprite,
+      scaleX: zone === 'forest' ? GATE_SCALE * 0.2 : GATE_SCALE,
+      duration: 200,
+      ease: 'Quad.easeOut'
+    });
+  }
+
   onTimerExpired() {
     if (this._postTimerApplied) return;
     this._postTimerApplied = true;
+    // The forest just turned dangerous — the biggest shake of the day (Sprint 13).
+    this.shake('day_timer_expire');
     const { postTimerSpeedMult, postTimerDamageMult } = this.gameData.daySystem;
     // Only slimes carry the day-timer buff (skeletons skip applyPostTimer).
     this.enemies.forEach((e) => {
@@ -995,7 +2065,34 @@ export default class GameScene extends Phaser.Scene {
       });
       this._postTimerApplied = false;
     }
+    // Cloudy weather (selected the previous morning) negates the night's growth:
+    // beds have already ticked -1 above (GardenBed listens first), so add 1 back.
+    if (this._pendingGrowthPenalty) {
+      this._pendingGrowthPenalty = false;
+      this.beds.forEach((bed) => {
+        if (bed.isGrowing()) {
+          bed.daysRemaining += 1;
+          bed.refreshDaysText();
+        }
+      });
+    }
     this.handleEnemyScaling(d ? d.dayNumber : this.daySystem.dayNumber);
+    this.applyDayTint(); // deepen the atmosphere a touch with the new day
+  }
+
+  // Atmosphere wash that intensifies with the day count. Garden trends warm
+  // amber; forest trends cool blue-grey and a little stronger, so the deeper
+  // into a run the more the forest reads as threatening.
+  applyDayTint() {
+    if (!this.dayTint) return;
+    const day = this.daySystem ? this.daySystem.dayNumber : 1;
+    if (this.currentZone === 'garden') {
+      const a = Math.min(day * 0.008, 0.06);
+      this.dayTint.setFillStyle(0xffb866).setAlpha(a);
+    } else {
+      const a = Math.min(day * 0.01, 0.08);
+      this.dayTint.setFillStyle(0x4a5a82).setAlpha(a);
+    }
   }
 
   // Day-based enemy scaling: dark slimes ramp in from day 3 (one more every two
@@ -1022,17 +2119,35 @@ export default class GameScene extends Phaser.Scene {
     }
   }
 
-  onPlantHarvested({ plantType, position }) {
+  onPlantHarvested({ plantType, position, yield: harvestYield = 1 }) {
+    const amount = harvestYield || 1; // double-harvested beds yield 2 (Sprint 9)
     if (this.plantBank[plantType] === undefined) this.plantBank[plantType] = 0;
-    this.plantBank[plantType]++;
+    this.plantBank[plantType] += amount;
     if (this.plantsGrownEver[plantType] === undefined) this.plantsGrownEver[plantType] = 0;
-    this.plantsGrownEver[plantType]++;
+    this.plantsGrownEver[plantType] += amount;
+    if (!this.runStats.firstPlantGrown) this.runStats.firstPlantGrown = plantType; // run summary
     EventBus.emit('bank:updated', { bank: { ...this.plantBank } });
     if (position) this.particleSystem.harvestBurst(position);
     this.checkDemoWin();
   }
 
   onSeedCollected({ plantType, position }) {
+    // Run-summary + dictionary tracking happen regardless of particle position.
+    this.runStats.seedsCollected++;
+    this.discoverPlant(plantType);
+    // First time the satchel fills, nudge the player home to plant (Sprint 12).
+    if (!this._firstFillEmitted && this.player.isFull()) {
+      this._firstFillEmitted = true;
+      EventBus.emit('tutorial:inventoryFull', {});
+    }
+    // The first-run seed arrow has served its purpose once a seed is in hand.
+    if (!this._seedArrowDone) {
+      this._seedArrowDone = true;
+      if (this._seedArrow) {
+        this._seedArrow.destroy();
+        this._seedArrow = null;
+      }
+    }
     if (!position) return;
     const plant = this.gameData.plants[plantType];
     this.particleSystem.seedCollect(position, plant ? plant.color : '#ffffff');
@@ -1040,6 +2155,7 @@ export default class GameScene extends Phaser.Scene {
 
   onUpgradePurchased(d) {
     this.runStats.upgradesPurchased++;
+    this.shake('upgrade_purchase');
     this.autoSave();
     const plant = d && this.gameData.plants[d.plantType];
     this.particleSystem.upgradeBurst({ x: CHEST_X, y: CHEST_Y }, plant ? plant.color : '#EDD49A');
@@ -1049,6 +2165,10 @@ export default class GameScene extends Phaser.Scene {
   // so loading the save again never re-triggers it.
   checkDemoWin() {
     if (this._demoWinTriggered) return;
+    // Guard (Sprint 9): the demo win can only ever resolve at the moment of a
+    // garden harvest. Forest bundle pickups credit the bank but never the
+    // grown-ever tally, and this guard makes the zone requirement explicit.
+    if (this.player.currentZone !== 'garden') return;
     const allGrown = Object.keys(this.gameData.plants).every(
       (pt) => (this.plantsGrownEver[pt] || 0) >= DEMO_WIN_PER_PLANT
     );
@@ -1075,7 +2195,12 @@ export default class GameScene extends Phaser.Scene {
   onPlayerDied() {
     if (this._respawning) return;
     this._respawning = true;
+    this.runStats.deaths++; // run summary
 
+    // Red vignette pulse + the heaviest shake the instant you fall — "that was
+    // bad" communicated viscerally before the respawn fade starts (Sprint 12/13).
+    this.shake('player_death');
+    this.screenFlash(0x8a0000, 0.35, 500);
     this.particleSystem.deathBurst(this.player.x, this.player.y);
 
     // Drop every carried seed at the death position with a recovery timer — the
@@ -1098,7 +2223,7 @@ export default class GameScene extends Phaser.Scene {
     // Respawn sequence: fade out, teleport to the garden centre, fade back in.
     this.cameras.main.fadeOut(RESPAWN_FADE_MS);
     this.time.delayedCall(RESPAWN_DELAY_MS, () => {
-      this.player.respawn(WORLD_WIDTH / 2, GARDEN_ZONE_HEIGHT / 2);
+      this.player.respawn(GARDEN_X + GARDEN_WIDTH / 2, GARDEN_Y + GARDEN_HEIGHT / 2);
       this.cameras.main.fadeIn(RESPAWN_FADE_MS);
       this._respawning = false;
     });
@@ -1108,13 +2233,64 @@ export default class GameScene extends Phaser.Scene {
     // Only react to applied-damage notifications (which carry currentHP), not
     // the raw per-frame damage requests slimes emit on overlap.
     if (d.currentHP === undefined) return;
-    this.cameras.main.shake(SHAKE_DURATION_MS, SHAKE_INTENSITY);
+    this.shake('player_hit');
+  }
+
+  // Screenshake by named profile (Sprint 13). Different impacts feel different.
+  shake(profile) {
+    const p = SHAKE_PROFILES[profile];
+    if (p) this.cameras.main.shake(p.duration, p.intensity);
+  }
+
+  // Melee blow connected — pick the shake profile by weapon, or the heavier
+  // skeleton profile when a skeleton was among the targets (Sprint 13).
+  onMeleeLanded({ weapon, hitSkeleton }) {
+    if (hitSkeleton) {
+      this.shake('skeleton_hit');
+      return;
+    }
+    if (weapon === 'sword') this.shake('sword_hit');
+    else if (weapon === 'dagger') this.shake('dagger_hit');
+    else this.shake('hands_hit');
   }
 
   onEnemyDied({ type, position }) {
     this.runStats.enemiesDefeated++;
-    const color = ENEMY_DEATH_COLORS[type] || '#ffffff';
-    this.particleSystem.showDeathBurst(position.x, position.y, color);
+    if (this.runStats.killsByType[type] !== undefined) this.runStats.killsByType[type]++;
+    // Per-type death flourish (Sprint 13) — particles emit from the enemy's spot.
+    if (type === 'dark_slime') {
+      this.particleSystem.darkSlimeBurst(position.x, position.y);
+      this.screenFlash(0x000000, 0.15, 300); // brief desaturate flash for the bigger kill
+    } else if (type === 'skeleton') {
+      this.particleSystem.skeletonBones(position.x, position.y);
+      this.shake('skeleton_hit'); // a final rattle
+    } else {
+      this.particleSystem.slimeSplat(position.x, position.y, ENEMY_DEATH_COLORS[type] || '#8AB87E');
+    }
+    this.scheduleGreenSlimeRespawn();
+  }
+
+  // Keep the forest populated. Green slimes only spawn once at world setup, so
+  // without this they thin out and never return as the player clears them. After
+  // any enemy dies, top green slimes back up to the day-scaled target after a
+  // delay. Dark slimes and skeletons have their own day-based scaling.
+  scheduleGreenSlimeRespawn() {
+    const respawnMs = this.gameData.enemies.scaling.greenSlimeRespawnMs;
+    this.time.delayedCall(respawnMs, () => {
+      if (!this.enemies) return;
+      const greens = this.enemies.filter((e) => e.slimeType === 'green_slime').length;
+      if (greens < this.getTargetGreenSlimeCount()) this.spawnSlime('green_slime');
+    });
+  }
+
+  // Base green-slime count plus a slow per-day ramp, capped, so deeper runs stay
+  // dense without overwhelming early days.
+  getTargetGreenSlimeCount() {
+    const s = this.gameData.enemies.scaling;
+    return Math.min(
+      s.greenSlimeBaseCount + Math.floor(this.daySystem.dayNumber * s.greenSlimePerDay),
+      s.greenSlimeMaxCount
+    );
   }
 
   // --- Upgrade economy (Sprint 4) -------------------------------------------
@@ -1125,11 +2301,49 @@ export default class GameScene extends Phaser.Scene {
     this.player.setVelocity(0, 0);
     if (this._swapPickerOpen) this.closeSwapPicker(false);
     EventBus.emit('upgrade:opened', {});
-    this.scene.launch('UpgradeScene');
+    // Play the chest lid-open tween, then launch the workshop overlay.
+    this.animateChestOpen(() => this.scene.launch('UpgradeScene'));
+  }
+
+  // Lid opens before the overlay appears. Real chest sprite → swap to the open
+  // frame with a small pop; placeholder rectangle → the Sprint 9 scaleY squash.
+  animateChestOpen(done) {
+    if (!this.chest) {
+      done();
+      return;
+    }
+    if (this._chestIsSprite) {
+      this.chest.setFrame(CHEST_OPEN_FRAME);
+      this.tweens.add({
+        targets: this.chest,
+        scaleX: 1.65,
+        scaleY: 1.65,
+        duration: 110,
+        yoyo: true,
+        ease: 'Quad.easeOut',
+        onComplete: () => this.time.delayedCall(120, done)
+      });
+    } else {
+      this.tweens.add({
+        targets: this.chest,
+        scaleY: 0.85,
+        duration: 120,
+        ease: 'Quad.easeOut',
+        onComplete: () => this.time.delayedCall(200, done)
+      });
+    }
   }
 
   onUpgradeClosed() {
     this._upgradeOpen = false;
+    if (!this.chest) return;
+    // Lid closes: reset to the closed frame, or reverse the squash tween.
+    if (this._chestIsSprite) {
+      this.chest.setScale(1.5);
+      this.chest.setFrame(CHEST_CLOSED_FRAME);
+    } else {
+      this.tweens.add({ targets: this.chest, scaleY: 1, duration: 150, ease: 'Quad.easeOut' });
+    }
   }
 
   // --- Win overlay & New Game+ (Sprint 5) -----------------------------------
@@ -1152,7 +2366,13 @@ export default class GameScene extends Phaser.Scene {
       daysSurvived: this.daySystem.dayNumber,
       enemiesDefeated: this.runStats.enemiesDefeated,
       upgradesPurchased: this.runStats.upgradesPurchased,
-      plantsGrown: { ...this.plantsGrownEver }
+      plantsGrown: { ...this.plantsGrownEver },
+      // Sprint 11 run summary fields.
+      killsByType: { ...this.runStats.killsByType },
+      seedsCollected: this.runStats.seedsCollected,
+      deaths: this.runStats.deaths,
+      firstPlantGrown: this.runStats.firstPlantGrown,
+      achievementsUnlocked: this.achievementSystem ? this.achievementSystem.unlockedIds.size : 0
     });
     this.scene.bringToTop('WinScene');
   }
@@ -1232,8 +2452,36 @@ export default class GameScene extends Phaser.Scene {
       if (lv.stat > 0) this.applyStatEffect(plantType, lv.stat);
       if (lv.gear >= 0) this.applyGearEffect(plantType, lv.gear);
     });
+    this.applyWellUpgrade();
     this.player.recalculateStats();
     this.daySystem.setTimerBonus(this.player.statBonuses.timerBonus);
+  }
+
+  // --- Well upgrade track (Sprint 9) ----------------------------------------
+  // A standalone track (not tied to a plant tree): better well = more water
+  // charges per trip. Paid for in blue flowers — the life/water resource.
+
+  applyWellUpgrade() {
+    const tiers = this.gameData.well_upgrades.tiers;
+    const idx = Phaser.Math.Clamp(this.wellLevel, 0, tiers.length - 1);
+    this.player.setWaterCapacity(tiers[idx].capacity);
+  }
+
+  purchaseWellUpgrade() {
+    const tiers = this.gameData.well_upgrades.tiers;
+    const nextIndex = this.wellLevel + 1;
+    if (nextIndex >= tiers.length) return { ok: false };
+    const tier = tiers[nextIndex];
+    const currency = tier.currency;
+    const cost = tier.cost;
+    if ((this.plantBank[currency] || 0) < cost) return { ok: false };
+    this.plantBank[currency] -= cost;
+    this.wellLevel = nextIndex;
+    this.applyWellUpgrade();
+    // upgrade:purchased drives runStats + auto-save + particle burst via onUpgradePurchased.
+    EventBus.emit('upgrade:purchased', { plantType: currency, track: 'well', newLevel: nextIndex, cost });
+    EventBus.emit('bank:updated', { bank: { ...this.plantBank } });
+    return { ok: true, newLevel: nextIndex, cost };
   }
 
   applyStatEffect(plantType, level) {
@@ -1280,6 +2528,13 @@ export default class GameScene extends Phaser.Scene {
       seedSlots: this.player.seedSlots.length,
       gardenBeds: this.beds.map((b) => b.serialize()),
       plantsGrownEver: { ...this.plantsGrownEver },
+      wellLevel: this.wellLevel,
+      // Sprint 11 retention state.
+      todayWeather: this.daySystem && this.daySystem.todayWeather ? this.daySystem.todayWeather.id : null,
+      dailySeedCollected: this._dailySeedCollected,
+      dailySeedToastShown: this._dailySeedToastShown,
+      discoveredPlants: [...this.discoveredPlants],
+      tutorialsSeen: [...this.tutorialsSeen],
       newGamePlus: this.newGamePlus,
       demoWinTriggered: this._demoWinTriggered,
       settings: { ...this.audioSettings },
@@ -1437,10 +2692,12 @@ export default class GameScene extends Phaser.Scene {
   // --- Main loop ------------------------------------------------------------
 
   update(time, delta) {
+    if (this._fpsText) this._fpsText.setText(`FPS: ${Math.round(this.game.loop.actualFps)}`);
     if (!GameState.is('PLAYING')) return;
-    // Freeze the world (but keep rendering) while an overlay (workshop, win, or
-    // achievement log) is open.
-    if (this._upgradeOpen || this._winOpen || this._signpostOpen) return;
+    // Freeze the world (but keep rendering) while a modal overlay (workshop, win,
+    // achievement log, or seed dictionary) is open. The world-detail popup is
+    // non-modal, so it deliberately does NOT freeze the world.
+    if (this._upgradeOpen || this._winOpen || this._signpostOpen || this._dictionaryOpen) return;
 
     const dt = delta / 1000;
     this._playtimeMs += delta;
@@ -1448,17 +2705,91 @@ export default class GameScene extends Phaser.Scene {
     this.player.update(dt);
     this.enemies.forEach((e) => e.update(dt, this.player));
     this.daySystem.update(delta);
+    this.combatSystem.update(delta); // combo lapse timer (Sprint 13)
     this.updateSeeds();
     this.updateStructureLabels();
+    this.updateInteractPrompt();
+    this.updatePlantPicker();
+    if (!this._nearGateEmitted) this.checkNearGate();
+    this.updateSeedArrow(delta);
+    this.updateMinimapBroadcast(delta);
 
     if (Phaser.Input.Keyboard.JustDown(this.fKey)) {
       this.handleInteract();
     }
   }
 
+  // --- First-run seed arrow (Sprint 12) -------------------------------------
+  // On the very first forest visit, if the player stands still for 5s without
+  // collecting anything, a pulsing arrow points at the nearest seed. It vanishes
+  // the moment they move. One-shot helper: disables itself once seeds are found.
+  updateSeedArrow(delta) {
+    if (this._seedArrowDone) return;
+    // Only relevant on day 1, in the forest, before the first seed is collected.
+    if (this.daySystem.dayNumber !== 1 || this.currentZone !== 'forest' || this.runStats.seedsCollected > 0) {
+      this.hideSeedArrow();
+      return;
+    }
+    const speed = this.player.body ? this.player.body.velocity.length() : 0;
+    if (speed > 4) {
+      this._stillMs = 0;
+      this.hideSeedArrow();
+      return;
+    }
+    this._stillMs = (this._stillMs || 0) + delta;
+    if (this._stillMs < 5000) {
+      this.hideSeedArrow();
+      return;
+    }
+    // Point at the nearest collectible seed.
+    let target = null;
+    let best = Infinity;
+    for (const s of this.seeds) {
+      if (!s.active || s.collected || !s.collectible) continue;
+      const d = Phaser.Math.Distance.Between(this.player.x, this.player.y, s.x, s.y);
+      if (d < best) {
+        best = d;
+        target = s;
+      }
+    }
+    if (!target) {
+      this.hideSeedArrow();
+      return;
+    }
+    if (!this._seedArrow) {
+      this._seedArrow = this.add.triangle(0, 0, 0, -10, 12, 10, -12, 10, 0xffee88).setDepth(40);
+      this.tweens.add({
+        targets: this._seedArrow,
+        scale: { from: 0.85, to: 1.2 },
+        duration: 500,
+        yoyo: true,
+        repeat: -1,
+        ease: 'Sine.easeInOut'
+      });
+    }
+    const ang = Phaser.Math.Angle.Between(this.player.x, this.player.y, target.x, target.y);
+    this._seedArrow.setPosition(this.player.x + Math.cos(ang) * 44, this.player.y + Math.sin(ang) * 44);
+    this._seedArrow.setRotation(ang + Math.PI / 2);
+    this._seedArrow.setVisible(true);
+  }
+
+  hideSeedArrow() {
+    if (this._seedArrow) this._seedArrow.setVisible(false);
+  }
+
+  // Throttled player-position broadcast for the HUD minimap (Sprint 10c). Emitted
+  // every 300ms rather than per frame — the dot only needs coarse updates.
+  updateMinimapBroadcast(delta) {
+    this._playerMovedAccum += delta;
+    if (this._playerMovedAccum < 300) return;
+    this._playerMovedAccum = 0;
+    EventBus.emit('player:moved', { x: this.player.x, y: this.player.y });
+  }
+
   shutdown() {
     this._busHandlers.forEach(([event, handler]) => EventBus.off(event, handler));
     this._busHandlers = [];
+    if (this.tutorialSystem) this.tutorialSystem.cleanup();
     if (this.bgm) {
       Object.values(this.bgm).forEach((snd) => snd.stop());
     }

@@ -39,7 +39,7 @@ export default class SignpostScene extends Phaser.Scene {
 
     this.add
       .text(MARGIN, 28, 'ACHIEVEMENT LOG', {
-        fontFamily: '"Courier New", monospace',
+        fontFamily: '"SproutLands", "Courier New", monospace',
         fontSize: '32px',
         fontStyle: 'bold',
         color: '#EDD49A'
@@ -48,7 +48,7 @@ export default class SignpostScene extends Phaser.Scene {
 
     this.add
       .text(MARGIN, 70, `${this.unlocked.size} / ${ACHIEVEMENT_COUNT} Unlocked`, {
-        fontFamily: '"Courier New", monospace',
+        fontFamily: '"SproutLands", "Courier New", monospace',
         fontSize: '18px',
         color: '#9B9389'
       })
@@ -76,7 +76,7 @@ export default class SignpostScene extends Phaser.Scene {
 
       this.add
         .text(MARGIN, y, TIER_LABELS[tier], {
-          fontFamily: '"Courier New", monospace',
+          fontFamily: '"SproutLands", "Courier New", monospace',
           fontSize: '20px',
           fontStyle: 'bold',
           color: '#D4A83F'
@@ -118,7 +118,7 @@ export default class SignpostScene extends Phaser.Scene {
     const nameText = concealed ? '???' : a.name;
     this.add
       .text(x + 52, y + 12, nameText, {
-        fontFamily: '"Courier New", monospace',
+        fontFamily: '"SproutLands", "Courier New", monospace',
         fontSize: '15px',
         fontStyle: 'bold',
         color: isUnlocked ? '#F5EFE6' : '#7a746c'
@@ -132,7 +132,7 @@ export default class SignpostScene extends Phaser.Scene {
 
     this.add
       .text(x + 52, y + 32, flavorText, {
-        fontFamily: '"Courier New", monospace',
+        fontFamily: '"SproutLands", "Courier New", monospace',
         fontSize: '11px',
         color: isUnlocked ? '#9B9389' : '#57514b',
         wordWrap: { width: w - 64 }
@@ -144,7 +144,7 @@ export default class SignpostScene extends Phaser.Scene {
       if (day !== undefined) {
         this.add
           .text(x + w - 10, y + 10, `Day ${day}`, {
-            fontFamily: '"Courier New", monospace',
+            fontFamily: '"SproutLands", "Courier New", monospace',
             fontSize: '11px',
             color: '#8AB87E'
           })
@@ -162,7 +162,7 @@ export default class SignpostScene extends Phaser.Scene {
       .setInteractive({ useHandCursor: true });
     this.add
       .text(cx, cy, label, {
-        fontFamily: '"Courier New", monospace',
+        fontFamily: '"SproutLands", "Courier New", monospace',
         fontSize: '15px',
         fontStyle: 'bold',
         color: '#F5EFE6'

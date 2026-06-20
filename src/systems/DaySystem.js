@@ -17,6 +17,7 @@ export default class DaySystem {
     this.timerActive = false;
     this.warningEmitted = false;
     this.urgentEmitted = false;
+    this.todayWeather = null; // Sprint 11 — set by selectWeather()/restoreWeather()
   }
 
   maxTimer() {
@@ -65,6 +66,26 @@ export default class DaySystem {
     this.urgentEmitted = false;
     // Notify garden beds to tick growth (and clear watered flags).
     EventBus.emit('day:advanced', { dayNumber: this.dayNumber });
+    // Roll the day's weather after growth has ticked (Sprint 11).
+    this.selectWeather();
+  }
+
+  // Pick one weather event for the new day. "Clear" is weighted ~3x so the
+  // special weather keeps feeling meaningful. Emits weather:changed for the HUD.
+  selectWeather() {
+    const pool = this.gameData.weather;
+    if (!pool || !pool.length) return;
+    const clear = pool.find((w) => w.id === 'clear');
+    const weighted = clear ? [...pool, clear, clear] : [...pool];
+    this.todayWeather = weighted[Math.floor(Math.random() * weighted.length)];
+    EventBus.emit('weather:changed', { weather: this.todayWeather, isNewDay: true });
+  }
+
+  // Restore a saved weather id without announcing it as a new day (used on load).
+  restoreWeather(id) {
+    const pool = this.gameData.weather;
+    if (!pool || !pool.length) return;
+    this.todayWeather = pool.find((w) => w.id === id) || pool.find((w) => w.id === 'clear') || pool[0];
   }
 
   resetTimer() {
