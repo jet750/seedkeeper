@@ -17,6 +17,7 @@ import {
   TILE_SIZE,
   VIRTUAL_WIDTH,
   VIRTUAL_HEIGHT,
+  FONT_FAMILY,
   isDevModeActive
 } from '../core/Constants.js';
 import Player from '../entities/Player.js';
@@ -53,8 +54,20 @@ const SEED_RECOVERY_MS = 30000; // recovery window before death-dropped seeds va
 const GATE_SCALE = 2; // closed-gate draw scale at the zone boundary (Sprint 10b)
 const RESPAWN_FADE_MS = 500;
 const RESPAWN_DELAY_MS = 1500;
-const SHAKE_DURATION_MS = 250;
-const SHAKE_INTENSITY = 0.004;
+
+// Screenshake profiles (Sprint 13) — different impacts feel different. duration
+// in ms, intensity as a fraction of viewport. Selected via shake(profileName).
+const SHAKE_PROFILES = {
+  player_hit: { duration: 250, intensity: 0.004 },
+  player_death: { duration: 500, intensity: 0.01 },
+  sword_hit: { duration: 120, intensity: 0.003 },
+  dagger_hit: { duration: 80, intensity: 0.002 },
+  hands_hit: { duration: 60, intensity: 0.001 },
+  skeleton_hit: { duration: 180, intensity: 0.005 },
+  day_timer_expire: { duration: 400, intensity: 0.006 },
+  bundle_collect: { duration: 80, intensity: 0.002 },
+  upgrade_purchase: { duration: 150, intensity: 0.003 }
+};
 const ENEMY_DEATH_COLORS = {
   green_slime: '#8AB87E',
   dark_slime: '#8833cc',
@@ -251,6 +264,7 @@ export default class GameScene extends Phaser.Scene {
     this.spawnGardenStructures();
     this.spawnProps();
     this.createForestAmbience();
+    this.createGardenAmbience();
 
     // --- Sprint 11 world systems ---
     this.createRockFormations(); // physics-collider cover geometry
@@ -331,6 +345,9 @@ export default class GameScene extends Phaser.Scene {
     // --- Pause menu (Sprint 12) ---
     this.subscribe('pause:resume', () => this.onPauseResume());
 
+    // --- Screenshake on melee impact (Sprint 13) ---
+    this.subscribe('combat:meleeLanded', (d) => this.onMeleeLanded(d));
+
     // --- Weather + retention (Sprint 11) ---
     this.subscribe('weather:changed', (d) => this.onWeatherChanged(d));
     this.subscribe('dictionary:closed', () => { this._dictionaryOpen = false; });
@@ -347,7 +364,14 @@ export default class GameScene extends Phaser.Scene {
 
     // --- Developer cheat menu (parallel scene; inert unless dev mode active) ---
     this.scene.launch('DevMenuScene');
-    if (isDevModeActive()) this.setupDevHandlers();
+    if (isDevModeActive()) {
+      this.setupDevHandlers();
+      // FPS monitor — dev builds only; absent from the production build (Sprint 13).
+      this._fpsText = this.add
+        .text(12, 96, '', { fontFamily: FONT_FAMILY, fontSize: '12px', color: '#00ff00' })
+        .setScrollFactor(0)
+        .setDepth(1000);
+    }
 
     // Seed the initial atmosphere tint for the loaded zone + day.
     this.applyDayTint();
@@ -671,6 +695,7 @@ export default class GameScene extends Phaser.Scene {
   }
 
   onBundleCollected({ plantType, position }) {
+    this.shake('bundle_collect');
     const plant = this.gameData.plants[plantType];
     const name = plant ? plant.name : plantType;
     EventBus.emit('ui:floatText', {
@@ -1144,6 +1169,38 @@ export default class GameScene extends Phaser.Scene {
       frequency: 700, // ~one mote at a time — very sparse
       quantity: 1
     }).setDepth(8);
+  }
+
+  // --- Garden ambience (Sprint 13) ------------------------------------------
+  // Warm pollen/dust motes drifting up through the safe zone so the garden feels
+  // inhabited. Reuses the dust sheet when present, else a tiny generated pixel.
+  createGardenAmbience() {
+    let texKey = 'fx_dust';
+    let frameCfg = { frame: [0, 1, 2, 3] };
+    if (!this.textures.exists('fx_dust')) {
+      if (!this.textures.exists('px_pollen')) {
+        const g = this.make.graphics({ x: 0, y: 0, add: false });
+        g.fillStyle(0xffffff, 1);
+        g.fillRect(0, 0, 2, 2);
+        g.generateTexture('px_pollen', 2, 2);
+        g.destroy();
+      }
+      texKey = 'px_pollen';
+      frameCfg = {};
+    }
+    this.gardenAmbient = this.add.particles(0, 0, texKey, {
+      ...frameCfg,
+      x: { min: 0, max: WORLD_WIDTH },
+      y: { min: 0, max: GARDEN_ZONE_HEIGHT },
+      speedY: { min: -20, max: -8 },
+      speedX: { min: -5, max: 5 },
+      scale: { start: 0.8, end: 0 },
+      alpha: { start: 0.3, end: 0 },
+      lifespan: { min: 3000, max: 6000 },
+      frequency: 1200,
+      quantity: 1,
+      tint: [0xffffaa, 0xaaffaa, 0xffddaa] // warm pollen colours
+    }).setDepth(6);
   }
 
   // --- Interaction (F key) --------------------------------------------------
@@ -1644,6 +1701,8 @@ export default class GameScene extends Phaser.Scene {
   onTimerExpired() {
     if (this._postTimerApplied) return;
     this._postTimerApplied = true;
+    // The forest just turned dangerous — the biggest shake of the day (Sprint 13).
+    this.shake('day_timer_expire');
     const { postTimerSpeedMult, postTimerDamageMult } = this.gameData.daySystem;
     // Only slimes carry the day-timer buff (skeletons skip applyPostTimer).
     this.enemies.forEach((e) => {
@@ -1749,6 +1808,7 @@ export default class GameScene extends Phaser.Scene {
 
   onUpgradePurchased(d) {
     this.runStats.upgradesPurchased++;
+    this.shake('upgrade_purchase');
     this.autoSave();
     const plant = d && this.gameData.plants[d.plantType];
     this.particleSystem.upgradeBurst({ x: CHEST_X, y: CHEST_Y }, plant ? plant.color : '#EDD49A');
@@ -1790,8 +1850,9 @@ export default class GameScene extends Phaser.Scene {
     this._respawning = true;
     this.runStats.deaths++; // run summary
 
-    // Red vignette pulse the instant you fall — communicates "that was bad"
-    // viscerally before the respawn fade starts (Sprint 12).
+    // Red vignette pulse + the heaviest shake the instant you fall — "that was
+    // bad" communicated viscerally before the respawn fade starts (Sprint 12/13).
+    this.shake('player_death');
     this.screenFlash(0x8a0000, 0.35, 500);
     this.particleSystem.deathBurst(this.player.x, this.player.y);
 
@@ -1825,14 +1886,40 @@ export default class GameScene extends Phaser.Scene {
     // Only react to applied-damage notifications (which carry currentHP), not
     // the raw per-frame damage requests slimes emit on overlap.
     if (d.currentHP === undefined) return;
-    this.cameras.main.shake(SHAKE_DURATION_MS, SHAKE_INTENSITY);
+    this.shake('player_hit');
+  }
+
+  // Screenshake by named profile (Sprint 13). Different impacts feel different.
+  shake(profile) {
+    const p = SHAKE_PROFILES[profile];
+    if (p) this.cameras.main.shake(p.duration, p.intensity);
+  }
+
+  // Melee blow connected — pick the shake profile by weapon, or the heavier
+  // skeleton profile when a skeleton was among the targets (Sprint 13).
+  onMeleeLanded({ weapon, hitSkeleton }) {
+    if (hitSkeleton) {
+      this.shake('skeleton_hit');
+      return;
+    }
+    if (weapon === 'sword') this.shake('sword_hit');
+    else if (weapon === 'dagger') this.shake('dagger_hit');
+    else this.shake('hands_hit');
   }
 
   onEnemyDied({ type, position }) {
     this.runStats.enemiesDefeated++;
     if (this.runStats.killsByType[type] !== undefined) this.runStats.killsByType[type]++;
-    const color = ENEMY_DEATH_COLORS[type] || '#ffffff';
-    this.particleSystem.showDeathBurst(position.x, position.y, color);
+    // Per-type death flourish (Sprint 13) — particles emit from the enemy's spot.
+    if (type === 'dark_slime') {
+      this.particleSystem.darkSlimeBurst(position.x, position.y);
+      this.screenFlash(0x000000, 0.15, 300); // brief desaturate flash for the bigger kill
+    } else if (type === 'skeleton') {
+      this.particleSystem.skeletonBones(position.x, position.y);
+      this.shake('skeleton_hit'); // a final rattle
+    } else {
+      this.particleSystem.slimeSplat(position.x, position.y, ENEMY_DEATH_COLORS[type] || '#8AB87E');
+    }
     this.scheduleGreenSlimeRespawn();
   }
 
@@ -2258,6 +2345,7 @@ export default class GameScene extends Phaser.Scene {
   // --- Main loop ------------------------------------------------------------
 
   update(time, delta) {
+    if (this._fpsText) this._fpsText.setText(`FPS: ${Math.round(this.game.loop.actualFps)}`);
     if (!GameState.is('PLAYING')) return;
     // Freeze the world (but keep rendering) while a modal overlay (workshop, win,
     // achievement log, or seed dictionary) is open. The world-detail popup is
@@ -2270,6 +2358,7 @@ export default class GameScene extends Phaser.Scene {
     this.player.update(dt);
     this.enemies.forEach((e) => e.update(dt, this.player));
     this.daySystem.update(delta);
+    this.combatSystem.update(delta); // combo lapse timer (Sprint 13)
     this.updateSeeds();
     this.updateStructureLabels();
     this.updateInteractPrompt();

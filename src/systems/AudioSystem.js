@@ -19,7 +19,7 @@ const SFX_MAP = {
   'upgrade:purchased': 'sfx_upgrade',
   'player:attacked': 'sfx_swing',
   'enemy:damaged': 'sfx_hit_enemy',
-  'enemy:died': 'sfx_death_enemy',
+  // 'enemy:died' handled separately so the skeleton can play at a lower pitch.
   'player:died': 'sfx_death_player',
   'player:slept': 'sfx_sleep',
   'bed:watered': 'sfx_water',
@@ -66,6 +66,12 @@ export default class AudioSystem {
     // real hit landing on the player.
     this.on('player:damaged', (d) => {
       if (d && d.currentHP !== undefined) this.play('sfx_hit_player');
+    });
+
+    // Enemy death: skeletons crumble at a lower pitch so the big enemy reads as
+    // distinct from a slime pop (Sprint 13). Same sample, just retuned.
+    this.on('enemy:died', (d) => {
+      this.play('sfx_death_enemy', { rate: d && d.type === 'skeleton' ? 0.7 : 1 });
     });
 
     // Zone gate chime — fires on every garden⇄forest crossing.

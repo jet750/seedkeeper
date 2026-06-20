@@ -11,6 +11,8 @@ import EventBus from '../core/EventBus.js';
 
 const ARC_DEGREES = 90; // width of the swing cone, centred on facing direction
 const HITBOX_LIFETIME_MS = 150; // visual/logical lifetime of one swing
+const COMBO_RESET_TIME = 2000; // ms gap between hits before the combo lapses (Sprint 13)
+const COMBO_MIN_SHOW = 3; // surface the combo to the HUD from this count up
 
 // Hit stop (Sprint 9): freeze physics + tweens for a few frames the instant a
 // melee blow connects. Heavier weapons land with more weight. Ranged hits
@@ -26,11 +28,24 @@ export default class CombatSystem {
     this.activeHitboxes = [];
     this._hitStopActive = false;
 
-    this._onPlayerAttack = (data) => this.handlePlayerAttack(data);
-    EventBus.on('player:attacked', this._onPlayerAttack);
+    // Combo state (Sprint 13) — counts rapid successive landed swings.
+    this.comboCount = 0;
+    this.comboTimer = 0;
+
+    this._handlers = [];
+    this.on('player:attacked', (data) => this.handlePlayerAttack(data));
+    // Taking a hit breaks the combo.
+    this.on('player:damaged', (d) => {
+      if (d && d.currentHP !== undefined) this.resetCombo();
+    });
 
     scene.events.once('shutdown', this.cleanup, this);
     scene.events.once('destroy', this.cleanup, this);
+  }
+
+  on(event, handler) {
+    EventBus.on(event, handler);
+    this._handlers.push([event, handler]);
   }
 
   handlePlayerAttack({ direction, damage, position, arcRadius, arcDegrees }) {
@@ -50,16 +65,49 @@ export default class CombatSystem {
 
   checkEnemyHits(hitbox) {
     let landed = false;
+    let hitSkeleton = false;
     this.scene.enemies.forEach((enemy) => {
       if (enemy.isDead) return;
       const dist = Phaser.Math.Distance.Between(hitbox.x, hitbox.y, enemy.x, enemy.y);
       if (dist <= hitbox.radius && this.isInArc(hitbox, enemy)) {
         enemy.takeDamage(hitbox.damage, { x: hitbox.x, y: hitbox.y });
         landed = true;
+        if (enemy.enemyType === 'skeleton') hitSkeleton = true;
       }
     });
-    // One hit stop per swing (not per enemy), only when a blow actually lands.
-    if (landed && hitbox.damage > 0) this.triggerHitStop(this.hitStopDuration());
+    if (landed && hitbox.damage > 0) {
+      // One hit stop + one screenshake per swing (not per enemy). The weapon and
+      // whether a skeleton was struck pick the GameScene shake profile.
+      this.triggerHitStop(this.hitStopDuration());
+      const weapon = this.scene.player ? this.scene.player.equippedGear.weapon : null;
+      EventBus.emit('combat:meleeLanded', { weapon, hitSkeleton });
+      this.onHitLanded();
+    }
+  }
+
+  // --- Combo counter (Sprint 13) --------------------------------------------
+
+  onHitLanded() {
+    this.comboCount++;
+    this.comboTimer = COMBO_RESET_TIME;
+    if (this.comboCount >= COMBO_MIN_SHOW) {
+      EventBus.emit('combat:combo', { count: this.comboCount });
+    }
+  }
+
+  resetCombo() {
+    if (this.comboCount === 0) return;
+    this.comboCount = 0;
+    this.comboTimer = 0;
+    EventBus.emit('combat:comboEnd', {});
+  }
+
+  // Ticked by GameScene each frame so the combo lapses after a quiet gap.
+  update(delta) {
+    if (this.comboCount > 0) {
+      this.comboTimer -= delta;
+      if (this.comboTimer <= 0) this.resetCombo();
+    }
   }
 
   // Duration scales with the equipped melee weapon tier.
@@ -97,7 +145,8 @@ export default class CombatSystem {
   }
 
   cleanup() {
-    EventBus.off('player:attacked', this._onPlayerAttack);
+    this._handlers.forEach(([event, handler]) => EventBus.off(event, handler));
+    this._handlers = [];
     this.activeHitboxes = [];
   }
 }

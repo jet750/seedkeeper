@@ -17,6 +17,7 @@ import SignpostScene from './scenes/SignpostScene.js';
 import SeedDictScene from './scenes/SeedDictScene.js';
 import PauseScene from './scenes/PauseScene.js';
 import SettingsScene from './scenes/SettingsScene.js';
+import CreditsScene from './scenes/CreditsScene.js';
 import DevMenuScene from './scenes/DevMenuScene.js';
 
 const config = {
@@ -49,6 +50,7 @@ const config = {
     SeedDictScene,
     PauseScene,
     SettingsScene,
+    CreditsScene,
     DevMenuScene
   ]
 };

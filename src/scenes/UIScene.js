@@ -52,6 +52,7 @@ export default class UIScene extends Phaser.Scene {
     this._toastActive = false;
     this._tutorialQueue = []; // Sprint 12 first-run hint pills
     this._tutorialActive = false;
+    this._comboFadeEvent = null; // Sprint 13 combo counter
     this._swapOpen = false;
     this._swapObjects = [];
     this._swapSlots = [];
@@ -236,11 +237,67 @@ export default class UIScene extends Phaser.Scene {
       })
       .setOrigin(1, 1)
       .setVisible(false);
+
+    // CENTER-RIGHT — combo counter (Sprint 13), hidden until a 3+ hit streak.
+    this.comboText = this.add
+      .text(VIRTUAL_WIDTH * 0.72, VIRTUAL_HEIGHT / 2, '', {
+        fontFamily: '"SproutLands", "Courier New", monospace',
+        fontSize: '40px',
+        fontStyle: 'bold',
+        color: '#F5EFE6',
+        stroke: '#141210',
+        strokeThickness: 5
+      })
+      .setOrigin(0.5)
+      .setDepth(240)
+      .setAlpha(0);
   }
 
   refreshAmmo(ammo, max) {
     this.ammoText.setText(`Ammo  ${ammo} / ${max}`).setVisible(true);
     this.ammoText.setColor(ammo === 0 ? '#ff6b6b' : '#EDD49A');
+  }
+
+  // --- Combo counter (Sprint 13) --------------------------------------------
+  // Big temporary text near center-right. Colour + size scale with the streak;
+  // each new hit refreshes it, and it fades 1s after the last hit (or on reset).
+
+  showCombo(count) {
+    let color = '#F5EFE6';
+    let size = '40px';
+    let label = `${count} HIT`;
+    if (count >= 15) {
+      color = '#ff4444';
+      size = '58px';
+      label = 'MAX!!';
+      this.flashCombo();
+    } else if (count >= 10) {
+      color = '#ff9a3c';
+      size = '50px';
+    } else if (count >= 5) {
+      color = '#ffe066';
+      size = '44px';
+    }
+    this.comboText.setText(label).setColor(color).setFontSize(size).setAlpha(1).setScale(1.3);
+    this.tweens.add({ targets: this.comboText, scale: 1, duration: 180, ease: 'Back.easeOut' });
+    if (this._comboFadeEvent) this._comboFadeEvent.remove(false);
+    this._comboFadeEvent = this.time.delayedCall(1000, () => this.hideCombo());
+  }
+
+  hideCombo() {
+    if (this._comboFadeEvent) {
+      this._comboFadeEvent.remove(false);
+      this._comboFadeEvent = null;
+    }
+    this.tweens.add({ targets: this.comboText, alpha: 0, duration: 300 });
+  }
+
+  flashCombo() {
+    const f = this.add
+      .rectangle(0, 0, VIRTUAL_WIDTH, VIRTUAL_HEIGHT, 0xffffff, 0.18)
+      .setOrigin(0, 0)
+      .setDepth(239);
+    this.tweens.add({ targets: f, alpha: 0, duration: 200, onComplete: () => f.destroy() });
   }
 
   refreshWater(charges, capacity) {
@@ -398,6 +455,10 @@ export default class UIScene extends Phaser.Scene {
 
     // --- Sprint 12 — first-run tutorial hint pills ---
     this.subscribe('tutorial:hint', (d) => this.enqueueTutorial(d));
+
+    // --- Sprint 13 — combo counter ---
+    this.subscribe('combat:combo', (d) => this.showCombo(d.count));
+    this.subscribe('combat:comboEnd', () => this.hideCombo());
 
     // --- Sprint 11 — weather, world details, dictionary, notices ---
     this.subscribe('weather:changed', (d) => this.onWeather(d));

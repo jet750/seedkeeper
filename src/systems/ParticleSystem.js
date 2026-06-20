@@ -173,6 +173,109 @@ export default class ParticleSystem {
     });
   }
 
+  // --- Enemy death variety (Sprint 13) --------------------------------------
+
+  // Green slime: 4 colored blobs burst radially and shrink to nothing — a pop.
+  slimeSplat(x, y, color) {
+    const tint = this.toTint(color);
+    for (let i = 0; i < 4; i++) {
+      const angle = (i / 4) * Math.PI * 2 + Math.random() * 0.5;
+      const dist = 20 + Math.random() * 10;
+      const blob = this.scene.add.circle(x, y, 5, tint).setDepth(BURST_DEPTH);
+      this.scene.tweens.add({
+        targets: blob,
+        x: x + Math.cos(angle) * dist,
+        y: y + Math.sin(angle) * dist,
+        scale: 0,
+        duration: 400,
+        ease: 'Quad.easeOut',
+        onComplete: () => blob.destroy()
+      });
+    }
+  }
+
+  // Dark slime: a bigger purple burst (the screen desaturate flash is GameScene's).
+  darkSlimeBurst(x, y) {
+    this.burst(x, y, {
+      count: 10, color: 0x8833cc, radius: 48, duration: 500, size: 7, diamond: true
+    });
+  }
+
+  // Skeleton: 3-4 white "bones" fly outward at random angles, spin, and fade.
+  skeletonBones(x, y) {
+    const count = 3 + Math.floor(Math.random() * 2);
+    for (let i = 0; i < count; i++) {
+      const angle = Math.random() * Math.PI * 2;
+      const dist = 30 + Math.random() * 20;
+      const bone = this.scene.add
+        .rectangle(x, y, 4, 11, 0xe8e2d0)
+        .setDepth(BURST_DEPTH)
+        .setRotation(Math.random() * Math.PI);
+      this.scene.tweens.add({
+        targets: bone,
+        x: x + Math.cos(angle) * dist,
+        y: y + Math.sin(angle) * dist,
+        angle: 180 + Math.random() * 180,
+        alpha: 0,
+        duration: 600,
+        ease: 'Quad.easeOut',
+        onComplete: () => bone.destroy()
+      });
+    }
+  }
+
+  // --- Garden lifecycle feedback (Sprint 13) --------------------------------
+
+  // Harvest flourish: confetti that arcs up then falls under "gravity".
+  harvestConfetti(position, color) {
+    if (!position) return;
+    const tint = this.toTint(color);
+    for (let i = 0; i < 6; i++) {
+      const p = this.scene.add.rectangle(position.x, position.y, 6, 6, tint).setDepth(BURST_DEPTH);
+      const dx = (Math.random() - 0.5) * 60;
+      const peakY = position.y - (30 + Math.random() * 30);
+      this.scene.tweens.add({
+        targets: p,
+        x: position.x + dx,
+        y: peakY,
+        duration: 300,
+        ease: 'Quad.easeOut',
+        onComplete: () => {
+          this.scene.tweens.add({
+            targets: p,
+            y: peakY + 70,
+            alpha: 0,
+            angle: 180,
+            duration: 400,
+            ease: 'Quad.easeIn',
+            onComplete: () => p.destroy()
+          });
+        }
+      });
+    }
+  }
+
+  // Watering ripple: 3 expanding blue rings staggered out from the bed centre.
+  waterRipple(position) {
+    if (!position) return;
+    for (let i = 0; i < 3; i++) {
+      this.scene.time.delayedCall(i * 100, () => {
+        const ring = this.scene.add
+          .circle(position.x, position.y, 4, 0x44aaff, 0)
+          .setStrokeStyle(2, 0x44aaff)
+          .setDepth(BURST_DEPTH);
+        this.scene.tweens.add({
+          targets: ring,
+          scale: 6, // 4px → ~24px
+          alpha: 0,
+          duration: 600,
+          ease: 'Quad.easeOut',
+          onComplete: () => ring.destroy()
+        });
+      });
+    }
+  }
+
   cleanup() {
     EventBus.off('ui:floatText', this._onFloatText);
   }

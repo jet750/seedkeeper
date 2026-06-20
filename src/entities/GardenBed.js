@@ -42,6 +42,7 @@ export default class GardenBed {
     this.plantType = null;
     this.plantColorNum = 0xffffff;
     this.daysRemaining = 0;
+    this.totalGrowthDays = 1; // for the 3-stage growth visual (Sprint 13)
     this.watered = false;
     this.doubleHarvest = false; // set by a lucky watering; doubles the yield once
 
@@ -93,6 +94,7 @@ export default class GardenBed {
 
     this._pulseTween = null;
     this._badgeTween = null;
+    this._prePulseTween = null; // Sprint 13 — "almost ready" pulse during growth
 
     // Grow on day advance (EventBus only).
     this._onDayAdvanced = () => this.onDayAdvanced();
@@ -108,6 +110,7 @@ export default class GardenBed {
   setState(newState) {
     this.state = newState;
     this.stopPulse();
+    this.stopPrePulse();
 
     // Day counter shows only while the plant is still growing.
     this.daysText.setVisible(newState === STATE.PLANTED || newState === STATE.GROWING);
@@ -188,15 +191,59 @@ export default class GardenBed {
     }
   }
 
+  // Three-stage growth feel (Sprint 13). Progress = how far through the grow the
+  // bed is. The plant scales up sprout→growing across the first two thirds, then
+  // a gentle "almost ready" pulse begins for the final stage before READY.
+  // Called on plant, day advance, and water — never per frame.
+  updateGrowthVisual() {
+    if (this.state !== STATE.PLANTED && this.state !== STATE.GROWING) return;
+    const total = this.totalGrowthDays || 1;
+    const progress = Phaser.Math.Clamp(1 - this.daysRemaining / total, 0, 1);
+    const t = this.growthVisual;
+    if (progress >= 0.66) {
+      if (!this._prePulseTween) {
+        const base = this.usePlantSprite ? PLANT_STAGE_SCALE[1] : 1;
+        t.setScale(base);
+        this._prePulseTween = this.scene.tweens.add({
+          targets: t,
+          scaleX: { from: base, to: base * 1.1 },
+          scaleY: { from: base, to: base * 1.1 },
+          duration: 800,
+          yoyo: true,
+          repeat: -1,
+          ease: 'Sine.easeInOut'
+        });
+      }
+    } else {
+      this.stopPrePulse();
+      // Sprite grows smoothly toward the "growing" size; the rectangle fallback
+      // keeps the discrete sizes set in applyPlantShape.
+      if (this.usePlantSprite) {
+        const f = progress / 0.66;
+        const s = PLANT_STAGE_SCALE[0] + (PLANT_STAGE_SCALE[1] - PLANT_STAGE_SCALE[0]) * f;
+        t.setScale(s);
+      }
+    }
+  }
+
+  stopPrePulse() {
+    if (this._prePulseTween) {
+      this._prePulseTween.remove();
+      this._prePulseTween = null;
+    }
+  }
+
   // --- Interactions ---------------------------------------------------------
 
   plant(plantType) {
     this.plantType = plantType;
     this.plantColorNum = hexToNumber(this.gameData.plants[plantType].color);
     this.daysRemaining = this.gameData.plants[plantType].growthDays;
+    this.totalGrowthDays = this.daysRemaining;
     this.watered = false;
     this.setState(STATE.PLANTED);
     this.refreshDaysText();
+    this.updateGrowthVisual();
     EventBus.emit('bed:planted', { plantType, bedIndex: this.bedIndex });
   }
 
@@ -207,8 +254,13 @@ export default class GardenBed {
     if (this.state !== STATE.PLANTED && this.state !== STATE.GROWING) return false;
     this.watered = true;
     this.refreshSoil();
+    // Physical watering feedback — expanding blue ripple (Sprint 13).
+    if (this.scene.particleSystem) {
+      this.scene.particleSystem.waterRipple({ x: this.x, y: this.y });
+    }
     EventBus.emit('bed:watered', { bedIndex: this.bedIndex });
     this.applyWateringEffects(canTier, accelBonus);
+    this.updateGrowthVisual();
     return true;
   }
 
@@ -282,6 +334,17 @@ export default class GardenBed {
       yield: yieldAmount,
       position: { x: this.x, y: this.y }
     });
+    // Harvest flourish (Sprint 13): a white soil flash + a confetti burst so the
+    // payoff feels rewarding rather than transactional. The bed clears at once so
+    // it can't be double-harvested mid-flourish.
+    if (this.scene.particleSystem) {
+      this.scene.particleSystem.harvestConfetti({ x: this.x, y: this.y }, this.plantColorNum);
+    }
+    const flash = this.scene.add
+      .rectangle(this.x, this.y, BED_SIZE, BED_SIZE, 0xffffff, 0.85)
+      .setDepth(4);
+    this.scene.tweens.add({ targets: flash, alpha: 0, duration: 200, onComplete: () => flash.destroy() });
+
     this.plantType = null;
     this.daysRemaining = 0;
     this.watered = false;
@@ -304,6 +367,7 @@ export default class GardenBed {
       } else {
         this.setState(STATE.GROWING);
         this.refreshDaysText();
+        this.updateGrowthVisual();
       }
     } else {
       this.watered = false;
@@ -338,15 +402,16 @@ export default class GardenBed {
     this.plantType = saveState.plantType;
     this.plantColorNum = hexToNumber(this.gameData.plants[saveState.plantType].color);
     this.daysRemaining = saveState.daysRemaining;
+    this.totalGrowthDays = this.gameData.plants[saveState.plantType].growthDays;
     this.watered = !!saveState.watered;
     this.doubleHarvest = !!saveState.doubleHarvest;
     this.setDoubleBadge(this.doubleHarvest);
     if (saveState.ready) {
       this.setState(STATE.READY);
     } else {
-      const full = this.gameData.plants[saveState.plantType].growthDays;
-      this.setState(this.daysRemaining >= full ? STATE.PLANTED : STATE.GROWING);
+      this.setState(this.daysRemaining >= this.totalGrowthDays ? STATE.PLANTED : STATE.GROWING);
       this.refreshDaysText();
+      this.updateGrowthVisual();
     }
   }
 
@@ -365,6 +430,7 @@ export default class GardenBed {
   cleanup() {
     EventBus.off('day:advanced', this._onDayAdvanced);
     this.stopPulse();
+    this.stopPrePulse();
     if (this._badgeTween) {
       this._badgeTween.remove();
       this._badgeTween = null;
