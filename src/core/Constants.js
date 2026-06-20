@@ -4,14 +4,14 @@
 // Import from this file instead.
 
 // World / canvas dimensions
-export const WORLD_WIDTH = 3200;
-export const WORLD_HEIGHT = 2400;
+export const WORLD_WIDTH = 6400; // doubled (was 3200) for the Sprint 10c organic world
+export const WORLD_HEIGHT = 4800; // doubled (was 2400) — more room below the garden
 export const VIRTUAL_WIDTH = 1600;
 export const VIRTUAL_HEIGHT = 900;
 export const TILE_SIZE = 16;
 
 // Zones
-export const GARDEN_ZONE_HEIGHT = 800; // top N world-px is garden
+export const GARDEN_ZONE_HEIGHT = 800; // top N world-px is garden — unchanged by the world doubling
 
 // --- Geographic zone bands (Sprint 10c — SUPERSEDED) ---
 // The straight-line biome bands below were replaced by the organic, influence-

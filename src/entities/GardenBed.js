@@ -26,6 +26,18 @@ const DOUBLE_PER_TIER = 0.04;
 const PLANT_STAGE_FRAMES = [0, 2, 4];
 const PLANT_STAGE_SCALE = [1.6, 2.4, 3.0]; // grows as it matures (16px source)
 
+// Sprint 10b loaded a 231-frame farming spritesheet, which silently switched the
+// bed visual from the readable colored-dot indicators to sprite frames [0,2,4].
+// Those frames are arbitrary cells of the Sprout Lands sheet — not recognizable
+// crop stages — so planting feedback effectively disappeared. Until the correct
+// crop frames are identified, keep the reliable colored-dot system as the default
+// so PLANTED / GROWING / READY is always visible while testing. Flip this to true
+// (and verify PLANT_STAGE_FRAMES point at a real crop row) to re-enable sprites.
+const PREFER_PLANT_SPRITE = false;
+
+// Colored-dot indicator radii per state (px) — the pre-10b feedback, restored.
+const DOT_RADIUS = { PLANTED: 10, GROWING: 16, READY: 22 };
+
 function hexToNumber(hex) {
   return parseInt(hex.replace('#', ''), 16);
 }
@@ -52,16 +64,23 @@ export default class GardenBed {
       .setStrokeStyle(2, 0x3a2c1f)
       .setDepth(2);
 
+    // Colored-dot growth indicator (restored). A circle so the plant reads as a
+    // sprout/bud rather than a block; radius + fill change per state. Depth sits
+    // above the garden ground (0), river (1) and soil (2).
     this.plantShape = scene.add
-      .rectangle(x, y, BED_SIZE - 12, BED_SIZE - 12, 0x6fbf4f)
-      .setDepth(3)
+      .circle(x, y, DOT_RADIUS.PLANTED, 0x6fbf4f)
+      .setDepth(6)
       .setVisible(false);
 
-    // Real plant growth sprites (Sprint 10b) when the farming sheet is present;
-    // otherwise the colored rectangle above stays the growth visual.
-    this.usePlantSprite = scene.textures.exists('farming_plants');
+    // Real plant growth sprites (Sprint 10b) only when the farming sheet is a
+    // genuine multi-frame sheet AND we've opted in — otherwise the colored dot
+    // above stays the growth visual so feedback is never invisible.
+    this.usePlantSprite =
+      PREFER_PLANT_SPRITE &&
+      scene.textures.exists('farming_plants') &&
+      scene.textures.get('farming_plants').frameTotal > 1;
     this.plantSprite = this.usePlantSprite
-      ? scene.add.image(x, y, 'farming_plants', PLANT_STAGE_FRAMES[0]).setDepth(3).setVisible(false)
+      ? scene.add.image(x, y, 'farming_plants', PLANT_STAGE_FRAMES[0]).setDepth(6).setVisible(false)
       : null;
     // The object the pulse/scale animates — sprite when available, else rectangle.
     this.growthVisual = this.plantSprite || this.plantShape;
@@ -137,27 +156,23 @@ export default class GardenBed {
     s.setVisible(true);
   }
 
-  // Fallback rectangle growth visual (no farming sheet present).
+  // Colored-dot growth visual (default; used unless the sprite path is opted in).
+  // The dot grows by state and is tinted the plant's own colour so each bed's
+  // crop is identifiable at a glance: small sprout → medium → large ready bud.
   applyPlantShape(newState) {
-    switch (newState) {
-      case STATE.EMPTY:
-        this.plantShape.setVisible(false);
-        break;
-      case STATE.PLANTED:
-        this.plantShape.setVisible(true).setFillStyle(0x6fbf4f).setDisplaySize(12, 12);
-        break;
-      case STATE.GROWING:
-        this.plantShape.setVisible(true).setFillStyle(0x5fae3f).setDisplaySize(18, 30);
-        break;
-      case STATE.READY:
-        this.plantShape
-          .setVisible(true)
-          .setFillStyle(this.plantColorNum)
-          .setDisplaySize(BED_SIZE - 12, BED_SIZE - 12);
-        break;
-      default:
-        break;
+    const dot = this.plantShape;
+    if (newState === STATE.EMPTY) {
+      dot.setVisible(false);
+      return;
     }
+    const radius =
+      newState === STATE.READY ? DOT_RADIUS.READY
+      : newState === STATE.GROWING ? DOT_RADIUS.GROWING
+      : DOT_RADIUS.PLANTED;
+    dot.setRadius(radius);
+    dot.setFillStyle(this.plantColorNum);
+    dot.setScale(1); // reset any pulse scaling from a previous state
+    dot.setVisible(true);
   }
 
   refreshSoil() {
