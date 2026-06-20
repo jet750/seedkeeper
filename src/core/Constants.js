@@ -13,11 +13,11 @@ export const TILE_SIZE = 16;
 // Zones
 export const GARDEN_ZONE_HEIGHT = 800; // top N world-px is garden
 
-// --- Geographic zone bands (Sprint 10c) ---
-// The forest is divided into distinct biomes top-to-bottom. Real tileset art
-// slots into these bands in Sprint 10d; until then they render as colored
-// placeholder zones. The river (a physics barrier crossable only at the bridge)
-// cuts horizontally through the mid-forest band.
+// --- Geographic zone bands (Sprint 10c — SUPERSEDED) ---
+// The straight-line biome bands below were replaced by the organic, influence-
+// point layout in src/systems/WorldZoneSystem.js (Sprint 10c revised). Nothing
+// imports these anymore; they are retained only as reference for the legacy
+// horizontal-zone design. Zone lookups + the river now come from WorldZoneSystem.
 export const MEADOW_START = GARDEN_ZONE_HEIGHT; // 800 — open meadow entrance
 export const MEADOW_END = GARDEN_ZONE_HEIGHT + 400; // 1200
 export const MID_FOREST_START = 1200; // denser, tree-row barriers begin

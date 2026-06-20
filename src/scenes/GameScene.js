@@ -14,20 +14,13 @@ import {
   WORLD_WIDTH,
   WORLD_HEIGHT,
   GARDEN_ZONE_HEIGHT,
-  MEADOW_START,
-  MEADOW_END,
-  MID_FOREST_START,
-  RIVER_Y,
-  RIVER_HEIGHT,
-  DEEP_FOREST_START,
-  BRIDGE_X,
-  BRIDGE_WIDTH,
   TILE_SIZE,
   VIRTUAL_WIDTH,
   VIRTUAL_HEIGHT,
   FONT_FAMILY,
   isDevModeActive
 } from '../core/Constants.js';
+import WorldZoneSystem, { RIVER_WIDTH, CREEK_WIDTH } from '../systems/WorldZoneSystem.js';
 import Player from '../entities/Player.js';
 import Slime from '../entities/Slime.js';
 import Skeleton from '../entities/Skeleton.js';
@@ -127,6 +120,10 @@ export default class GameScene extends Phaser.Scene {
 
   create() {
     this.gameData = entitiesData;
+    // Organic biome + river layout (Sprint 10c revised). Pure data — built first
+    // so the world background, river, trees, and zone-based spawns can all sample
+    // the same instance.
+    this.worldZoneSystem = new WorldZoneSystem();
     this.currentZone = 'garden';
     this._respawning = false;
     this._postTimerApplied = false;
@@ -172,6 +169,7 @@ export default class GameScene extends Phaser.Scene {
       masterVolume: 1.0,
       sfxVolume: 0.8,
       musicVolume: 0.5,
+      footstepVolume: 0.25,
       muted: false,
       ...(this.saveData.settings || {})
     };
@@ -208,7 +206,9 @@ export default class GameScene extends Phaser.Scene {
     // --- Camera ---
     this.cameras.main.setBounds(0, 0, WORLD_WIDTH, WORLD_HEIGHT);
     this.cameras.main.startFollow(this.player, true, 0.1, 0.1);
-    this.cameras.main.setZoom(2.0);
+    // Closer view on the player (Sprint 10c fix) — was 2.0; 2.5 still leaves
+    // enough lead time to react to enemies approaching at the camera edge.
+    this.cameras.main.setZoom(2.5);
     // Menu → game transition: reveal the world with a smooth fade-in (Sprint 12).
     this.cameras.main.fadeIn(700, 0, 0, 0);
 
@@ -280,12 +280,11 @@ export default class GameScene extends Phaser.Scene {
     // --- Sprint 11 world systems ---
     this.createRockFormations(); // physics-collider cover geometry
 
-    // --- Sprint 10c world structure ---
+    // --- Sprint 10c organic world structure ---
     // Built here (after the player, enemy groups and seeds exist) so colliders
     // wire immediately and tree placement can avoid burying seeds.
-    this.createRiver(); // physics barrier — crossable only at the bridge
-    this.createBridge(); // visual crossing point
-    this.createTreeRows(); // tree-row navigation barriers
+    this.createRiverSystem(); // winding river + creeks + bridges + collision
+    this.createOrganicTrees(); // clustered tree barriers with navigable gaps
 
     this.createWorldDetails(); // examinable storytelling objects
     this.maybeSpawnDailySeed(); // once-a-day glowing gift
@@ -455,14 +454,14 @@ export default class GameScene extends Phaser.Scene {
 
   buildWorld() {
     // TODO Sprint 5/10d: replace placeholder geometry with a Tiled map / real
-    // tileset art. createZoneVisuals() already picks up per-zone tileset textures
-    // automatically when the PNGs land in /assets — until then each biome renders
-    // as a colored placeholder band. The river + bridge + tree-row colliders are
-    // built later in create() (they need the player and enemy groups to exist).
+    // tileset art. createOrganicBackground() samples the WorldZoneSystem into a
+    // colour map for now; the river, bridges and tree clusters are built later in
+    // create() (they need the player and enemy groups to exist).
     const forestY = GARDEN_ZONE_HEIGHT;
 
-    // Five distinct ground bands: garden, meadow, mid-forest, river, deep-forest.
-    this.createZoneVisuals();
+    // Organic biome map (Sprint 10c revised) — irregular zones sampled from the
+    // WorldZoneSystem instead of flat horizontal bands.
+    this.createOrganicBackground();
 
     // Fence line marking the safe garden boundary (garden⇄meadow crossing).
     if (this.textures.exists('tileset_fence')) {
@@ -490,11 +489,12 @@ export default class GameScene extends Phaser.Scene {
         .setDepth(2);
     }
 
-    // Faint zone labels for at-a-glance orientation in the bigger world.
-    this.addZoneLabel('GARDEN', GARDEN_ZONE_HEIGHT / 2, '#4f7344', 0.25);
-    this.addZoneLabel('MEADOW', MEADOW_START + 200, '#3d6b28', 0.30);
-    this.addZoneLabel('FOREST', MID_FOREST_START + 130, '#24412a', 0.35);
-    this.addZoneLabel('DEEP WOODS', (DEEP_FOREST_START + WORLD_HEIGHT) / 2, '#16280c', 0.45);
+    // Faint zone labels for at-a-glance orientation in the bigger world. Placed
+    // over a representative point of each organic zone (not a band edge).
+    this.addZoneLabel('GARDEN', 400, '#4f7344', 0.25);
+    this.addZoneLabel('MEADOW', 1000, '#3d6b28', 0.30);
+    this.addZoneLabel('FOREST', 1380, '#24412a', 0.35);
+    this.addZoneLabel('DEEP WOODS', 2120, '#16280c', 0.45);
   }
 
   // A single faint, centered biome name drawn into the ground layer.
@@ -511,141 +511,192 @@ export default class GameScene extends Phaser.Scene {
       .setDepth(0);
   }
 
-  // --- Zone visuals (Sprint 10c) --------------------------------------------
-  // Colored placeholder bands per biome. Each band uses a per-zone tileset
-  // texture when present (a one-line art swap for Sprint 10d), else a flat fill.
-  createZoneVisuals() {
-    // Garden — warm light green (safe zone).
-    this.zoneGround(0, GARDEN_ZONE_HEIGHT, 'tileset_garden', null, 0x5a8f3c);
-    // Meadow entrance — open, slightly lighter than the forest proper.
-    this.zoneGround(MEADOW_START, MEADOW_END - MEADOW_START, 'tileset_forest', 0x7faa5a, 0x4a7a30);
-    // Mid forest — medium dark green (the river cuts across this band).
-    this.zoneGround(MID_FOREST_START, DEEP_FOREST_START - MID_FOREST_START, 'tileset_forest', 0x4f7340, 0x2d5a1a);
-    // Deep forest — darkest, most dangerous.
-    this.zoneGround(DEEP_FOREST_START, WORLD_HEIGHT - DEEP_FOREST_START, 'tileset_forest', 0x35502c, 0x1a3a0a);
+  // --- Organic world background (Sprint 10c revised) ------------------------
+  // A pixel-sampled biome map: the forest is sampled on a coarse grid and each
+  // cell filled with its zone colour, giving soft, irregular borders. Drawn into
+  // a single Graphics (one GameObject) rather than thousands of rectangles. The
+  // garden stays a solid band on top; the river is rendered separately.
+  createOrganicBackground() {
+    const SAMPLE = 64;
+    const g = this.add.graphics().setDepth(0);
 
-    // River strip drawn on top of the mid-forest band, centered on RIVER_Y so it
-    // lines up exactly with the physics walls + bridge built later.
-    this.add
-      .rectangle(0, RIVER_Y - RIVER_HEIGHT / 2, WORLD_WIDTH, RIVER_HEIGHT, 0x2255aa)
-      .setOrigin(0, 0)
-      .setDepth(0);
-  }
+    // Garden — solid safe-zone green across the top band.
+    g.fillStyle(this.worldZoneSystem.getZoneColor('garden'), 1);
+    g.fillRect(0, 0, WORLD_WIDTH, GARDEN_ZONE_HEIGHT);
 
-  // Draw one ground band: tileSprite (optionally tinted) when the art exists,
-  // otherwise a flat colored rectangle placeholder.
-  zoneGround(y, h, artKey, tint, placeholderColor) {
-    if (this.textures.exists(artKey)) {
-      const ts = this.add.tileSprite(0, y, WORLD_WIDTH, h, artKey).setOrigin(0, 0).setDepth(0);
-      if (tint != null) ts.setTint(tint);
-      return ts;
-    }
-    return this.add.rectangle(0, y, WORLD_WIDTH, h, placeholderColor).setOrigin(0, 0).setDepth(0);
-  }
-
-  // --- River, bridge & tree barriers (Sprint 10c) ---------------------------
-  // The river is an invisible static wall spanning the full width except the
-  // bridge gap. Crossable only at the bridge. Built after the player + enemy
-  // groups exist so the colliders can be wired immediately.
-  createRiver() {
-    this.riverWalls = this.physics.add.staticGroup();
-
-    const makeWall = (cx, w) => {
-      if (w <= 0) return;
-      const wall = this.add.rectangle(cx, RIVER_Y, w, RIVER_HEIGHT, 0x000000, 0);
-      wall.setVisible(false);
-      this.physics.add.existing(wall, true); // static body sized to the rectangle
-      this.riverWalls.add(wall);
-    };
-
-    const leftW = BRIDGE_X - BRIDGE_WIDTH / 2; // 0 → bridge-left edge
-    makeWall(leftW / 2, leftW);
-    const rightW = WORLD_WIDTH - (BRIDGE_X + BRIDGE_WIDTH / 2); // bridge-right → world edge
-    makeWall(BRIDGE_X + BRIDGE_WIDTH / 2 + rightW / 2, rightW);
-
-    this.physics.add.collider(this.player, this.riverWalls);
-    this.physics.add.collider(this.slimeGroup, this.riverWalls);
-    this.physics.add.collider(this.skeletonGroup, this.riverWalls);
-  }
-
-  // Visual bridge over the river — the one place the river wall has a gap. Brown
-  // planks placeholder until the bridge sprite lands in Sprint 10d.
-  createBridge() {
-    this.bridgeVisual = this.add
-      .rectangle(BRIDGE_X, RIVER_Y, BRIDGE_WIDTH, RIVER_HEIGHT, 0x8b6914)
-      .setDepth(1);
-    // Plank detail lines so the crossing reads as a bridge, not a hole.
-    for (let i = 0; i < 5; i++) {
-      this.add
-        .rectangle(BRIDGE_X, RIVER_Y - RIVER_HEIGHT / 2 + 8 + i * 16, BRIDGE_WIDTH - 8, 4, 0x6b4a10)
-        .setDepth(2);
-    }
-  }
-
-  // Rows of trees act as natural navigation barriers, forcing the player to find
-  // gaps. Mid- and deep-forest rows collide; the meadow border row is decorative.
-  createTreeRows() {
-    this.treeObjects = this.physics.add.staticGroup();
-
-    const TREE_ROWS = [
-      // Meadow border trees — decorative, no collision yet.
-      { y: MEADOW_END - 20, positions: this.generateTreeRow(8, 0.15), collide: false },
-      // Mid forest barriers — partial rows with gaps.
-      { y: MID_FOREST_START + 100, positions: this.generateTreeRow(10, 0.25), collide: true },
-      { y: MID_FOREST_START + 250, positions: this.generateTreeRow(10, 0.25), collide: true },
-      // Deep forest barriers — denser.
-      { y: DEEP_FOREST_START + 100, positions: this.generateTreeRow(12, 0.2), collide: true },
-      { y: DEEP_FOREST_START + 300, positions: this.generateTreeRow(12, 0.2), collide: true },
-      { y: DEEP_FOREST_START + 500, positions: this.generateTreeRow(14, 0.15), collide: true }
-    ];
-
-    TREE_ROWS.forEach((row) => {
-      row.positions.forEach((x) => {
-        // Keep the bridge approach clear: skip trees inside the bridge corridor
-        // for any row near the river so the only crossing stays passable.
-        if (Math.abs(row.y - RIVER_Y) < 250 && Math.abs(x - BRIDGE_X) < BRIDGE_WIDTH) return;
-        // Never bury a seed under a trunk collider.
-        const onSeed = this.seeds.some(
-          (s) => Phaser.Math.Distance.Between(x, row.y, s.x, s.y) < 50
-        );
-        if (onSeed) return;
-
-        // Visual placeholder trunk (dark green). Real tree art in Sprint 10d.
-        this.add.rectangle(x, row.y, 24, 32, 0x1a4a0a).setDepth(3);
-
-        if (row.collide) {
-          // Physics trunk narrower than the visual so the player can squeeze the
-          // edges — only the trunk core is solid.
-          const trunk = this.add.rectangle(x, row.y + 8, 16, 16, 0x000000, 0);
-          trunk.setVisible(false);
-          this.physics.add.existing(trunk, true);
-          this.treeObjects.add(trunk);
-        }
-      });
-    });
-
-    this.physics.add.collider(this.player, this.treeObjects);
-    this.physics.add.collider(this.slimeGroup, this.treeObjects);
-    this.physics.add.collider(this.skeletonGroup, this.treeObjects);
-  }
-
-  // Returns X positions for a row of `count` trees, each with `gapChance` of
-  // being skipped (creating navigation gaps). Guarantees at least two gaps so a
-  // row is never a solid wall.
-  generateTreeRow(count, gapChance) {
-    const positions = [];
-    const spacing = WORLD_WIDTH / count;
-    for (let i = 0; i < count; i++) {
-      if (Math.random() > gapChance) {
-        positions.push(spacing * i + spacing / 2 + (Math.random() - 0.5) * 20);
+    // Forest — sample each cell's zone at its centre and fill with that colour.
+    for (let x = 0; x < WORLD_WIDTH; x += SAMPLE) {
+      for (let y = GARDEN_ZONE_HEIGHT; y < WORLD_HEIGHT; y += SAMPLE) {
+        const zone = this.worldZoneSystem.getZoneAt(x + SAMPLE / 2, y + SAMPLE / 2);
+        g.fillStyle(this.worldZoneSystem.getZoneColor(zone), 1);
+        g.fillRect(x, y, SAMPLE, SAMPLE);
       }
     }
-    // Safety: too dense → force-remove two trees so the player can always pass.
-    if (positions.length >= count - 1) {
-      positions.splice(Math.floor(positions.length * 2 / 3), 1);
-      positions.splice(Math.floor(positions.length / 3), 1);
-    }
-    return positions;
+    // A real per-zone tileset can replace this in a later art pass; the sampled
+    // colour map is the placeholder until then.
+  }
+
+  // --- River system (Sprint 10c revised) ------------------------------------
+  // Renders the winding main river + the two creeks it forks into, lays the
+  // bridge planks at the three crossings, then builds the collision band that
+  // blocks the water everywhere except the bridge gaps.
+  createRiverSystem() {
+    this.renderRiver();
+    this.createRiverCollision();
+  }
+
+  // Water is drawn as overlapping circles stepped along each channel, all into a
+  // single Graphics so a curved band reads smoothly. Bridges sit on top.
+  renderRiver() {
+    const g = this.add.graphics().setDepth(1);
+    const drawChannel = (path, width, color) => {
+      g.fillStyle(color, 1);
+      for (let i = 0; i < path.length - 1; i++) {
+        const a = path[i];
+        const b = path[i + 1];
+        const steps = Math.ceil(Math.hypot(b.x - a.x, b.y - a.y) / 10);
+        for (let t = 0; t <= steps; t++) {
+          const px = Phaser.Math.Linear(a.x, b.x, t / steps);
+          const py = Phaser.Math.Linear(a.y, b.y, t / steps);
+          g.fillCircle(px, py, width / 2);
+        }
+      }
+    };
+    drawChannel(this.worldZoneSystem.mainRiverPath, RIVER_WIDTH, 0x2255aa);
+    drawChannel(this.worldZoneSystem.leftCreekPath, CREEK_WIDTH, 0x3366bb);
+    drawChannel(this.worldZoneSystem.rightCreekPath, CREEK_WIDTH, 0x3366bb);
+
+    // Bridge planks at each crossing — a brown deck with plank detail lines,
+    // angled along the path so it sits naturally over the curving water.
+    this.worldZoneSystem.bridges.forEach((bridge) => {
+      this.add
+        .rectangle(bridge.x, bridge.y, bridge.length, 44, 0x8b6914)
+        .setStrokeStyle(2, 0x5a3a10)
+        .setAngle(bridge.angle)
+        .setDepth(2);
+      const planks = this.add.graphics().setDepth(2);
+      planks.lineStyle(2, 0x6b4a10, 1);
+      const n = Math.floor(bridge.length / 14);
+      for (let i = 1; i < n; i++) {
+        const lx = -bridge.length / 2 + i * 14;
+        planks.lineBetween(lx, -20, lx, 20);
+      }
+      planks.setPosition(bridge.x, bridge.y).setAngle(bridge.angle);
+    });
+  }
+
+  // Collision band: a run of small static blockers stepped along each channel,
+  // skipping the bridge gaps so the only way across is over a bridge. Small AABB
+  // blocks follow the curve where one rotated body could not (arcade bodies stay
+  // axis-aligned regardless of the GameObject's angle).
+  createRiverCollision() {
+    this.riverColliders = this.physics.add.staticGroup();
+
+    const addBlockers = (path, width) => {
+      const block = Math.max(28, width * 0.8); // a touch narrower than the water
+      const stepLen = block * 0.7; // overlap so the band has no gaps
+      for (let i = 0; i < path.length - 1; i++) {
+        const a = path[i];
+        const b = path[i + 1];
+        const segLen = Math.hypot(b.x - a.x, b.y - a.y);
+        const steps = Math.max(1, Math.round(segLen / stepLen));
+        for (let t = 0; t <= steps; t++) {
+          const px = Phaser.Math.Linear(a.x, b.x, t / steps);
+          const py = Phaser.Math.Linear(a.y, b.y, t / steps);
+          if (this.worldZoneSystem.isOnBridge(px, py)) continue; // leave the crossing open
+          const body = this.add.rectangle(px, py, block, block, 0x000000, 0);
+          body.setVisible(false);
+          this.physics.add.existing(body, true);
+          this.riverColliders.add(body);
+        }
+      }
+    };
+
+    this.worldZoneSystem.channels.forEach(({ path, width }) => addBlockers(path, width));
+
+    this.physics.add.collider(this.player, this.riverColliders);
+    this.physics.add.collider(this.slimeGroup, this.riverColliders);
+    this.physics.add.collider(this.skeletonGroup, this.riverColliders);
+  }
+
+  // --- Organic tree clusters (Sprint 10c revised) ---------------------------
+  // Trees scatter in clusters (centre, radius, density) rather than rows. Meadow-
+  // border clusters are sparse + decorative; mid-forest clusters are denser
+  // barriers; the deep-forest pockets are densest. sqrt() radius sampling spreads
+  // trees evenly to the cluster edge, and random placement keeps clusters
+  // passable rather than solid walls. Visuals batch into one Graphics; only
+  // collidable trees get a (small) static body.
+  createOrganicTrees() {
+    this.treeColliders = this.physics.add.staticGroup();
+    const g = this.add.graphics().setDepth(3);
+
+    const CLUSTERS = [
+      // Meadow-border clusters — sparse, decorative (no collision).
+      { x: 300, y: 1050, r: 150, density: 0.3, collide: false },
+      { x: 2800, y: 950, r: 120, density: 0.3, collide: false },
+      { x: 1100, y: 1200, r: 100, density: 0.25, collide: false },
+      // Mid-forest barriers — denser, with collision.
+      { x: 600, y: 1350, r: 180, density: 0.5, collide: true },
+      { x: 1300, y: 1400, r: 160, density: 0.45, collide: true },
+      { x: 2000, y: 1350, r: 170, density: 0.5, collide: true },
+      { x: 2600, y: 1420, r: 150, density: 0.45, collide: true },
+      // Deep-forest pockets — densest.
+      { x: 500, y: 2050, r: 300, density: 0.6, collide: true },
+      { x: 1600, y: 2150, r: 280, density: 0.55, collide: true },
+      { x: 2700, y: 2050, r: 300, density: 0.6, collide: true },
+      // Scattered individuals bridging the clusters.
+      { x: 900, y: 1650, r: 80, density: 0.4, collide: true },
+      { x: 1950, y: 1680, r: 80, density: 0.4, collide: true },
+      { x: 1200, y: 1950, r: 100, density: 0.45, collide: true },
+      { x: 2150, y: 1950, r: 100, density: 0.45, collide: true }
+    ];
+
+    const PER_CLUSTER_CAP = 60; // bound the densest pockets for physics sanity
+    CLUSTERS.forEach((cluster) => {
+      const raw = Math.floor((Math.PI * cluster.r * cluster.r * cluster.density) / 2600);
+      const count = Math.min(raw, PER_CLUSTER_CAP);
+      for (let i = 0; i < count; i++) {
+        const angle = Math.random() * Math.PI * 2;
+        const dist = Math.sqrt(Math.random()) * cluster.r; // uniform area fill
+        const tx = cluster.x + Math.cos(angle) * dist;
+        const ty = cluster.y + Math.sin(angle) * dist;
+
+        if (tx < 20 || tx > WORLD_WIDTH - 20) continue;
+        if (ty < GARDEN_ZONE_HEIGHT + 50 || ty > WORLD_HEIGHT - 20) continue; // never in the garden
+        if (this.worldZoneSystem.isNearRiver(tx, ty, 24)) continue; // not in the water
+        if (this.worldZoneSystem.isOnBridge(tx, ty)) continue; // keep crossings clear
+        // Never bury a seed under a trunk.
+        const onSeed = this.seeds.some(
+          (s) => Phaser.Math.Distance.Between(tx, ty, s.x, s.y) < 50
+        );
+        if (onSeed) continue;
+
+        this.drawTree(g, tx, ty);
+        if (cluster.collide) {
+          // Physics trunk narrower than the visual so the player can squeeze the
+          // edges — only the trunk core is solid.
+          const trunk = this.add.rectangle(tx, ty + 6, 14, 12, 0x000000, 0);
+          trunk.setVisible(false);
+          this.physics.add.existing(trunk, true);
+          this.treeColliders.add(trunk);
+        }
+      }
+    });
+
+    this.physics.add.collider(this.player, this.treeColliders);
+    this.physics.add.collider(this.slimeGroup, this.treeColliders);
+    this.physics.add.collider(this.skeletonGroup, this.treeColliders);
+  }
+
+  // Draw one tree (trunk + canopy) into the shared Graphics with slight size and
+  // shade variation so a cluster doesn't look stamped.
+  drawTree(g, x, y) {
+    const h = 26 + Math.random() * 14;
+    const canopyR = 15 + Math.random() * 9;
+    g.fillStyle(0x1a4a0a, 1);
+    g.fillRect(x - 4, y - h / 2, 8, h);
+    g.fillStyle(Math.random() < 0.5 ? 0x2a6a1a : 0x246016, 1);
+    g.fillCircle(x, y - h / 2, canopyR);
   }
 
   setupBounds() {
@@ -655,22 +706,19 @@ export default class GameScene extends Phaser.Scene {
   spawnSlimes() {
     this.slimeGroup = this.physics.add.group();
 
-    // Green slimes live in the meadow + mid-forest only (Sprint 10c) — the river
-    // and deep forest are dark-slime / skeleton territory.
-    const spots = [
-      { x: 500, y: 950 },
-      { x: 2700, y: 1050 },
-      { x: 1600, y: 1300 },
-      { x: 900, y: 1380 },
-      { x: 2400, y: 1280 }
-    ];
-    spots.forEach((p) => this.spawnSlime('green_slime', p.x, p.y));
+    // Green slimes roam the meadow + mid-forest (Sprint 10c revised) — placed via
+    // the organic zone system so they never start in the water or deep forest.
+    const initialGreens = 5;
+    for (let i = 0; i < initialGreens; i++) {
+      const pos = this.getSpawnPositionInZone(['meadow', 'mid_forest']);
+      this.spawnSlime('green_slime', pos.x, pos.y);
+    }
 
     // New Game+ seeds the forest with extra green slimes from day 1 so the run
     // is visibly denser even before day-based scaling kicks in.
     if (this.newGamePlus) {
       const mult = this.gameData.newGamePlus.enemyDensityMult || 1;
-      const extra = Math.round(spots.length * (mult - 1));
+      const extra = Math.round(initialGreens * (mult - 1));
       for (let i = 0; i < extra; i++) this.spawnSlime('green_slime');
     }
   }
@@ -704,8 +752,18 @@ export default class GameScene extends Phaser.Scene {
     const margin = ENEMY_SPAWN_MARGIN;
     const deepMinY = Math.ceil(WORLD_HEIGHT * DEEP_FOREST_THRESHOLD);
     const devSpawn = devX !== undefined && devY !== undefined;
-    const baseX = devSpawn ? devX : Phaser.Math.Between(margin, WORLD_WIDTH - margin);
-    const baseY = devSpawn ? devY : Phaser.Math.Between(deepMinY, WORLD_HEIGHT - margin);
+    // Normal skeletons spawn inside a deep-forest pocket (Sprint 10c revised);
+    // the dev menu drops one at an explicit position.
+    let baseX;
+    let baseY;
+    if (devSpawn) {
+      baseX = devX;
+      baseY = devY;
+    } else {
+      const pos = this.getSpawnPositionInZone(['deep_forest']);
+      baseX = pos.x;
+      baseY = pos.y;
+    }
 
     // Three patrol waypoints fanned around the spawn point. Normal skeletons keep
     // their patrol in the deep forest; dev-placed ones may patrol the whole
@@ -734,22 +792,28 @@ export default class GameScene extends Phaser.Scene {
     };
   }
 
-  // Green slimes roam the meadow + mid-forest (above the river) only (Sprint 10c).
+  // Green slimes roam the meadow + mid-forest (Sprint 10c revised).
   randomGreenSlimePosition() {
-    const margin = ENEMY_SPAWN_MARGIN;
-    return {
-      x: Phaser.Math.Between(margin, WORLD_WIDTH - margin),
-      y: Phaser.Math.Between(MEADOW_START + margin, RIVER_Y - margin)
-    };
+    return this.getSpawnPositionInZone(['meadow', 'mid_forest']);
   }
 
-  // Dark slimes roam the mid-forest + deep forest (Sprint 10c).
+  // Dark slimes roam the mid + deep forest — the dangerous lower map (Sprint 10c).
   randomDarkSlimePosition() {
+    return this.getSpawnPositionInZone(['mid_forest', 'deep_forest']);
+  }
+
+  // Reject-sample a forest point until it lands in one of `zoneNames` and clear of
+  // the river (Sprint 10c revised). Falls back to a safe mid-map point if no valid
+  // spot turns up, so spawning never returns undefined.
+  getSpawnPositionInZone(zoneNames) {
     const margin = ENEMY_SPAWN_MARGIN;
-    return {
-      x: Phaser.Math.Between(margin, WORLD_WIDTH - margin),
-      y: Phaser.Math.Between(MID_FOREST_START + margin, WORLD_HEIGHT - margin)
-    };
+    for (let attempt = 0; attempt < 60; attempt++) {
+      const x = Phaser.Math.Between(margin, WORLD_WIDTH - margin);
+      const y = Phaser.Math.Between(GARDEN_ZONE_HEIGHT + margin, WORLD_HEIGHT - margin);
+      if (this.worldZoneSystem.isNearRiver(x, y)) continue;
+      if (zoneNames.includes(this.worldZoneSystem.getZoneAt(x, y))) return { x, y };
+    }
+    return { x: WORLD_WIDTH / 2, y: GARDEN_ZONE_HEIGHT + 400 };
   }
 
   // --- Zone boundary (Sprint 7) ---------------------------------------------
@@ -880,32 +944,55 @@ export default class GameScene extends Phaser.Scene {
   }
 
   spawnSeeds() {
-    // Seeds live in their correct biome band (Sprint 10c). Meadow seeds are easy
-    // to reach; mid-forest is moderate risk; the best seeds sit past the river in
-    // the deep forest, reachable only across the bridge.
+    // Seeds sit in their organic biome (Sprint 10c revised). Meadow pockets are
+    // easy entrance seeds; mid-forest is moderate risk; the best seeds (glowshroom)
+    // live deep in the three forest pockets, reachable only across the bridges.
     const placements = [
-      // MEADOW ENTRANCE (Y: 800–1200) — entrance seeds, easy to reach.
-      ['green_herb', 400, 900],
-      ['green_herb', 2800, 1000],
-      ['sunflower', 800, 950],
-      ['sunflower', 2400, 850],
-      ['sunflower', 1600, 1100],
-      // MID FOREST (Y: 1200–1500, above the river) — moderate risk.
-      ['red_mushroom', 600, 1250],
-      ['red_mushroom', 1800, 1350],
-      ['red_mushroom', 2600, 1280],
-      ['blue_flower', 300, 1400],
-      ['blue_flower', 2900, 1350],
-      ['golden_wheat', 1200, 1280],
-      ['golden_wheat', 2100, 1400],
-      ['golden_wheat', 900, 1450],
-      // DEEP FOREST (Y: 1600+, across the river) — high risk, best seeds.
-      ['glowshroom', 700, 1700],
-      ['glowshroom', 2500, 1800],
-      ['red_mushroom', 1400, 1650],
-      ['blue_flower', 1900, 2000]
+      // MEADOW POCKETS — easy reach.
+      ['green_herb', 700, 1050],
+      ['green_herb', 2500, 950],
+      ['sunflower', 1500, 1100],
+      ['sunflower', 400, 1280],
+      ['sunflower', 2750, 1350],
+      // MID FOREST — moderate risk.
+      ['red_mushroom', 600, 1400],
+      ['red_mushroom', 2000, 1380],
+      ['red_mushroom', 1400, 1450],
+      ['blue_flower', 250, 1480],
+      ['blue_flower', 2950, 1460],
+      ['golden_wheat', 1100, 1350],
+      ['golden_wheat', 2200, 1400],
+      // DEEP FOREST POCKETS — high risk, best seeds.
+      ['glowshroom', 450, 2050], // left pocket
+      ['glowshroom', 1650, 2150], // center pocket
+      ['glowshroom', 2750, 2000], // right pocket
+      ['red_mushroom', 1200, 1900],
+      ['blue_flower', 2100, 1950]
     ];
-    placements.forEach(([type, x, y]) => new Seed(this, x, y, type, this.gameData));
+    placements.forEach(([type, x, y]) => {
+      const pos = this.clearOfRiver(x, y);
+      // eslint-disable-next-line no-new
+      new Seed(this, pos.x, pos.y, type, this.gameData);
+    });
+  }
+
+  // Nudge a point off the water so a seed never strands mid-river. Returns the
+  // original point when already clear, else the nearest clear point found by
+  // searching outward rings (favouring vertical moves toward the seed's biome).
+  clearOfRiver(x, y) {
+    if (!this.worldZoneSystem.isNearRiver(x, y, 16)) return { x, y };
+    const dirs = [
+      [0, -1], [0, 1], [-1, 0], [1, 0],
+      [-0.7, -0.7], [0.7, -0.7], [-0.7, 0.7], [0.7, 0.7]
+    ];
+    for (let radius = 40; radius <= 200; radius += 40) {
+      for (const [dx, dy] of dirs) {
+        const nx = Phaser.Math.Clamp(x + dx * radius, 40, WORLD_WIDTH - 40);
+        const ny = Phaser.Math.Clamp(y + dy * radius, GARDEN_ZONE_HEIGHT + 40, WORLD_HEIGHT - 40);
+        if (!this.worldZoneSystem.isNearRiver(nx, ny, 16)) return { x: nx, y: ny };
+      }
+    }
+    return { x, y };
   }
 
   updateSeeds() {

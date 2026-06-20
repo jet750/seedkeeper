@@ -10,14 +10,9 @@ import {
   VIRTUAL_WIDTH,
   VIRTUAL_HEIGHT,
   WORLD_WIDTH,
-  WORLD_HEIGHT,
-  GARDEN_ZONE_HEIGHT,
-  MEADOW_END,
-  MID_FOREST_START,
-  RIVER_Y,
-  RIVER_HEIGHT,
-  DEEP_FOREST_START
+  WORLD_HEIGHT
 } from '../core/Constants.js';
+import WorldZoneSystem from '../systems/WorldZoneSystem.js';
 import entitiesData from '../data/entities.json';
 
 const COLOR_NORMAL = '#F5EFE6';
@@ -73,9 +68,11 @@ export default class UIScene extends Phaser.Scene {
     this._plantObjects = [];
     this._plantSlots = [];
     this._plantBedIndex = null;
-    // Minimap (Sprint 10c)
+    // Minimap (Sprint 10c) — its own copy of the deterministic zone system so the
+    // HUD can sample the same organic layout GameScene builds.
     this._minimapVisible = true;
     this._minimapObjects = [];
+    this.worldZoneSystem = new WorldZoneSystem();
   }
 
   create() {
@@ -1056,9 +1053,10 @@ export default class UIScene extends Phaser.Scene {
     this.closePlantPicker();
   }
 
-  // --- Minimap (Sprint 10c) -------------------------------------------------
-  // Top-right zone-banded minimap with a live player dot. The dot updates on the
-  // throttled 'player:moved' event (every 500ms). M toggles visibility.
+  // --- Minimap (Sprint 10c revised) -----------------------------------------
+  // Top-right minimap that samples the organic WorldZoneSystem (irregular zones +
+  // the winding river/creeks) rather than flat horizontal bands. Live player dot
+  // updates on the throttled 'player:moved' event (every 500ms). M toggles it.
 
   createMinimap() {
     const MAP_W = 120;
@@ -1067,6 +1065,10 @@ export default class UIScene extends Phaser.Scene {
     const MAP_Y = 96; // below the top HUD bar so it never overlaps the timer
     const SCALE_X = MAP_W / WORLD_WIDTH;
     const SCALE_Y = MAP_H / WORLD_HEIGHT;
+    const SAMPLE = 3; // minimap px per sampled cell
+    // River reach for sampling: thickens the thin water enough to read as a
+    // connected line at this coarse scale.
+    const RIVER_MARGIN = 50;
 
     this.minimapBg = this.add
       .rectangle(MAP_X, MAP_Y, MAP_W, MAP_H, 0x000000, 0.6)
@@ -1075,20 +1077,20 @@ export default class UIScene extends Phaser.Scene {
       .setDepth(50);
     this._minimapObjects.push(this.minimapBg);
 
-    // Zone colour bands (world-space y/height scaled into the map).
-    const band = (yWorld, hWorld, color) => {
-      const r = this.add
-        .rectangle(MAP_X, MAP_Y + yWorld * SCALE_Y, MAP_W, hWorld * SCALE_Y, color, 0.85)
-        .setOrigin(0, 0)
-        .setScrollFactor(0)
-        .setDepth(51);
-      this._minimapObjects.push(r);
-    };
-    band(0, GARDEN_ZONE_HEIGHT, 0x5a8f3c); // garden
-    band(GARDEN_ZONE_HEIGHT, MEADOW_END - GARDEN_ZONE_HEIGHT, 0x4a7a30); // meadow
-    band(MID_FOREST_START, RIVER_Y - MID_FOREST_START, 0x2d5a1a); // mid forest
-    band(RIVER_Y - RIVER_HEIGHT / 2, RIVER_HEIGHT, 0x2255aa); // river
-    band(DEEP_FOREST_START, WORLD_HEIGHT - DEEP_FOREST_START, 0x1a3a0a); // deep forest
+    // Sampled zone + river map, batched into one Graphics.
+    const zoneGfx = this.add.graphics().setScrollFactor(0).setDepth(51);
+    for (let mx = 0; mx < MAP_W; mx += SAMPLE) {
+      for (let my = 0; my < MAP_H; my += SAMPLE) {
+        const wx = mx / SCALE_X;
+        const wy = my / SCALE_Y;
+        const color = this.worldZoneSystem.isNearRiver(wx, wy, RIVER_MARGIN)
+          ? this.worldZoneSystem.getZoneColor('river')
+          : this.worldZoneSystem.getZoneColor(this.worldZoneSystem.getZoneAt(wx, wy));
+        zoneGfx.fillStyle(color, 0.85);
+        zoneGfx.fillRect(MAP_X + mx, MAP_Y + my, SAMPLE, SAMPLE);
+      }
+    }
+    this._minimapObjects.push(zoneGfx);
 
     // Player dot (updated by player:moved).
     this.minimapPlayer = this.add

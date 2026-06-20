@@ -59,7 +59,7 @@ const SaveSystem = {
       discoveredPlants: [],
       newGamePlus: false,
       demoWinTriggered: false,
-      settings: { masterVolume: 1.0, sfxVolume: 0.8, musicVolume: 0.5, muted: false },
+      settings: { masterVolume: 1.0, sfxVolume: 0.8, musicVolume: 0.5, footstepVolume: 0.25, muted: false },
       achievements: [],
       achievementDays: {},
       stats: { killCount: 0, deathCount: 0, timerExpiredCount: 0, darkSlimeKills: 0 },
@@ -104,8 +104,11 @@ const SaveSystem = {
     if (data.dailySeedToastShown === undefined) data.dailySeedToastShown = null;
     if (!Array.isArray(data.discoveredPlants)) data.discoveredPlants = [];
     if (!data.settings) {
-      data.settings = { masterVolume: 1.0, sfxVolume: 0.8, musicVolume: 0.5, muted: false };
+      data.settings = { masterVolume: 1.0, sfxVolume: 0.8, musicVolume: 0.5, footstepVolume: 0.25, muted: false };
     }
+    // Footstep volume added after the first settings shipped — backfill it so
+    // older slots get a sensible default rather than undefined.
+    if (data.settings.footstepVolume === undefined) data.settings.footstepVolume = 0.25;
     if (!Array.isArray(data.achievements)) data.achievements = [];
     if (!data.achievementDays) data.achievementDays = {};
     if (!data.stats) {
@@ -145,7 +148,7 @@ const SaveSystem = {
   // recent change (menu or in-game) is mirrored here and used as the default for
   // a freshly started run that has no settings yet.
   defaultSettings() {
-    return { masterVolume: 1.0, sfxVolume: 0.8, musicVolume: 0.5, muted: false };
+    return { masterVolume: 1.0, sfxVolume: 0.8, musicVolume: 0.5, footstepVolume: 0.25, muted: false };
   },
 
   loadSettings() {

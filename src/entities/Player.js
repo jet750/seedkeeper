@@ -384,6 +384,12 @@ export default class Player extends Phaser.Physics.Arcade.Sprite {
     const stepInterval = STEP_INTERVAL_BASE_MS * (baseSpeed / Math.max(1, this.speed));
     if (this.stepTimer < stepInterval) return;
     this.stepTimer = 0;
+    // Footstep loudness is its own channel (Settings → Footsteps), independent of
+    // the SFX slider so the constant walk tap can be dialled down on its own.
+    // Effective = footstep × master, silenced when muted or the slider is at 0.
+    const s = this.scene.audioSettings || {};
+    const vol = s.muted ? 0 : (s.footstepVolume ?? STEP_VOLUME) * (s.masterVolume ?? 1);
+    if (vol <= 0) return;
     // Alternate the two step samples with randomised pitch so a walk taps out a
     // left/right rhythm rather than one repeated click. Silent until the sfx land.
     const stepKey = this.stepCount % 2 === 0 ? 'sfx_step' : 'sfx_step_2';
@@ -391,7 +397,7 @@ export default class Player extends Phaser.Physics.Arcade.Sprite {
     const key = this.scene.cache.audio.exists(stepKey) ? stepKey : 'sfx_step';
     if (this.scene.cache.audio.exists(key)) {
       const rate = 0.9 + Math.random() * 0.2;
-      this.scene.sound.play(key, { volume: STEP_VOLUME, rate });
+      this.scene.sound.play(key, { volume: vol, rate });
     }
   }
 

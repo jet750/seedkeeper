@@ -22,7 +22,7 @@ import {
 } from '../core/Constants.js';
 
 const PANEL_W = 720;
-const PANEL_H = 600;
+const PANEL_H = 700; // taller to fit the Footsteps slider (Sprint 10c fix)
 const TRACK_W = 320;
 const TRACK_H = 10;
 
@@ -84,11 +84,15 @@ export default class SettingsScene extends Phaser.Scene {
     // --- Volume sliders ---
     let y = top + 120;
     this.makeSlider(cx, y, 'Music Volume', 'musicVolume');
-    y += 64;
+    y += 60;
     this.makeSlider(cx, y, 'SFX Volume', 'sfxVolume');
-    y += 64;
+    y += 60;
+    // Footsteps are their own channel so the constant walk tap can be lowered
+    // independently of combat/UI SFX (Sprint 10c fix).
+    this.makeSlider(cx, y, 'Footstep Volume', 'footstepVolume');
+    y += 60;
     this.makeSlider(cx, y, 'Master Volume', 'masterVolume');
-    y += 70;
+    y += 66;
 
     // --- Mute toggle ---
     this.makeMuteToggle(cx, y);
