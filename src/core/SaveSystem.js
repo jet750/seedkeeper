@@ -7,6 +7,7 @@
 
 const SAVE_VERSION = 1;
 const SAVE_KEY_PREFIX = 'seedkeeper_save_';
+const SETTINGS_KEY = 'seedkeeper_settings'; // global audio settings (Sprint 12)
 
 function freshBank() {
   return {
@@ -62,6 +63,7 @@ const SaveSystem = {
       achievements: [],
       achievementDays: {},
       stats: { killCount: 0, deathCount: 0, timerExpiredCount: 0, darkSlimeKills: 0 },
+      tutorialsSeen: [], // Sprint 12 — ids of first-run hints already shown in this slot
       savedAt: 0
     };
   },
@@ -109,6 +111,7 @@ const SaveSystem = {
     if (!data.stats) {
       data.stats = { killCount: 0, deathCount: 0, timerExpiredCount: 0, darkSlimeKills: 0 };
     }
+    if (!Array.isArray(data.tutorialsSeen)) data.tutorialsSeen = [];
     // Future: if (data.version < 2) { ... data.version = 2; }
     return data;
   },
@@ -134,6 +137,33 @@ const SaveSystem = {
 
   clear(slotIndex) {
     localStorage.removeItem(SAVE_KEY_PREFIX + slotIndex);
+  },
+
+  // --- Global audio settings (Sprint 12) ------------------------------------
+  // Per-slot saves keep their own `settings`, but the title-screen settings menu
+  // runs with no slot loaded, so volumes also live in a global key. The most
+  // recent change (menu or in-game) is mirrored here and used as the default for
+  // a freshly started run that has no settings yet.
+  defaultSettings() {
+    return { masterVolume: 1.0, sfxVolume: 0.8, musicVolume: 0.5, muted: false };
+  },
+
+  loadSettings() {
+    try {
+      const raw = localStorage.getItem(SETTINGS_KEY);
+      if (!raw) return this.defaultSettings();
+      return { ...this.defaultSettings(), ...JSON.parse(raw) };
+    } catch {
+      return this.defaultSettings();
+    }
+  },
+
+  saveSettings(settings) {
+    try {
+      localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
+    } catch (err) {
+      console.warn('[save] failed to write global settings', err);
+    }
   }
 };
 

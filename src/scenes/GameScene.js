@@ -31,6 +31,7 @@ import CombatSystem from '../systems/CombatSystem.js';
 import ParticleSystem from '../systems/ParticleSystem.js';
 import AudioSystem from '../systems/AudioSystem.js';
 import AchievementSystem from '../systems/AchievementSystem.js';
+import TutorialSystem from '../systems/TutorialSystem.js';
 import SaveSystem from '../core/SaveSystem.js';
 import entitiesData from '../data/entities.json';
 
@@ -118,6 +119,11 @@ export default class GameScene extends Phaser.Scene {
     this._lastPromptText = null; // contextual F-prompt dedupe (Sprint 9)
     this._dictionaryOpen = false;
     this._worldDetailOpen = false;
+    this._paused = false; // Sprint 12 — pause menu open
+    // Sprint 12 first-run tutorial trigger latches (once-per-run derivations).
+    this._nearGateEmitted = false;
+    this._firstEnemyContactEmitted = false;
+    this._firstFillEmitted = false;
     this._busHandlers = [];
 
     // --- Weather day-scoped modifiers (Sprint 11) ---
@@ -156,6 +162,8 @@ export default class GameScene extends Phaser.Scene {
     this._dailySeedCollected = this.saveData.dailySeedCollected || null;
     this._dailySeedToastShown = this.saveData.dailySeedToastShown || null;
     this._playtimeMs = (this.saveData.totalPlaytime || 0) * 1000;
+    // Sprint 12 — first-run hints already shown in this slot (mutated by TutorialSystem).
+    this.tutorialsSeen = [...(this.saveData.tutorialsSeen || [])];
 
     // Single source of truth for all active enemies (slimes + skeletons). The
     // CombatSystem and enemy-scaling logic both read this array.
@@ -177,6 +185,8 @@ export default class GameScene extends Phaser.Scene {
     this.cameras.main.setBounds(0, 0, WORLD_WIDTH, WORLD_HEIGHT);
     this.cameras.main.startFollow(this.player, true, 0.1, 0.1);
     this.cameras.main.setZoom(2.0);
+    // Menu → game transition: reveal the world with a smooth fade-in (Sprint 12).
+    this.cameras.main.fadeIn(700, 0, 0, 0);
 
     // --- Day/night atmosphere tint (Sprint 9) ---
     // A screen-fixed colour wash over the world (below the HUD scene). Garden
@@ -195,7 +205,7 @@ export default class GameScene extends Phaser.Scene {
     this.physics.add.overlap(
       this.player,
       this.slimeGroup,
-      (player, slime) => slime.touchPlayer(),
+      (player, slime) => this.onEnemyTouch(slime),
       null,
       this
     );
@@ -207,7 +217,7 @@ export default class GameScene extends Phaser.Scene {
     this.physics.add.overlap(
       this.player,
       this.skeletonGroup,
-      (player, skeleton) => skeleton.touchPlayer(),
+      (player, skeleton) => this.onEnemyTouch(skeleton),
       null,
       this
     );
@@ -265,6 +275,13 @@ export default class GameScene extends Phaser.Scene {
     // stamp the current day. Driven purely by EventBus events. ---
     this.achievementSystem = new AchievementSystem(this, this.saveData);
 
+    // --- First-run tutorial (Sprint 12) — pure EventBus; shows each hint once
+    // per slot, tracked in this.tutorialsSeen (persisted via save:requested). ---
+    this.tutorialSystem = new TutorialSystem(
+      () => this.daySystem.dayNumber,
+      this.tutorialsSeen
+    );
+
     // --- Apply saved upgrades to the freshly-built player ---
     this.applyAllUpgrades();
 
@@ -278,6 +295,9 @@ export default class GameScene extends Phaser.Scene {
     this.fKey = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.F);
     // M toggles global mute (persisted in settings, applied via the SoundManager).
     this.input.keyboard.on('keydown-M', () => this.toggleMute());
+    // Esc opens the pause menu during normal play (Sprint 12). Guarded so it
+    // never fights an open overlay or the sleep fade — those own Esc themselves.
+    this.input.keyboard.on('keydown-ESC', () => this.tryOpenPause());
 
     // --- EventBus wiring ---
     this.subscribe('player:zoneChanged', (d) => this.onZoneChanged(d));
@@ -308,6 +328,9 @@ export default class GameScene extends Phaser.Scene {
     this.subscribe('inventory:swapConfirmed', (d) => this.executeSwap(d.dropSlotIndex));
     this.subscribe('inventory:swapCancelled', () => this.onSwapCancelled());
 
+    // --- Pause menu (Sprint 12) ---
+    this.subscribe('pause:resume', () => this.onPauseResume());
+
     // --- Weather + retention (Sprint 11) ---
     this.subscribe('weather:changed', (d) => this.onWeatherChanged(d));
     this.subscribe('dictionary:closed', () => { this._dictionaryOpen = false; });
@@ -315,8 +338,12 @@ export default class GameScene extends Phaser.Scene {
 
     // --- HUD scene ---
     this.scene.launch('UIScene', { dayNumber: this.daySystem.dayNumber });
-    // Push the full restored HUD state once UIScene has booted and subscribed.
-    this.time.delayedCall(0, () => this.syncHud());
+    // Push the full restored HUD state once UIScene has booted and subscribed,
+    // then fire the first-run tutorial's 'game:started' trigger (movement hint).
+    this.time.delayedCall(0, () => {
+      this.syncHud();
+      EventBus.emit('game:started', {});
+    });
 
     // --- Developer cheat menu (parallel scene; inert unless dev mode active) ---
     this.scene.launch('DevMenuScene');
@@ -562,6 +589,72 @@ export default class GameScene extends Phaser.Scene {
     this.zoneWall = wall;
     this.physics.add.collider(this.slimeGroup, wall);
     this.physics.add.collider(this.skeletonGroup, wall);
+  }
+
+  // Enemy body overlap. First-ever contact fires the attack tutorial hint once
+  // (Sprint 12); the enemy then requests damage as usual (Player owns i-frames).
+  onEnemyTouch(enemy) {
+    if (!this._firstEnemyContactEmitted) {
+      this._firstEnemyContactEmitted = true;
+      EventBus.emit('tutorial:enemyContact', {});
+    }
+    if (enemy && enemy.touchPlayer) enemy.touchPlayer();
+  }
+
+  // --- Pause menu (Sprint 12) -----------------------------------------------
+
+  // Esc during normal play opens the pause overlay. Guarded against every modal
+  // state and the sleep fade so it never double-handles an Esc those already own.
+  tryOpenPause() {
+    if (!GameState.is('PLAYING')) return;
+    if (this._sleeping || this._paused) return;
+    if (
+      this._upgradeOpen ||
+      this._winOpen ||
+      this._signpostOpen ||
+      this._dictionaryOpen ||
+      this._worldDetailOpen ||
+      this._swapPickerOpen
+    ) {
+      return;
+    }
+    this._paused = true;
+    this.player.setVelocity(0, 0);
+    GameState.transition('PAUSED'); // PLAYING → PAUSED
+    this.physics.pause();
+    this.scene.launch('PauseScene', {
+      dayNumber: this.daySystem.dayNumber,
+      zone: this.currentZone
+    });
+    this.scene.bringToTop('PauseScene');
+  }
+
+  onPauseResume() {
+    if (!this._paused) return;
+    this._paused = false;
+    if (GameState.is('PAUSED')) {
+      GameState.transition('PLAYING');
+      this.physics.resume();
+    }
+  }
+
+  // First-day-only nudge toward the gate: fires once when the player gets close
+  // to the garden/forest crossing (Sprint 12 tutorial).
+  checkNearGate() {
+    if (this.daySystem.dayNumber !== 1) {
+      this._nearGateEmitted = true; // past day 1 the hint is irrelevant — stop checking
+      return;
+    }
+    const d = Phaser.Math.Distance.Between(
+      this.player.x,
+      this.player.y,
+      WORLD_WIDTH / 2,
+      GARDEN_ZONE_HEIGHT
+    );
+    if (d < 80) {
+      this._nearGateEmitted = true;
+      EventBus.emit('tutorial:nearGate', {});
+    }
   }
 
   // --- Plant bundles (Sprint 7) ---------------------------------------------
@@ -1411,8 +1504,30 @@ export default class GameScene extends Phaser.Scene {
       // Timer stays paused until the player re-enters the forest.
       this.daySystem.setTimerActive(false);
 
-      this.cameras.main.fadeIn(SLEEP_FADE_MS, 0, 0, 0);
-      this._sleeping = false;
+      // Hold on black for a beat (Sprint 12) so the morning doesn't snap back too
+      // fast, then fade in and wash a warm "opening your eyes" flash over it.
+      this.time.delayedCall(300, () => {
+        this.cameras.main.fadeIn(SLEEP_FADE_MS, 0, 0, 0);
+        this.cameras.main.once('camerafadeincomplete', () => this.screenFlash(0xfff1d6, 0.2, 400));
+        this._sleeping = false;
+      });
+    });
+  }
+
+  // Screen-fixed colour wash that fades out — used for the gate-crossing flash,
+  // the morning-light wake flash, and the death vignette pulse (Sprint 12). Sits
+  // above the world but below the parallel HUD scene.
+  screenFlash(color, alpha, duration) {
+    const f = this.add
+      .rectangle(0, 0, VIRTUAL_WIDTH, VIRTUAL_HEIGHT, color, alpha)
+      .setOrigin(0, 0)
+      .setScrollFactor(0)
+      .setDepth(60);
+    this.tweens.add({
+      targets: f,
+      alpha: 0,
+      duration,
+      onComplete: () => f.destroy()
     });
   }
 
@@ -1470,6 +1585,19 @@ export default class GameScene extends Phaser.Scene {
     this.autoSave();
   }
 
+  // Applied live by the Settings overlay (Sprint 12). Mutates the same settings
+  // object AudioSystem holds (so SFX volume tracks immediately), retunes the
+  // current music bed, mirrors mute to the SoundManager, and persists the slot.
+  applyAudioSettings(settings) {
+    Object.assign(this.audioSettings, settings);
+    this.sound.mute = !!this.audioSettings.muted;
+    if (this.bgm && this.currentBgmKey && this.bgm[this.currentBgmKey]) {
+      this.bgm[this.currentBgmKey].setVolume(this.musicVol());
+    }
+    EventBus.emit('audio:muteChanged', { muted: this.audioSettings.muted });
+    this.autoSave();
+  }
+
   // --- EventBus reactions ---------------------------------------------------
 
   subscribe(event, handler) {
@@ -1485,6 +1613,10 @@ export default class GameScene extends Phaser.Scene {
     this.crossfadeTo(zone === 'forest' ? 'bgm_forest' : 'bgm_garden');
     // Timer counts only in the forest, and never restarts once already expired.
     this.daySystem.setTimerActive(zone === 'forest' && this.daySystem.timerRemaining > 0);
+    // Brief screen-edge flash acknowledging the zone crossing (Sprint 12).
+    this.screenFlash(0xffffff, 0.1, 200);
+    // First-run tutorial: distinct triggers per direction (Sprint 12).
+    EventBus.emit(zone === 'forest' ? 'tutorial:enteredForest' : 'tutorial:enteredGarden', {});
     // First forest entry of the day teases the daily special seed.
     if (zone === 'forest') this.maybeDailySeedToast();
     // Auto-save whenever the player reaches the safety of the garden.
@@ -1597,6 +1729,19 @@ export default class GameScene extends Phaser.Scene {
     // Run-summary + dictionary tracking happen regardless of particle position.
     this.runStats.seedsCollected++;
     this.discoverPlant(plantType);
+    // First time the satchel fills, nudge the player home to plant (Sprint 12).
+    if (!this._firstFillEmitted && this.player.isFull()) {
+      this._firstFillEmitted = true;
+      EventBus.emit('tutorial:inventoryFull', {});
+    }
+    // The first-run seed arrow has served its purpose once a seed is in hand.
+    if (!this._seedArrowDone) {
+      this._seedArrowDone = true;
+      if (this._seedArrow) {
+        this._seedArrow.destroy();
+        this._seedArrow = null;
+      }
+    }
     if (!position) return;
     const plant = this.gameData.plants[plantType];
     this.particleSystem.seedCollect(position, plant ? plant.color : '#ffffff');
@@ -1645,6 +1790,9 @@ export default class GameScene extends Phaser.Scene {
     this._respawning = true;
     this.runStats.deaths++; // run summary
 
+    // Red vignette pulse the instant you fall — communicates "that was bad"
+    // viscerally before the respawn fade starts (Sprint 12).
+    this.screenFlash(0x8a0000, 0.35, 500);
     this.particleSystem.deathBurst(this.player.x, this.player.y);
 
     // Drop every carried seed at the death position with a recovery timer — the
@@ -1952,6 +2100,7 @@ export default class GameScene extends Phaser.Scene {
       dailySeedCollected: this._dailySeedCollected,
       dailySeedToastShown: this._dailySeedToastShown,
       discoveredPlants: [...this.discoveredPlants],
+      tutorialsSeen: [...this.tutorialsSeen],
       newGamePlus: this.newGamePlus,
       demoWinTriggered: this._demoWinTriggered,
       settings: { ...this.audioSettings },
@@ -2124,15 +2273,76 @@ export default class GameScene extends Phaser.Scene {
     this.updateSeeds();
     this.updateStructureLabels();
     this.updateInteractPrompt();
+    if (!this._nearGateEmitted) this.checkNearGate();
+    this.updateSeedArrow(delta);
 
     if (Phaser.Input.Keyboard.JustDown(this.fKey)) {
       this.handleInteract();
     }
   }
 
+  // --- First-run seed arrow (Sprint 12) -------------------------------------
+  // On the very first forest visit, if the player stands still for 5s without
+  // collecting anything, a pulsing arrow points at the nearest seed. It vanishes
+  // the moment they move. One-shot helper: disables itself once seeds are found.
+  updateSeedArrow(delta) {
+    if (this._seedArrowDone) return;
+    // Only relevant on day 1, in the forest, before the first seed is collected.
+    if (this.daySystem.dayNumber !== 1 || this.currentZone !== 'forest' || this.runStats.seedsCollected > 0) {
+      this.hideSeedArrow();
+      return;
+    }
+    const speed = this.player.body ? this.player.body.velocity.length() : 0;
+    if (speed > 4) {
+      this._stillMs = 0;
+      this.hideSeedArrow();
+      return;
+    }
+    this._stillMs = (this._stillMs || 0) + delta;
+    if (this._stillMs < 5000) {
+      this.hideSeedArrow();
+      return;
+    }
+    // Point at the nearest collectible seed.
+    let target = null;
+    let best = Infinity;
+    for (const s of this.seeds) {
+      if (!s.active || s.collected || !s.collectible) continue;
+      const d = Phaser.Math.Distance.Between(this.player.x, this.player.y, s.x, s.y);
+      if (d < best) {
+        best = d;
+        target = s;
+      }
+    }
+    if (!target) {
+      this.hideSeedArrow();
+      return;
+    }
+    if (!this._seedArrow) {
+      this._seedArrow = this.add.triangle(0, 0, 0, -10, 12, 10, -12, 10, 0xffee88).setDepth(40);
+      this.tweens.add({
+        targets: this._seedArrow,
+        scale: { from: 0.85, to: 1.2 },
+        duration: 500,
+        yoyo: true,
+        repeat: -1,
+        ease: 'Sine.easeInOut'
+      });
+    }
+    const ang = Phaser.Math.Angle.Between(this.player.x, this.player.y, target.x, target.y);
+    this._seedArrow.setPosition(this.player.x + Math.cos(ang) * 44, this.player.y + Math.sin(ang) * 44);
+    this._seedArrow.setRotation(ang + Math.PI / 2);
+    this._seedArrow.setVisible(true);
+  }
+
+  hideSeedArrow() {
+    if (this._seedArrow) this._seedArrow.setVisible(false);
+  }
+
   shutdown() {
     this._busHandlers.forEach(([event, handler]) => EventBus.off(event, handler));
     this._busHandlers = [];
+    if (this.tutorialSystem) this.tutorialSystem.cleanup();
     if (this.bgm) {
       Object.values(this.bgm).forEach((snd) => snd.stop());
     }

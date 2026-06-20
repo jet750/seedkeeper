@@ -64,6 +64,9 @@ export default class WinScene extends Phaser.Scene {
       .setDepth(200)
       .setInteractive();
 
+    // Win transition fades up through a soft warm white (celebratory, not grim),
+    // then reveals the summary beneath it (Sprint 12).
+    this.playWarmIntro();
     if (isFull) this.playBloom();
 
     // --- Headline ---
@@ -103,6 +106,15 @@ export default class WinScene extends Phaser.Scene {
       );
       this.makeButton(cx + 170, btnY, 300, 56, 'Return to Menu', 0x36322e, () => this.toMenu());
     }
+  }
+
+  // Warm-white wash that the summary fades in beneath (both win types).
+  playWarmIntro() {
+    const warm = this.add
+      .rectangle(0, 0, VIRTUAL_WIDTH, VIRTUAL_HEIGHT, 0xfff1d6, 0.92)
+      .setOrigin(0, 0)
+      .setDepth(250);
+    this.tweens.add({ targets: warm, alpha: 0, duration: 700, onComplete: () => warm.destroy() });
   }
 
   // Full-win celebratory screen flash that fades away.

@@ -50,6 +50,8 @@ export default class UIScene extends Phaser.Scene {
     this._worldDetailTimer = null;
     this._toastQueue = [];
     this._toastActive = false;
+    this._tutorialQueue = []; // Sprint 12 first-run hint pills
+    this._tutorialActive = false;
     this._swapOpen = false;
     this._swapObjects = [];
     this._swapSlots = [];
@@ -394,6 +396,9 @@ export default class UIScene extends Phaser.Scene {
     this.subscribe('interact:nearObject', (d) => this.showInteractPrompt(d.text, d.actionable));
     this.subscribe('interact:leftObject', () => this.hideInteractPrompt());
 
+    // --- Sprint 12 — first-run tutorial hint pills ---
+    this.subscribe('tutorial:hint', (d) => this.enqueueTutorial(d));
+
     // --- Sprint 11 — weather, world details, dictionary, notices ---
     this.subscribe('weather:changed', (d) => this.onWeather(d));
     this.subscribe('worlddetail:opened', (d) => this.showWorldDetail(d));
@@ -586,6 +591,71 @@ export default class UIScene extends Phaser.Scene {
         onComplete: () => {
           container.destroy();
           this.showNextToast();
+        }
+      });
+    });
+  }
+
+  // --- Tutorial hint pills (Sprint 12) --------------------------------------
+  // Small non-blocking pills that teach the first-run loop. Queued so two hints
+  // never overlap (500ms gap), fade in 300ms, hold, fade out 500ms. Each id only
+  // ever arrives once (TutorialSystem dedupes against the save).
+
+  enqueueTutorial(hint) {
+    if (!hint || !hint.text) return;
+    this._tutorialQueue.push(hint);
+    if (!this._tutorialActive) this.showNextTutorial();
+  }
+
+  showNextTutorial() {
+    if (this._tutorialQueue.length === 0) {
+      this._tutorialActive = false;
+      return;
+    }
+    this._tutorialActive = true;
+    this.buildTutorialPill(this._tutorialQueue.shift());
+  }
+
+  tutorialPosition(position) {
+    switch (position) {
+      case 'center':
+        return { x: VIRTUAL_WIDTH / 2, y: VIRTUAL_HEIGHT / 2 - 90 };
+      case 'bottom_center':
+        return { x: VIRTUAL_WIDTH / 2, y: VIRTUAL_HEIGHT - 150 };
+      case 'top_center':
+      default:
+        return { x: VIRTUAL_WIDTH / 2, y: 210 };
+    }
+  }
+
+  buildTutorialPill(hint) {
+    const pos = this.tutorialPosition(hint.position);
+    const pill = this.add
+      .text(pos.x, pos.y, hint.text, {
+        fontFamily: '"SproutLands", "Courier New", monospace',
+        fontSize: '18px',
+        fontStyle: 'bold',
+        color: '#F5EFE6',
+        align: 'center',
+        backgroundColor: 'rgba(20,18,16,0.78)',
+        padding: { x: 16, y: 9 },
+        stroke: '#141210',
+        strokeThickness: 2
+      })
+      .setOrigin(0.5)
+      .setDepth(330)
+      .setAlpha(0);
+
+    this.tweens.add({ targets: pill, alpha: 1, duration: 300 });
+    this.time.delayedCall(300 + (hint.duration || 4000), () => {
+      this.tweens.add({
+        targets: pill,
+        alpha: 0,
+        duration: 500,
+        onComplete: () => {
+          pill.destroy();
+          // 500ms gap before the next pill so they never run together.
+          this.time.delayedCall(500, () => this.showNextTutorial());
         }
       });
     });

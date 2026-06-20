@@ -41,6 +41,13 @@ const DIRECTION_ANGLES = {
   up: -Math.PI / 2
 };
 
+// --- Input buffering (Sprint 12 controller feel) ---
+// A press landing just before its cooldown clears is held this long and fires
+// the instant the cooldown expires, so combat/dash never feel like they "ate"
+// an input. Tuned short so it assists timing without auto-firing stale presses.
+const ATTACK_BUFFER_MS = 120;
+const DASH_BUFFER_MS = 100;
+
 // --- Ranged / dash (Sprint 4) ---
 const RANGED_COOLDOWN_MS = 400; // min time between shots
 const CRIT_MULTIPLIER = 2; // crit deals double damage
@@ -84,6 +91,13 @@ export default class Player extends Phaser.Physics.Arcade.Sprite {
     this.attackDamage = stats.attackDamage;
     this.attackCooldown = stats.attackCooldown; // ms between swings (weapon overrides)
     this.attackCooldownRemaining = 0;
+
+    // Input buffers (Sprint 12) — set when a press lands during cooldown, drained
+    // the instant the matching cooldown clears.
+    this.attackBuffer = false;
+    this.attackBufferTimer = 0;
+    this.dashBuffer = false;
+    this.dashBufferTimer = 0;
 
     // --- Upgrades & gear (Sprint 4) ---
     // Stat multipliers/bonuses recomputed from scratch on each upgrade (no drift).
@@ -234,7 +248,26 @@ export default class Player extends Phaser.Physics.Arcade.Sprite {
       this.dashCooldownRemaining = Math.max(0, this.dashCooldownRemaining - dtMs);
     }
 
-    if (Phaser.Input.Keyboard.JustDown(this.keys.attack)) this.attack();
+    // Attack with input buffering (Sprint 12): if the cooldown is still running
+    // the press is held briefly and fired the instant it clears.
+    if (Phaser.Input.Keyboard.JustDown(this.keys.attack)) {
+      if (this.attackCooldownRemaining <= 0) {
+        this.attack();
+      } else {
+        this.attackBuffer = true;
+        this.attackBufferTimer = ATTACK_BUFFER_MS;
+      }
+    }
+    if (this.attackBuffer) {
+      if (this.attackCooldownRemaining <= 0) {
+        this.attack();
+        this.attackBuffer = false;
+      } else {
+        this.attackBufferTimer -= dtMs;
+        if (this.attackBufferTimer <= 0) this.attackBuffer = false;
+      }
+    }
+
     if (Phaser.Input.Keyboard.JustDown(this.keys.ranged)) this.fireRanged();
 
     // dt is provided for frame-rate independence; Arcade Physics integrates
@@ -269,9 +302,25 @@ export default class Player extends Phaser.Physics.Arcade.Sprite {
       this.playIdle();
     }
 
-    // Dash trigger (must be moving). While dashing, the dash velocity rides —
-    // normal movement is suspended until the dash window ends.
-    if (moving && Phaser.Input.Keyboard.JustDown(this.keys.dash)) this.tryDash();
+    // Dash trigger (must be moving), with input buffering (Sprint 12). While
+    // dashing, the dash velocity rides — normal movement is suspended until the
+    // dash window ends.
+    if (moving && Phaser.Input.Keyboard.JustDown(this.keys.dash)) {
+      if (this.canDash()) this.dash();
+      else if (this.dashEnabled) {
+        this.dashBuffer = true;
+        this.dashBufferTimer = DASH_BUFFER_MS;
+      }
+    }
+    if (this.dashBuffer) {
+      if (moving && this.canDash()) {
+        this.dash();
+        this.dashBuffer = false;
+      } else {
+        this.dashBufferTimer -= dtMs;
+        if (this.dashBufferTimer <= 0 || !moving) this.dashBuffer = false;
+      }
+    }
 
     if (!this.isDashing) {
       if (moving) this.setVelocity(dx * this.speed, dy * this.speed);
@@ -533,8 +582,12 @@ export default class Player extends Phaser.Physics.Arcade.Sprite {
 
   // --- Dash (Sprint 4) ------------------------------------------------------
 
+  canDash() {
+    return this.dashEnabled && this.dashCooldownRemaining <= 0 && !this.isDashing;
+  }
+
   tryDash() {
-    if (!this.dashEnabled || this.dashCooldownRemaining > 0 || this.isDashing) return;
+    if (!this.canDash()) return;
     this.dash();
   }
 
