@@ -20,20 +20,29 @@ const ACCELERATE_PER_TIER = 0.1;
 const DOUBLE_BASE_CHANCE = 0.08; // +0.04 per can tier → 8 / 12 / 16%
 const DOUBLE_PER_TIER = 0.04;
 
-// Farming-plant growth frames (Sprint 10b) from the Sprout Lands farming sheet:
-// [sprout, growing, mature]. The sheet holds many crops; these are a readable
-// generic set tinted per plant — tune the indices if a nicer crop row is found.
-const PLANT_STAGE_FRAMES = [0, 2, 4];
-const PLANT_STAGE_SCALE = [1.6, 2.4, 3.0]; // grows as it matures (16px source)
+// Real farming-plant art (Sprint 10d). The "Farming Plants" sheet is a clean
+// 5-col x 15-row grid: each row is one crop's growth sequence, columns 0..4 run
+// just-planted → sprout → small → medium → full-grown. Mapping each plant type to
+// a distinct row gives recognizable, per-type crop art that visibly advances with
+// growth — replacing the Sprint 10b "arbitrary frame" problem (frames [0,2,4]
+// were unreadable cells). Rows chosen for visual distinctness; verified by eye
+// against the sheet. Frame = row*5 + growthColumn.
+const PLANT_ROW_MAP = {
+  golden_wheat: 0, // tall golden grain
+  green_herb: 2, // leafy green
+  blue_flower: 4, // deep purple/blue crop
+  red_mushroom: 6, // low leafy crop
+  sunflower: 8, // orange/gold bulb
+  glowshroom: 10 // pink flowering crop
+};
+const PLANT_SHEET_COLS = 5;
+const PLANT_SPRITE_SCALE = 2.4; // 16px source → ~38px, sits on a 56px bed
+const PLANT_SPRITE_ORIGIN_Y = 0.78; // root the crop near the soil, not its centre
 
-// Sprint 10b loaded a 231-frame farming spritesheet, which silently switched the
-// bed visual from the readable colored-dot indicators to sprite frames [0,2,4].
-// Those frames are arbitrary cells of the Sprout Lands sheet — not recognizable
-// crop stages — so planting feedback effectively disappeared. Until the correct
-// crop frames are identified, keep the reliable colored-dot system as the default
-// so PLANTED / GROWING / READY is always visible while testing. Flip this to true
-// (and verify PLANT_STAGE_FRAMES point at a real crop row) to re-enable sprites.
-const PREFER_PLANT_SPRITE = false;
+// Real crop art is recognizable, so it's now the default growth visual. Falls back
+// to the colored-dot indicator automatically when the farming sheet is absent (the
+// production build may not emit every tileset — see usePlantSprite below).
+const PREFER_PLANT_SPRITE = true;
 
 // Colored-dot indicator radii per state (px) — the pre-10b feedback, restored.
 const DOT_RADIUS = { PLANTED: 10, GROWING: 16, READY: 22 };
@@ -80,7 +89,11 @@ export default class GardenBed {
       scene.textures.exists('farming_plants') &&
       scene.textures.get('farming_plants').frameTotal > 1;
     this.plantSprite = this.usePlantSprite
-      ? scene.add.image(x, y, 'farming_plants', PLANT_STAGE_FRAMES[0]).setDepth(6).setVisible(false)
+      ? scene.add
+          .image(x, y, 'farming_plants', 0)
+          .setOrigin(0.5, PLANT_SPRITE_ORIGIN_Y)
+          .setDepth(6)
+          .setVisible(false)
       : null;
     // The object the pulse/scale animates — sprite when available, else rectangle.
     this.growthVisual = this.plantSprite || this.plantShape;
@@ -141,19 +154,34 @@ export default class GardenBed {
     this.refreshSoil();
   }
 
-  // Sprite growth visual (real farming art): pick the stage frame, tint by plant
-  // colour so types stay readable, and scale up as it matures.
+  // Sprite growth visual (real farming art): pick this plant's row and the growth
+  // column for the current state/progress. No tint — the crop art carries its own
+  // colour, and tinting a coloured crop would muddy it.
   applyPlantSprite(newState) {
     const s = this.plantSprite;
     if (newState === STATE.EMPTY) {
       s.setVisible(false);
       return;
     }
-    const stage = newState === STATE.READY ? 2 : newState === STATE.GROWING ? 1 : 0;
-    s.setFrame(PLANT_STAGE_FRAMES[stage]);
-    s.setTint(this.plantColorNum);
-    s.setScale(PLANT_STAGE_SCALE[stage]);
+    s.clearTint();
+    s.setFrame(this.plantSpriteFrame(newState));
+    s.setScale(PLANT_SPRITE_SCALE);
     s.setVisible(true);
+  }
+
+  // Frame index into the farming sheet for this plant at the given state: row by
+  // type, column by growth progress (1 = first sprout … 4 = ready to harvest).
+  plantSpriteFrame(state) {
+    const row = PLANT_ROW_MAP[this.plantType] ?? 0;
+    let col;
+    if (state === STATE.READY) {
+      col = 4;
+    } else {
+      const total = this.totalGrowthDays || 1;
+      const progress = Phaser.Math.Clamp(1 - this.daysRemaining / total, 0, 1);
+      col = Phaser.Math.Clamp(Math.floor(progress * 3) + 1, 1, 3);
+    }
+    return row * PLANT_SHEET_COLS + col;
   }
 
   // Colored-dot growth visual (default; used unless the sprite path is opted in).
@@ -212,12 +240,18 @@ export default class GardenBed {
   // Called on plant, day advance, and water — never per frame.
   updateGrowthVisual() {
     if (this.state !== STATE.PLANTED && this.state !== STATE.GROWING) return;
+    // Real crop art advances by growth column (set here so day-advance and
+    // watering visibly bump the crop); the colored-dot fallback keeps the
+    // discrete sizes from applyPlantShape.
+    if (this.usePlantSprite) {
+      this.plantSprite.setFrame(this.plantSpriteFrame(this.state));
+    }
     const total = this.totalGrowthDays || 1;
     const progress = Phaser.Math.Clamp(1 - this.daysRemaining / total, 0, 1);
     const t = this.growthVisual;
+    const base = this.usePlantSprite ? PLANT_SPRITE_SCALE : 1;
     if (progress >= 0.66) {
       if (!this._prePulseTween) {
-        const base = this.usePlantSprite ? PLANT_STAGE_SCALE[1] : 1;
         t.setScale(base);
         this._prePulseTween = this.scene.tweens.add({
           targets: t,
@@ -231,13 +265,7 @@ export default class GardenBed {
       }
     } else {
       this.stopPrePulse();
-      // Sprite grows smoothly toward the "growing" size; the rectangle fallback
-      // keeps the discrete sizes set in applyPlantShape.
-      if (this.usePlantSprite) {
-        const f = progress / 0.66;
-        const s = PLANT_STAGE_SCALE[0] + (PLANT_STAGE_SCALE[1] - PLANT_STAGE_SCALE[0]) * f;
-        t.setScale(s);
-      }
+      if (this.usePlantSprite) t.setScale(base);
     }
   }
 
