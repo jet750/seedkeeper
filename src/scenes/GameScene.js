@@ -10,6 +10,7 @@
 import Phaser from 'phaser';
 import EventBus from '../core/EventBus.js';
 import GameState from '../core/GameState.js';
+import MobileDetect from '../core/MobileDetect.js';
 import {
   WORLD_WIDTH,
   WORLD_HEIGHT,
@@ -161,6 +162,15 @@ export default class GameScene extends Phaser.Scene {
     this._firstEnemyContactEmitted = false;
     this._firstFillEmitted = false;
     this._busHandlers = [];
+
+    // --- Mobile profile (Sprint Mobile) ---
+    // Cached once so the per-frame AI throttle never re-runs UA detection.
+    // screenShakeEnabled is honoured by shake(); the throttle fields drive the
+    // every-Nth-frame enemy update in update(). All inert on desktop.
+    this._mobile = MobileDetect.isMobile();
+    this.screenShakeEnabled = true;
+    this.slimeUpdateInterval = 1;
+    this.slimeUpdateFrame = 0;
 
     // --- Weather day-scoped modifiers (Sprint 11) ---
     this.weatherDetectMult = 1; // fog → 0.6 (read by enemies)
@@ -385,6 +395,13 @@ export default class GameScene extends Phaser.Scene {
     // --- Pause menu (Sprint 12) ---
     this.subscribe('pause:resume', () => this.onPauseResume());
 
+    // --- Mobile touch actions (Sprint Mobile) ---
+    // The interact button routes through the same handler as the F key; the
+    // mobile pause button reuses the Esc pause flow. Inert on desktop (nothing
+    // emits these). Registered via subscribe() so shutdown() detaches them.
+    this.subscribe('touch:interact', () => this.handleInteract());
+    this.subscribe('game:pauseRequested', () => this.tryOpenPause());
+
     // --- Screenshake on melee impact (Sprint 13) ---
     this.subscribe('combat:meleeLanded', (d) => this.onMeleeLanded(d));
 
@@ -413,6 +430,11 @@ export default class GameScene extends Phaser.Scene {
         .setDepth(1000);
     }
 
+    // Lighten the per-frame load on phones (AI throttle, fewer particles, calmer
+    // ambience). No-op on desktop. Runs after the particle system + garden
+    // ambience exist so it can tune them.
+    this.applyMobileOptimizations();
+
     // Seed the initial atmosphere tint for the loaded zone + day.
     this.applyDayTint();
 
@@ -435,6 +457,10 @@ export default class GameScene extends Phaser.Scene {
         max: this.player.rangedAmmoMax
       });
     }
+    // Re-announce dash availability after the HUD/touch layer is live (the equip
+    // during applyAllUpgrades fired before UIScene existed) so the mobile dash
+    // button appears on a loaded save that already owns dash boots.
+    if (this.player.dashEnabled) EventBus.emit('dash:enabled', {});
     EventBus.emit('ngplus:status', { active: this.newGamePlus });
     EventBus.emit('audio:muteChanged', { muted: this.audioSettings.muted });
     EventBus.emit('player:waterChanged', {
@@ -2544,7 +2570,33 @@ export default class GameScene extends Phaser.Scene {
   }
 
   // Screenshake by named profile (Sprint 13). Different impacts feel different.
+  // --- Mobile performance profile (Sprint Mobile) ---------------------------
+  // Throttle enemy AI to every Nth frame, halve particle counts, slow the garden
+  // ambience, and respect prefers-reduced-motion for screenshake. Desktop returns
+  // immediately and keeps full fidelity.
+  applyMobileOptimizations() {
+    if (!this._mobile) return;
+
+    // Honour the OS "reduce motion" switch — kill screenshake when it's set.
+    if (window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+      this.screenShakeEnabled = false;
+    }
+
+    // Halve combat/feedback particle counts.
+    if (this.particleSystem) this.particleSystem.mobileMode = true;
+
+    // Slow the warm garden pollen so it isn't constantly emitting on a mobile GPU.
+    if (this.gardenAmbient && this.gardenAmbient.setFrequency) {
+      this.gardenAmbient.setFrequency(3000);
+    }
+
+    // Update enemy AI every 3rd frame (physics still moves them every frame).
+    this.slimeUpdateInterval = 3;
+    this.slimeUpdateFrame = 0;
+  }
+
   shake(profile) {
+    if (!this.screenShakeEnabled) return;
     const p = SHAKE_PROFILES[profile];
     if (p) this.cameras.main.shake(p.duration, p.intensity);
   }
@@ -3010,7 +3062,16 @@ export default class GameScene extends Phaser.Scene {
     this._playtimeMs += delta;
 
     this.player.update(dt);
-    this.enemies.forEach((e) => e.update(dt, this.player));
+    // Mobile throttles enemy AI to every Nth frame (passing the scaled dt so
+    // timers stay correct); desktop updates every enemy every frame.
+    if (this._mobile && this.slimeUpdateInterval > 1) {
+      this.slimeUpdateFrame = (this.slimeUpdateFrame + 1) % this.slimeUpdateInterval;
+      if (this.slimeUpdateFrame === 0) {
+        this.enemies.forEach((e) => e.update(dt * this.slimeUpdateInterval, this.player));
+      }
+    } else {
+      this.enemies.forEach((e) => e.update(dt, this.player));
+    }
     this.daySystem.update(delta);
     this.combatSystem.update(delta); // combo lapse timer (Sprint 13)
     this.updateSeeds();

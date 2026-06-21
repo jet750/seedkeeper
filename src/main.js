@@ -7,6 +7,7 @@ import Phaser from 'phaser';
 import sproutFontUrl from '/assets/fonts/sproutlands-font.ttf?url';
 import sproutFontSmallUrl from '/assets/fonts/sproutlands-font-small.ttf?url';
 import { VIRTUAL_WIDTH, VIRTUAL_HEIGHT } from './core/Constants.js';
+import MobileDetect from './core/MobileDetect.js';
 import BootScene from './scenes/BootScene.js';
 import MenuScene from './scenes/MenuScene.js';
 import GameScene from './scenes/GameScene.js';
@@ -20,23 +21,40 @@ import SettingsScene from './scenes/SettingsScene.js';
 import CreditsScene from './scenes/CreditsScene.js';
 import DevMenuScene from './scenes/DevMenuScene.js';
 
+// Detected once at boot. Drives the touch control layer (instantiated only in
+// UIScene), the 3-pointer input budget (joystick + two action buttons), and the
+// lighter mobile physics/render profile. Desktop sees none of this.
+const isMobile = MobileDetect.isMobile();
+
 const config = {
   type: Phaser.AUTO,
   parent: 'game-container',
   backgroundColor: '#0a1a0a',
   pixelArt: true,
   roundPixels: true,
+  // GPU hints for mobile — never fail the context on an integrated/low-end GPU,
+  // and ask for the high-performance one when the device offers a choice.
+  powerPreference: 'high-performance',
+  failIfMajorPerformanceCaveat: false,
   scale: {
+    // FIT + CENTER already absorbs the Chrome URL-bar viewport shift (it
+    // recomputes on resize), so no manual innerHeight lock is needed here.
     mode: Phaser.Scale.FIT,
     autoCenter: Phaser.Scale.CENTER_BOTH,
     width: VIRTUAL_WIDTH,
     height: VIRTUAL_HEIGHT
   },
+  // Support up to 3 simultaneous touches (joystick + attack + interact) so a
+  // thumb on the stick never blocks a button press. Default is 1.
+  input: { activePointers: 3 },
   physics: {
     default: 'arcade',
     arcade: {
       gravity: { x: 0, y: 0 },
-      debug: false
+      debug: false,
+      // 30Hz physics on mobile halves the integration cost; the game is
+      // velocity-driven so it stays smooth. Desktop keeps the 60Hz default.
+      fps: isMobile ? 30 : 60
     }
   },
   scene: [

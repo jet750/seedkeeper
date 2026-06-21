@@ -2,16 +2,91 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <!-- viewport-fit=cover is required for notch / dynamic-island support; the
+       scale locks prevent Chrome from zooming the canvas when an input focuses
+       or the user double-taps / pinches. -->
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, minimum-scale=1.0, user-scalable=no, viewport-fit=cover">
   <title>Seedkeeper</title>
+
+  <!-- iOS home-screen app -->
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="Seedkeeper">
+  <!-- Android home-screen app -->
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="theme-color" content="#1a2410">
+  <!-- Stop phone-number autodetection turning HUD numbers into tap-to-call links -->
+  <meta name="format-detection" content="telephone=no">
+
   <style>
+    /* Safe-area insets exposed as CSS vars so Phaser can read them via
+       getComputedStyle (see src/core/MobileDetect.js). 0 on every desktop. */
+    :root {
+      --sat: env(safe-area-inset-top, 0px);
+      --sab: env(safe-area-inset-bottom, 0px);
+      --sal: env(safe-area-inset-left, 0px);
+      --sar: env(safe-area-inset-right, 0px);
+    }
+
     * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    /* DESKTOP (unchanged) — flex-centered 16:9 canvas capped at 1600px wide. */
     body { background: #0a1a0a; display: flex; justify-content: center; align-items: center; height: 100vh; }
     #game-container { width: 100%; max-width: 1600px; aspect-ratio: 16/9; }
+
+    /* The canvas never wants iOS long-press callouts or text selection. Harmless
+       on desktop (the canvas isn't selectable content anyway). */
+    canvas {
+      display: block;
+      -webkit-touch-callout: none;
+      -webkit-user-select: none;
+      user-select: none;
+      touch-action: none;
+    }
+
+    /* MOBILE / touch — full-bleed, inset by the safe area, no bounce-scroll.
+       Scoped to coarse pointers + small screens so desktop layout is untouched. */
+    @media (pointer: coarse), (max-width: 768px) {
+      html, body {
+        position: fixed;
+        width: 100%;
+        height: 100%;
+        overflow: hidden;
+        touch-action: none;
+        -webkit-overflow-scrolling: none;
+        overscroll-behavior: none;
+      }
+      body { display: block; background: #1a2410; }
+      #game-container {
+        position: fixed;
+        top: var(--sat);
+        left: var(--sal);
+        right: var(--sar);
+        bottom: var(--sab);
+        width: calc(100% - var(--sal) - var(--sar));
+        height: calc(100% - var(--sat) - var(--sab));
+        max-width: none;
+        aspect-ratio: auto;
+      }
+    }
   </style>
 </head>
 <body>
   <div id="game-container"></div>
+  <script>
+    // Block pinch-zoom (2+ touches) and double-tap-to-zoom on mobile Chrome/Safari.
+    // No-op on desktop where touch events never fire.
+    document.addEventListener('touchstart', (e) => {
+      if (e.touches.length > 1) e.preventDefault();
+    }, { passive: false });
+
+    let lastTap = 0;
+    document.addEventListener('touchend', (e) => {
+      const now = Date.now();
+      if (now - lastTap < 300) e.preventDefault();
+      lastTap = now;
+    }, { passive: false });
+  </script>
   <script type="module" src="/src/main.js"></script>
 </body>
 </html>
