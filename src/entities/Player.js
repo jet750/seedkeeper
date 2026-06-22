@@ -135,10 +135,10 @@ export default class Player extends Phaser.Physics.Arcade.Sprite {
     this.gameData = gameData;
     this.seedSlots = new Array(stats.seedSlots).fill(null); // e.g. ['red_mushroom', null, null]
 
-    // --- Water charges (Sprint 9 well-upgrade) ---
+    // --- Water charges (Sprint 9; v2 watering capacity tree) ---
     // Replaces the old binary hasWater. A well visit fills `waterCharges` up to
     // `waterCapacity`; each bed watering spends one. Capacity is raised by the
-    // well-upgrade track (see GameScene.applyWellUpgrade).
+    // coin-funded watering tier (see GameScene.applyWateringTier).
     this.waterCapacity = 1;
     this.waterCharges = 0;
 
@@ -492,9 +492,11 @@ export default class Player extends Phaser.Physics.Arcade.Sprite {
     EventBus.emit('player:statsChanged', { maxHP: this.maxHP, currentHP: this.currentHP });
   }
 
+  // Coin-funded weapon (v2). weaponDamage is a flat bonus added on top of the
+  // base/stat-scaled attack; arcDegrees widens the swing for heavier weapons.
   equipWeapon(tier) {
     this.equippedGear.weapon = tier.id;
-    this.weaponDamage = tier.attackDamage || 0;
+    this.weaponDamage = tier.weaponDamage || 0;
     this.attackCooldown = tier.attackCooldown || this.gameData.player.attackCooldown;
     this.attackArcDegrees = tier.arcDegrees || ATTACK_ARC_DEGREES;
   }
@@ -520,10 +522,6 @@ export default class Player extends Phaser.Physics.Arcade.Sprite {
     this.recalculateStats();
   }
 
-  equipSatchel(tier) {
-    this.resizeSeedSlots(tier.seedSlots);
-  }
-
   equipRanged(tier) {
     this.equippedGear.ranged = tier.id;
     this.rangedData = {
@@ -534,11 +532,6 @@ export default class Player extends Phaser.Physics.Arcade.Sprite {
     this.rangedAmmo = tier.ammo;
     this.rangedAmmoMax = tier.ammo;
     EventBus.emit('ranged:equipped', { ammo: this.rangedAmmo, max: this.rangedAmmoMax });
-  }
-
-  equipWateringCan(tier) {
-    this.equippedGear.wateringCan = tier.id;
-    this.wateringCan = { bedsPerUse: tier.bedsPerUse || 1 };
   }
 
   // --- Water charges (Sprint 9) ---------------------------------------------

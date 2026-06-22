@@ -197,6 +197,17 @@ export default class UIScene extends Phaser.Scene {
       .setOrigin(1, 0.5)
       .setVisible(false);
 
+    // TOP RIGHT (under timer) — banked coin counter (Sprint 2 dual economy).
+    // Always visible; updated via the 'coins:changed' event.
+    this.coinText = this.add
+      .text(VIRTUAL_WIDTH - pad, 96, '🪙 0', {
+        fontFamily: '"SproutLands", "Courier New", monospace',
+        fontSize: '22px',
+        fontStyle: 'bold',
+        color: '#EDD49A'
+      })
+      .setOrigin(1, 0.5);
+
     // TOP CENTER (under zone badge) — New Game+ indicator, shown only on NG+.
     this.ngPlusIndicator = this.add
       .text(VIRTUAL_WIDTH / 2, 96, '⭐ NG+', {
@@ -461,6 +472,7 @@ export default class UIScene extends Phaser.Scene {
     this.subscribe('player:waterUsed', (d) => this.refreshWater(d.charges, d.capacity));
     this.subscribe('player:waterChanged', (d) => this.refreshWater(d.charges, d.capacity));
     this.subscribe('bank:updated', (d) => this.refreshBank(d.bank));
+    this.subscribe('coins:changed', (d) => this.refreshCoins(d.coins));
 
     // --- Sprint 4 ---
     this.subscribe('player:statsChanged', (d) => {
@@ -1268,6 +1280,10 @@ export default class UIScene extends Phaser.Scene {
         return `${name}: ${count}`;
       });
     this.bankText.setText(parts.length ? `Bank — ${parts.join('  ·  ')}` : 'Bank: empty');
+  }
+
+  refreshCoins(coins) {
+    this.coinText.setText(`🪙 ${coins || 0}`);
   }
 
   // --- Refreshers -----------------------------------------------------------

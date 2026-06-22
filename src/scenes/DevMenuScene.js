@@ -54,7 +54,6 @@ export default class DevMenuScene extends Phaser.Scene {
 
     this.menuOpen = false;
     this.uiObjects = [];
-    this.tierRows = {};
 
     this.buildPanel();
     this.setMenuVisible(false);
@@ -167,10 +166,32 @@ export default class DevMenuScene extends Phaser.Scene {
     );
     y += 18;
 
-    // --- Gear & Upgrades ---
-    y = this.sectionHeader('GEAR & UPGRADES', y);
-    this.makeButton(CONTENT_X, y, CONTENT_W, 'Unlock All Gear', () => {
-      this.dispatch('dev:unlockGear');
+    // --- Coins (Sprint 2 dual economy) ---
+    y = this.sectionHeader('COINS', y);
+    this.coinValueText = this.add
+      .text(CONTENT_X, y, '', {
+        fontFamily: '"SproutLands", "Courier New", monospace',
+        fontSize: '13px',
+        color: '#EDD49A'
+      })
+      .setDepth(202);
+    this.track(this.coinValueText);
+    y += 18;
+    const coinW = (CONTENT_W - 8) / 2;
+    this.makeButton(CONTENT_X, y, coinW, '+100 Coins', () => {
+      this.dispatch('dev:addCoins', { amount: 100 });
+      this.refreshDisplays();
+    });
+    this.makeButton(CONTENT_X + coinW + 8, y, coinW, '+500 Coins', () => {
+      this.dispatch('dev:addCoins', { amount: 500 });
+      this.refreshDisplays();
+    });
+    y += BTN_H + 8;
+
+    // --- Gear & Stats ---
+    y = this.sectionHeader('GEAR & STATS', y);
+    this.makeButton(CONTENT_X, y, CONTENT_W, 'Grant All Gear (coin path)', () => {
+      this.dispatch('dev:grantGear');
       this.refreshDisplays();
     });
     y += BTN_H + 4;
@@ -178,33 +199,7 @@ export default class DevMenuScene extends Phaser.Scene {
       this.dispatch('dev:maxStats');
       this.refreshDisplays();
     });
-    y += BTN_H + 6;
-    const labelW = 234;
-    const tierBtnW = CONTENT_W - labelW - 8;
-    PLANT_ORDER.forEach((pt) => {
-      const label = this.add
-        .text(CONTENT_X, y + 4, '', {
-          fontFamily: '"SproutLands", "Courier New", monospace',
-          fontSize: '11px',
-          color: '#D1CCC6'
-        })
-        .setDepth(202);
-      this.track(label);
-      const btn = this.makeButton(
-        CONTENT_X + labelW + 8,
-        y,
-        tierBtnW,
-        '→ Next',
-        () => {
-          this.dispatch('dev:nextTier', { plantType: pt });
-          this.refreshDisplays();
-        },
-        { h: 20 }
-      );
-      this.tierRows[pt] = { label, btnRect: btn.rect, btnText: btn.text };
-      y += 24;
-    });
-    y += 8;
+    y += BTN_H + 8;
 
     // --- Player ---
     y = this.sectionHeader('PLAYER', y);
@@ -299,17 +294,9 @@ export default class DevMenuScene extends Phaser.Scene {
     if (this.dayValueText) {
       this.dayValueText.setText(`Current day: ${this.gameScene.daySystem.dayNumber}`);
     }
-    PLANT_ORDER.forEach((pt) => {
-      const row = this.tierRows[pt];
-      if (!row) return;
-      const tiers = this.gameData.upgrades[pt].gear.tiers;
-      const gi = this.gameScene.upgradeLevels[pt].gear;
-      const tierName = gi >= 0 ? tiers[gi].name : 'None';
-      const maxed = gi + 1 >= tiers.length;
-      row.label.setText(`${this.gameData.plants[pt].name}: ${tierName}`);
-      row.btnText.setText(maxed ? 'MAX' : '→ Next');
-      row.btnRect.setAlpha(maxed ? 0.4 : 1);
-    });
+    if (this.coinValueText) {
+      this.coinValueText.setText(`Coins: ${this.gameScene.coins || 0}`);
+    }
   }
 
   setMenuVisible(open) {

@@ -21,13 +21,14 @@ const PLANT_ORDER = [
 ];
 
 // What each plant's resource feeds in the workshop (player-facing summary).
+// v2: plants fund STAT trees only — gear + capacity are bought with coins.
 const PLANT_USE = {
-  red_mushroom: 'Weapon upgrades',
-  blue_flower: 'Armor & well upgrades',
-  golden_wheat: 'Boots & move speed',
-  green_herb: 'Seed satchels & day timer',
-  glowshroom: 'Ranged & crit chance',
-  sunflower: 'Watering can & harvest range'
+  red_mushroom: 'Attack power',
+  blue_flower: 'Max HP',
+  golden_wheat: 'Move speed',
+  green_herb: 'Day timer',
+  glowshroom: 'Crit chance',
+  sunflower: 'Harvest range'
 };
 
 function hexToNum(hex) {

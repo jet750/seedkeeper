@@ -98,60 +98,26 @@
       "seedRespawn": 90000
     }
   },
+  "_upgradesNote": "STAT TREES ONLY (Economy Sprint 2). Plant resources buy stat levels here; gear + capacity moved to coins (see economy.json). Per-level stat costs are unchanged from before the dual-economy split.",
   "upgrades": {
     "red_mushroom": {
-      "stat": { "name": "Attack Power", "statKey": "attackMult", "levels": 5, "perLevelBonus": 0.05, "costs": [1, 3, 6, 10, 15] },
-      "gear": { "tiers": [
-        { "id": "dagger", "name": "Dagger", "cost": 3,  "attackDamage": 3, "attackCooldown": 500, "arcDegrees": 90 },
-        { "id": "sword",  "name": "Sword",  "cost": 12, "attackDamage": 8, "attackCooldown": 550, "arcDegrees": 120 }
-      ]}
+      "stat": { "name": "Attack Power", "statKey": "attackMult", "levels": 5, "perLevelBonus": 0.05, "costs": [1, 3, 6, 10, 15] }
     },
     "blue_flower": {
-      "stat": { "name": "Max HP", "statKey": "hpMult", "levels": 5, "perLevelBonus": 0.08, "costs": [1, 3, 6, 10, 15] },
-      "gear": { "tiers": [
-        { "id": "tunic",     "name": "Tunic",     "cost": 3,  "damageReduction": 0.10 },
-        { "id": "leather",   "name": "Leather",   "cost": 8,  "damageReduction": 0.20 },
-        { "id": "chainmail", "name": "Chainmail", "cost": 18, "damageReduction": 0.35 }
-      ]}
+      "stat": { "name": "Max HP", "statKey": "hpMult", "levels": 5, "perLevelBonus": 0.08, "costs": [1, 3, 6, 10, 15] }
     },
     "golden_wheat": {
-      "stat": { "name": "Move Speed", "statKey": "speedMult", "levels": 5, "perLevelBonus": 0.03, "costs": [1, 3, 6, 10, 15] },
-      "gear": { "tiers": [
-        { "id": "basic_boots", "name": "Boots",      "cost": 3,  "speedBonus": 0.05 },
-        { "id": "dash_boots",  "name": "Dash Boots", "cost": 10, "speedBonus": 0.05, "dashEnabled": true, "dashSpeed": 400, "dashDuration": 200, "dashCooldown": 2000 }
-      ]}
+      "stat": { "name": "Move Speed", "statKey": "speedMult", "levels": 5, "perLevelBonus": 0.03, "costs": [1, 3, 6, 10, 15] }
     },
     "green_herb": {
-      "stat": { "name": "Day Timer", "statKey": "timerBonus", "levels": 5, "perLevelBonus": 15000, "costs": [1, 2, 4, 7, 11] },
-      "gear": { "tiers": [
-        { "id": "satchel_1", "name": "Small Satchel",   "cost": 2,  "seedSlots": 4 },
-        { "id": "satchel_2", "name": "Satchel",         "cost": 4,  "seedSlots": 5 },
-        { "id": "satchel_3", "name": "Large Satchel",   "cost": 7,  "seedSlots": 6 },
-        { "id": "satchel_4", "name": "Explorer Satchel","cost": 11, "seedSlots": 7 }
-      ]}
+      "stat": { "name": "Day Timer", "statKey": "timerBonus", "levels": 5, "perLevelBonus": 15000, "costs": [1, 2, 4, 7, 11] }
     },
     "glowshroom": {
-      "stat": { "name": "Crit Chance", "statKey": "critBonus", "levels": 5, "perLevelBonus": 0.02, "costs": [1, 3, 6, 10, 15] },
-      "gear": { "tiers": [
-        { "id": "sling", "name": "Sling", "cost": 3,  "projDamage": 3, "projRange": 150, "projSpeed": 350, "ammo": 10 },
-        { "id": "bow",   "name": "Bow",   "cost": 10, "projDamage": 6, "projRange": 300, "projSpeed": 450, "ammo": 10 }
-      ]}
+      "stat": { "name": "Crit Chance", "statKey": "critBonus", "levels": 5, "perLevelBonus": 0.02, "costs": [1, 3, 6, 10, 15] }
     },
     "sunflower": {
-      "stat": { "name": "Harvest Range", "statKey": "harvestRange", "levels": 5, "perLevelBonus": 0.05, "costs": [1, 3, 6, 10, 15] },
-      "gear": { "tiers": [
-        { "id": "copper_can", "name": "Copper Can", "cost": 3,  "bedsPerUse": 2 },
-        { "id": "golden_can", "name": "Golden Can", "cost": 10, "bedsPerUse": 99 }
-      ]}
+      "stat": { "name": "Harvest Range", "statKey": "harvestRange", "levels": 5, "perLevelBonus": 0.05, "costs": [1, 3, 6, 10, 15] }
     }
-  },
-  "well_upgrades": {
-    "tiers": [
-      { "id": "well_basic",   "name": "Basic Well",    "capacity": 1, "cost": 0,  "currency": null },
-      { "id": "well_bucket",  "name": "Deep Bucket",   "capacity": 2, "cost": 4,  "currency": "blue_flower" },
-      { "id": "well_cistern", "name": "Rain Cistern",  "capacity": 4, "cost": 10, "currency": "blue_flower" },
-      { "id": "well_spring",  "name": "Garden Spring", "capacity": 8, "cost": 18, "currency": "blue_flower" }
-    ]
   },
   "weather": [
     { "id": "cloudy", "name": "Cloudy Day",    "icon": "☁️",  "description": "Overcast skies slow plant growth today.",            "effect": "growthPenalty",   "value": 1 },
