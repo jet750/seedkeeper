@@ -5,7 +5,10 @@
 // GameScene builds a plain state object (see buildCurrentState) and hands it to
 // save(); load() returns a plain object GameScene applies on create.
 
-const SAVE_VERSION = 1;
+// v2 (Economy Sprint 2): dual economy. Plants → stat trees only; coins → gear +
+// capacity. Saves are disposable in this pre-launch showcase, so a version bump
+// WIPES old slots to a fresh v2 default instead of migrating (no shim).
+const SAVE_VERSION = 2;
 const SAVE_KEY_PREFIX = 'seedkeeper_save_';
 const SETTINGS_KEY = 'seedkeeper_settings'; // global audio settings (Sprint 12)
 
@@ -21,14 +24,15 @@ function freshBank() {
 }
 
 function freshUpgrades() {
-  // stat = number of stat levels bought; gear = highest gear tier index (-1 = none).
+  // stat = number of stat levels bought per plant. Gear is no longer plant-funded
+  // (v2): it lives on the coin economy via equippedGear (see economy.json).
   return {
-    red_mushroom: { stat: 0, gear: -1 },
-    blue_flower: { stat: 0, gear: -1 },
-    golden_wheat: { stat: 0, gear: -1 },
-    green_herb: { stat: 0, gear: -1 },
-    glowshroom: { stat: 0, gear: -1 },
-    sunflower: { stat: 0, gear: -1 }
+    red_mushroom: { stat: 0 },
+    blue_flower: { stat: 0 },
+    golden_wheat: { stat: 0 },
+    green_herb: { stat: 0 },
+    glowshroom: { stat: 0 },
+    sunflower: { stat: 0 }
   };
 }
 
@@ -42,9 +46,16 @@ const SaveSystem = {
       dayNumber: 1,
       totalPlaytime: 0,
       bank: freshBank(),
+      // Banked coins (v2). All mutations route through GameScene.addCoins/spendCoins.
+      coins: 0,
       upgrades: freshUpgrades(),
+      // Coin-funded gear. Start with NO weapon (base unarmed attack). wateringCan
+      // is the default basic can (cans are no longer purchasable in v2).
       equippedGear: { weapon: null, armor: null, boots: null, ranged: null, wateringCan: 'basic' },
-      seedSlots: 3,
+      // Coin-funded capacity trees (v2) — independent of each other and of stats.
+      seedBagTier: 0, // carry-slot tier index (0 = base 3)
+      gardenBedTier: 0, // bed-count tier index (0 = base 4)
+      wateringTier: 0, // water-charge tier index (0 = base 1); replaces wellLevel
       gardenBeds: [
         { plantType: null, daysRemaining: 0, watered: false, ready: false },
         { plantType: null, daysRemaining: 0, watered: false, ready: false },
@@ -52,7 +63,6 @@ const SaveSystem = {
         { plantType: null, daysRemaining: 0, watered: false, ready: false }
       ],
       plantsGrownEver: freshBank(),
-      wellLevel: 0,
       todayWeather: null,
       dailySeedCollected: null,
       dailySeedToastShown: null,
@@ -84,39 +94,17 @@ const SaveSystem = {
     try {
       const raw = localStorage.getItem(SAVE_KEY_PREFIX + slotIndex);
       if (!raw) return { ...this.defaultSave(), slotIndex };
-      return this.migrate(JSON.parse(raw));
+      const data = JSON.parse(raw);
+      // v2 rip-and-rebuild: saves are disposable, so any version mismatch is
+      // discarded and replaced with a fresh v2 default. No migration shim.
+      // `_wasReset` lets GameScene show a one-time "save reset" notice.
+      if (data.version !== SAVE_VERSION) {
+        return { ...this.defaultSave(), slotIndex, _wasReset: true };
+      }
+      return data;
     } catch {
       return { ...this.defaultSave(), slotIndex };
     }
-  },
-
-  migrate(data) {
-    if (!data.version || data.version < 1) {
-      data.newGamePlus = data.newGamePlus || false;
-      data.version = 1;
-    }
-    // Backfill fields added after a save was first written so older slots load
-    // cleanly. Idempotent — only fills what is missing.
-    if (data.demoWinTriggered === undefined) data.demoWinTriggered = false;
-    if (data.wellLevel === undefined) data.wellLevel = 0;
-    if (data.todayWeather === undefined) data.todayWeather = null;
-    if (data.dailySeedCollected === undefined) data.dailySeedCollected = null;
-    if (data.dailySeedToastShown === undefined) data.dailySeedToastShown = null;
-    if (!Array.isArray(data.discoveredPlants)) data.discoveredPlants = [];
-    if (!data.settings) {
-      data.settings = { masterVolume: 1.0, sfxVolume: 0.8, musicVolume: 0.5, footstepVolume: 0.25, muted: false };
-    }
-    // Footstep volume added after the first settings shipped — backfill it so
-    // older slots get a sensible default rather than undefined.
-    if (data.settings.footstepVolume === undefined) data.settings.footstepVolume = 0.25;
-    if (!Array.isArray(data.achievements)) data.achievements = [];
-    if (!data.achievementDays) data.achievementDays = {};
-    if (!data.stats) {
-      data.stats = { killCount: 0, deathCount: 0, timerExpiredCount: 0, darkSlimeKills: 0 };
-    }
-    if (!Array.isArray(data.tutorialsSeen)) data.tutorialsSeen = [];
-    // Future: if (data.version < 2) { ... data.version = 2; }
-    return data;
   },
 
   getSlotsMetadata() {

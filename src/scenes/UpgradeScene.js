@@ -1,10 +1,11 @@
 // UpgradeScene.js
 //
 // The Seedkeeper Workshop — a full-screen overlay launched on top of GameScene
-// (which keeps rendering frozen behind it). Shows all six plant upgrade trees
-// (a stat track + a gear track each), spends plant resources, and asks GameScene
-// to apply effects + auto-save via purchaseUpgrade(). It reads live state from
-// GameScene (plantBank, upgradeLevels, gameData) and never mutates it directly.
+// (which keeps rendering frozen behind it). v2: shows all six plant STAT trees
+// only (gear + capacity moved to the coin economy / marketplace). Spends plant
+// resources and asks GameScene to apply effects + auto-save via purchaseUpgrade().
+// Reads live state from GameScene (plantBank, upgradeLevels, gameData); never
+// mutates it directly.
 
 import Phaser from 'phaser';
 import EventBus from '../core/EventBus.js';
@@ -85,9 +86,6 @@ export default class UpgradeScene extends Phaser.Scene {
       this.buildPanel(pt, GRID_X + col * COL_STRIDE, GRID_Y + row * ROW_STRIDE);
     });
 
-    // Well-upgrade track (Sprint 9) — a wide compact bar below the plant grid.
-    this.buildWellPanel();
-
     this.makeButton(
       VIRTUAL_WIDTH / 2,
       VIRTUAL_HEIGHT - 42,
@@ -109,7 +107,6 @@ export default class UpgradeScene extends Phaser.Scene {
     this._onBank = () => {
       this.refreshSummary();
       PLANT_ORDER.forEach((pt) => this.refreshPanel(pt));
-      this.refreshWellPanel();
     };
     EventBus.on('bank:updated', this._onBank);
     this.events.once('shutdown', () => EventBus.off('bank:updated', this._onBank));
@@ -162,95 +159,6 @@ export default class UpgradeScene extends Phaser.Scene {
     });
   }
 
-  // --- Well-upgrade bar (Sprint 9) ------------------------------------------
-  // A standalone track paid for in blue flowers. Sits in the gap below the
-  // plant grid; the buy button is rebuilt each refresh like the plant rows.
-
-  buildWellPanel() {
-    const cx = VIRTUAL_WIDTH / 2;
-    const cy = 794;
-    const w = 1440;
-    const h = 60;
-    this.add.rectangle(cx, cy, w, h, COLOR_PANEL).setStrokeStyle(2, 0x6b92bc).setDepth(100);
-    const leftX = cx - w / 2 + 22;
-    this.add.circle(leftX, cy, 12, hexToNum(this.gameData.plants.blue_flower.color)).setDepth(101);
-    this.add
-      .text(leftX + 24, cy - 17, 'WELL UPGRADES', {
-        fontFamily: '"SproutLands", "Courier New", monospace',
-        fontSize: '14px',
-        fontStyle: 'bold',
-        color: '#ABC4DE'
-      })
-      .setOrigin(0, 0)
-      .setDepth(101);
-    this.wellInfoText = this.add
-      .text(leftX + 24, cy + 3, '', {
-        fontFamily: '"SproutLands", "Courier New", monospace',
-        fontSize: '15px',
-        color: '#D1CCC6'
-      })
-      .setOrigin(0, 0)
-      .setDepth(101);
-    this._wellActionObjs = [];
-    this.refreshWellPanel();
-  }
-
-  refreshWellPanel() {
-    if (!this.wellInfoText) return;
-    const tiers = this.gameData.well_upgrades.tiers;
-    const lvl = this.gameScene.wellLevel || 0;
-    const current = tiers[lvl];
-    const next = tiers[lvl + 1];
-
-    const cx = VIRTUAL_WIDTH / 2;
-    const w = 1440;
-    const cy = 794;
-    const rightX = cx + w / 2 - 22;
-
-    if (this._wellActionObjs) this._wellActionObjs.forEach((o) => o.destroy());
-    this._wellActionObjs = [];
-
-    if (!next) {
-      this.wellInfoText.setText(`${current.name} · Water Capacity ${current.capacity}  ·  fully upgraded`);
-      const t = this.add
-        .text(rightX, cy, 'MAXED', {
-          fontFamily: '"SproutLands", "Courier New", monospace',
-          fontSize: '16px',
-          fontStyle: 'bold',
-          color: '#8AB87E'
-        })
-        .setOrigin(1, 0.5)
-        .setDepth(102);
-      this._wellActionObjs.push(t);
-      return;
-    }
-
-    this.wellInfoText.setText(
-      `${current.name} (cap ${current.capacity})  →  ${next.name} (cap ${next.capacity})   ·   ${next.cost} Blue Flower`
-    );
-    const cost = next.cost;
-    const affordable = (this.gameScene.plantBank[next.currency] || 0) >= cost;
-    this._wellActionObjs = this.makeButton(
-      rightX - 90,
-      cy,
-      180,
-      36,
-      `BUY  ${cost}`,
-      affordable ? COLOR_AFFORD : COLOR_DISABLED,
-      affordable,
-      () => this.onWellBuy(),
-      affordable ? '#141210' : '#7a746c'
-    );
-  }
-
-  onWellBuy() {
-    this.gameScene.purchaseWellUpgrade();
-    // purchase emits bank:updated → _onBank refreshes everything; refresh now too.
-    this.refreshSummary();
-    this.refreshWellPanel();
-    PLANT_ORDER.forEach((p) => this.refreshPanel(p));
-  }
-
   // --- Panels ---------------------------------------------------------------
 
   buildPanel(pt, px, py) {
@@ -283,7 +191,7 @@ export default class UpgradeScene extends Phaser.Scene {
       .setDepth(101);
 
     const statLabel = this.add
-      .text(px + 24, py + 70, '', {
+      .text(px + 24, py + 78, '', {
         fontFamily: '"SproutLands", "Courier New", monospace',
         fontSize: '15px',
         color: '#D1CCC6',
@@ -291,25 +199,14 @@ export default class UpgradeScene extends Phaser.Scene {
       })
       .setDepth(101);
 
-    const gearLabel = this.add
-      .text(px + 24, py + 124, '', {
-        fontFamily: '"SproutLands", "Courier New", monospace',
-        fontSize: '15px',
-        color: '#D1CCC6',
-        lineSpacing: 4
-      })
-      .setDepth(101);
-
-    this.panelRefs[pt] = { px, py, resourceText, statLabel, gearLabel };
+    this.panelRefs[pt] = { px, py, resourceText, statLabel };
   }
 
   refreshPanel(pt) {
     const ref = this.panelRefs[pt];
     ref.resourceText.setText(`× ${this.bank(pt)}`);
     ref.statLabel.setText(this.statLabelText(pt));
-    ref.gearLabel.setText(this.gearLabelText(pt));
     this.rebuildAction(pt, 'stat');
-    this.rebuildAction(pt, 'gear');
   }
 
   statLabelText(pt) {
@@ -317,15 +214,6 @@ export default class UpgradeScene extends Phaser.Scene {
     const lv = this.levels(pt).stat;
     if (lv >= s.levels) return `STAT · ${s.name}\nLv ${lv}/${s.levels} · MAXED`;
     return `STAT · ${s.name}   Lv ${lv}/${s.levels}\nNext: ${this.statEffectText(pt)}`;
-  }
-
-  gearLabelText(pt) {
-    const g = this.gameData.upgrades[pt].gear;
-    const gi = this.levels(pt).gear;
-    const current = gi >= 0 ? g.tiers[gi].name : 'None';
-    const next = gi + 1 < g.tiers.length ? g.tiers[gi + 1] : null;
-    if (!next) return `GEAR · ${current}\nMAXED`;
-    return `GEAR · ${current}\nNext: ${next.name}`;
   }
 
   statEffectText(pt) {
@@ -345,12 +233,12 @@ export default class UpgradeScene extends Phaser.Scene {
     this.actionObjs[key] = [];
 
     const ref = this.panelRefs[pt];
-    const rowY = track === 'stat' ? ref.py + 84 : ref.py + 138;
+    const rowY = ref.py + 92;
     const rightX = ref.px + PANEL_W - 20;
 
     // Confirm prompt for the pending row.
     if (this._pending && this._pending.plantType === pt && this._pending.track === track) {
-      const cost = this.nextCost(pt, track);
+      const cost = this.nextCost(pt);
       const yes = this.makeButton(
         rightX - 150,
         rowY,
@@ -378,7 +266,7 @@ export default class UpgradeScene extends Phaser.Scene {
     }
 
     // Maxed → static label, no button.
-    if (this.isMaxed(pt, track)) {
+    if (this.isMaxed(pt)) {
       const t = this.add
         .text(rightX, rowY, 'MAXED', {
           fontFamily: '"SproutLands", "Courier New", monospace',
@@ -393,7 +281,7 @@ export default class UpgradeScene extends Phaser.Scene {
     }
 
     // Normal BUY button — green if affordable, grey/disabled otherwise.
-    const cost = this.nextCost(pt, track);
+    const cost = this.nextCost(pt);
     const affordable = this.bank(pt) >= cost;
     this.actionObjs[key] = this.makeButton(
       rightX - 70,
@@ -413,10 +301,7 @@ export default class UpgradeScene extends Phaser.Scene {
   onBuyClicked(pt, track) {
     this._pending = { plantType: pt, track };
     // Cancel any other pending confirm so only one is active at a time.
-    PLANT_ORDER.forEach((p) => {
-      this.rebuildAction(p, 'stat');
-      this.rebuildAction(p, 'gear');
-    });
+    PLANT_ORDER.forEach((p) => this.rebuildAction(p, 'stat'));
   }
 
   onConfirm(pt, track) {
@@ -443,16 +328,12 @@ export default class UpgradeScene extends Phaser.Scene {
     return this.gameScene.upgradeLevels[pt];
   }
 
-  isMaxed(pt, track) {
-    const lv = this.levels(pt);
-    if (track === 'stat') return lv.stat >= this.gameData.upgrades[pt].stat.levels;
-    return lv.gear + 1 >= this.gameData.upgrades[pt].gear.tiers.length;
+  isMaxed(pt) {
+    return this.levels(pt).stat >= this.gameData.upgrades[pt].stat.levels;
   }
 
-  nextCost(pt, track) {
-    const lv = this.levels(pt);
-    if (track === 'stat') return this.gameData.upgrades[pt].stat.costs[lv.stat];
-    return this.gameData.upgrades[pt].gear.tiers[lv.gear + 1].cost;
+  nextCost(pt) {
+    return this.gameData.upgrades[pt].stat.costs[this.levels(pt).stat];
   }
 
   // Button background uses the Sprout Lands square-button art (nine-sliced from a

@@ -81,6 +81,8 @@ export default class AchievementSystem {
     this.on('bed:watered', () => this.unlock('water_carrier'));
     this.on('enemy:died', ({ type }) => this.handleEnemyDied(type));
     this.on('upgrade:purchased', (data) => this.handleUpgrade(data));
+    this.on('gear:equipped', (data) => this.handleGearEquipped(data));
+    this.on('capacity:purchased', (data) => this.handleCapacityPurchased(data));
 
     // --- Tier 2 ---
     this.on('player:dashed', () => this.unlock('blur'));
@@ -168,33 +170,39 @@ export default class AchievementSystem {
     if (all) this.unlock('harvest_begins');
   }
 
-  handleUpgrade(data) {
-    if (data.track === 'gear') {
-      const tiers = this.scene.gameData.upgrades[data.plantType].gear.tiers;
-      const tier = tiers[data.newLevel];
-      const tierId = tier ? tier.id : '';
-      if (['dagger', 'sword'].includes(tierId)) this.unlock('armed');
-      if (['tunic', 'leather', 'chainmail'].includes(tierId)) this.unlock('layered');
-      if (tierId.startsWith('satchel')) this.unlock('satchel_bearer');
-    }
-
-    // Master Botanist — every stat track at max level.
+  handleUpgrade() {
+    // v2: the workshop chest is stat-only — gear/capacity achievements moved to
+    // the coin path (handleGearEquipped / handleCapacityPurchased). Master
+    // Botanist still tracks every stat track reaching max level.
     const levels = this.scene.upgradeLevels;
     const allStatMaxed = Object.values(levels).every((u) => u.stat >= MASTER_STAT_LEVEL);
     if (allStatMaxed) this.unlock('master_botanist');
-
-    // Full Kit — every gear track at its top tier.
-    if (this.allGearMaxed()) this.unlock('full_kit');
-
     this.checkBroke();
   }
 
+  // Coin-funded gear (v2). 'armed'/'layered' on the relevant tiers; 'full_kit'
+  // once every slot holds its top tier.
+  handleGearEquipped({ tierId }) {
+    if (['dagger', 'sword'].includes(tierId)) this.unlock('armed');
+    if (['tunic', 'leather', 'chainmail'].includes(tierId)) this.unlock('layered');
+    if (this.allGearMaxed()) this.unlock('full_kit');
+  }
+
+  // Coin-funded capacity (v2). 'satchel_bearer' = bought a seed-bag (carry) tier.
+  handleCapacityPurchased({ tree }) {
+    if (tree === 'seedBag') this.unlock('satchel_bearer');
+  }
+
+  // Every coin-gear slot at its top catalog tier.
   allGearMaxed() {
-    const upgrades = this.scene.gameData.upgrades;
-    const levels = this.scene.upgradeLevels;
-    return Object.keys(upgrades).every(
-      (pt) => levels[pt].gear >= upgrades[pt].gear.tiers.length - 1
-    );
+    const gear = this.scene.economyData && this.scene.economyData.gear;
+    const equipped = this.scene.player && this.scene.player.equippedGear;
+    if (!gear || !equipped) return false;
+    return ['weapon', 'armor', 'boots', 'ranged'].every((slot) => {
+      const list = gear[slot] || [];
+      if (!list.length) return true;
+      return equipped[slot] === list[list.length - 1].id;
+    });
   }
 
   checkBroke() {

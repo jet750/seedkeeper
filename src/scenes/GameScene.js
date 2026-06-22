@@ -44,6 +44,7 @@ import AchievementSystem from '../systems/AchievementSystem.js';
 import TutorialSystem from '../systems/TutorialSystem.js';
 import SaveSystem from '../core/SaveSystem.js';
 import entitiesData from '../data/entities.json';
+import economyData from '../data/economy.json';
 
 const INTERACT_RANGE = 48; // px — F-key reach for beds, well, sleep
 const SEED_COLLECT_RANGE = 26; // px — player must be this close to pick up a seed
@@ -85,14 +86,15 @@ const ENEMY_DEATH_COLORS = {
 };
 
 // --- Upgrades, save & projectiles (Sprint 4) ---
-// Which player gear slot each plant's gear track feeds.
-const GEAR_SLOT_BY_PLANT = {
-  red_mushroom: 'weapon',
-  blue_flower: 'armor',
-  golden_wheat: 'boots',
-  green_herb: 'satchel',
-  glowshroom: 'ranged',
-  sunflower: 'wateringCan'
+// Equip slots filled by the coin economy (economy.json gear catalog). v2 moved
+// gear off the plant trees, so there is no longer a plant→slot mapping.
+const GEAR_SLOTS = ['weapon', 'armor', 'boots', 'ranged'];
+// Save-field name for each coin-funded capacity tree (economy.json capacity keys
+// → save tier counters). Independent of each other and of the stat trees.
+const CAPACITY_TIER_FIELD = {
+  seedBag: 'seedBagTier',
+  gardenBeds: 'gardenBedTier',
+  watering: 'wateringTier'
 };
 const DEFAULT_BANK = {
   red_mushroom: 0,
@@ -103,7 +105,7 @@ const DEFAULT_BANK = {
   sunflower: 0
 };
 const PROJECTILE_POOL_SIZE = 10;
-// Garden bed grid layout (row-wraps as satchel upgrades add beds). Anchored to the
+// Garden bed grid layout (row-wraps as garden-bed tiers add beds). Anchored to the
 // centered garden homestead: the 4-bed top row is centred on the garden's x-axis
 // (BED_BASE_X + 1.5*COL_GAP == garden centre 3200) and sits in the upper third.
 const BED_BASE_X = 2960;
@@ -132,6 +134,7 @@ export default class GameScene extends Phaser.Scene {
 
   create() {
     this.gameData = entitiesData;
+    this.economyData = economyData; // coin catalogs: gear, capacity, sellPrices
     // Carve whole-tree sub-frames out of the Sprout Lands tree sheet (Sprint 10d)
     // so trees render as real art instead of vector shapes. Safe no-op if the
     // sheet didn't load (production may not emit every tileset).
@@ -203,7 +206,11 @@ export default class GameScene extends Phaser.Scene {
     this.plantBank = { ...DEFAULT_BANK, ...(this.saveData.bank || {}) };
     this.upgradeLevels = JSON.parse(JSON.stringify(this.saveData.upgrades));
     this.plantsGrownEver = { ...DEFAULT_BANK, ...(this.saveData.plantsGrownEver || {}) };
-    this.wellLevel = this.saveData.wellLevel || 0; // Sprint 9 well-upgrade tier index
+    // Dual economy (v2): banked coins + the three coin-funded capacity tiers.
+    this.coins = this.saveData.coins || 0;
+    this.seedBagTier = this.saveData.seedBagTier || 0;
+    this.gardenBedTier = this.saveData.gardenBedTier || 0;
+    this.wateringTier = this.saveData.wateringTier || 0;
     // Sprint 11 retention state.
     this.discoveredPlants = [...(this.saveData.discoveredPlants || [])];
     this._dailySeedCollected = this.saveData.dailySeedCollected || null;
@@ -417,6 +424,10 @@ export default class GameScene extends Phaser.Scene {
     this.time.delayedCall(0, () => {
       this.syncHud();
       EventBus.emit('game:started', {});
+      // One-time notice when a pre-v2 save was wiped to a fresh v2 default.
+      if (this.saveData && this.saveData._wasReset) {
+        EventBus.emit('ui:notice', { text: 'Save reset for the new update' });
+      }
     });
 
     // --- Developer cheat menu (parallel scene; inert unless dev mode active) ---
@@ -447,6 +458,7 @@ export default class GameScene extends Phaser.Scene {
     EventBus.emit('day:dayChanged', { day: this.daySystem.dayNumber });
     EventBus.emit('inventory:changed', { slots: [...this.player.seedSlots] });
     EventBus.emit('bank:updated', { bank: { ...this.plantBank } });
+    EventBus.emit('coins:changed', { coins: this.coins, delta: 0 });
     EventBus.emit('player:statsChanged', {
       maxHP: this.player.maxHP,
       currentHP: this.player.currentHP
@@ -2512,14 +2524,13 @@ export default class GameScene extends Phaser.Scene {
     EventBus.emit('win:demo', {});
   }
 
-  // Full win: every plant's stat track AND gear track maxed out.
+  // Full win (v2): every plant's stat track maxed. Gear/capacity are coin-funded
+  // convenience now, not part of the win condition.
   checkFullWin() {
     if (this._fullWinTriggered) return;
-    const allMaxed = Object.entries(this.gameData.upgrades).every(([pt, tree]) => {
-      const statMaxed = this.upgradeLevels[pt].stat >= tree.stat.levels;
-      const gearMaxed = this.upgradeLevels[pt].gear >= tree.gear.tiers.length - 1;
-      return statMaxed && gearMaxed;
-    });
+    const allMaxed = Object.entries(this.gameData.upgrades).every(
+      ([pt, tree]) => this.upgradeLevels[pt].stat >= tree.stat.levels
+    );
     if (!allMaxed) return;
     this._fullWinTriggered = true;
     EventBus.emit('win:full', {});
@@ -2767,80 +2778,43 @@ export default class GameScene extends Phaser.Scene {
     this._signpostOpen = false;
   }
 
-  // Called by UpgradeScene. Validates affordability, deducts the cost, applies
-  // the effect to the player, bumps the saved level, and broadcasts the change.
-  purchaseUpgrade(plantType, track) {
+  // Called by UpgradeScene (the workshop chest). v2: STAT upgrades only — plants
+  // buy stat levels here; gear + capacity are coin-funded elsewhere. Validates
+  // affordability, deducts plants, applies the effect, and broadcasts the change.
+  purchaseUpgrade(plantType, track = 'stat') {
+    if (track !== 'stat') return { ok: false };
     const def = this.gameData.upgrades[plantType];
     const lv = this.upgradeLevels[plantType];
 
-    if (track === 'stat') {
-      if (lv.stat >= def.stat.levels) return { ok: false };
-      const cost = def.stat.costs[lv.stat];
-      if (this.plantBank[plantType] < cost) return { ok: false };
-      this.plantBank[plantType] -= cost;
-      lv.stat += 1;
-      this.applyStatEffect(plantType, lv.stat);
-      this.player.recalculateStats();
-      if (def.stat.statKey === 'timerBonus') {
-        this.daySystem.setTimerBonus(this.player.statBonuses.timerBonus);
-      }
-      EventBus.emit('upgrade:purchased', { plantType, track, newLevel: lv.stat, cost });
-      EventBus.emit('bank:updated', { bank: { ...this.plantBank } });
-      this.checkFullWin();
-      return { ok: true, newLevel: lv.stat, cost };
-    }
-
-    const nextIndex = lv.gear + 1;
-    if (nextIndex >= def.gear.tiers.length) return { ok: false };
-    const cost = def.gear.tiers[nextIndex].cost;
+    if (lv.stat >= def.stat.levels) return { ok: false };
+    const cost = def.stat.costs[lv.stat];
     if (this.plantBank[plantType] < cost) return { ok: false };
     this.plantBank[plantType] -= cost;
-    lv.gear = nextIndex;
-    this.applyGearEffect(plantType, nextIndex);
-    if (GEAR_SLOT_BY_PLANT[plantType] === 'satchel') this.addGardenBed();
-    EventBus.emit('upgrade:purchased', { plantType, track, newLevel: nextIndex, cost });
+    lv.stat += 1;
+    this.applyStatEffect(plantType, lv.stat);
+    this.player.recalculateStats();
+    if (def.stat.statKey === 'timerBonus') {
+      this.daySystem.setTimerBonus(this.player.statBonuses.timerBonus);
+    }
+    EventBus.emit('upgrade:purchased', { plantType, track: 'stat', newLevel: lv.stat, cost });
     EventBus.emit('bank:updated', { bank: { ...this.plantBank } });
     this.checkFullWin();
-    return { ok: true, newLevel: nextIndex, cost };
+    return { ok: true, newLevel: lv.stat, cost };
   }
 
-  // Replay all saved upgrade levels onto the player (called once on load).
+  // Replay all saved progression onto the freshly-built player (once, on load):
+  // plant-funded stat trees, then coin-funded gear + capacity.
   applyAllUpgrades() {
     Object.keys(this.upgradeLevels).forEach((plantType) => {
       const lv = this.upgradeLevels[plantType];
       if (lv.stat > 0) this.applyStatEffect(plantType, lv.stat);
-      if (lv.gear >= 0) this.applyGearEffect(plantType, lv.gear);
     });
-    this.applyWellUpgrade();
+    this.applyEquippedGear();
+    this.applySeedBagTier();
+    this.applyGardenBedTier();
+    this.applyWateringTier();
     this.player.recalculateStats();
     this.daySystem.setTimerBonus(this.player.statBonuses.timerBonus);
-  }
-
-  // --- Well upgrade track (Sprint 9) ----------------------------------------
-  // A standalone track (not tied to a plant tree): better well = more water
-  // charges per trip. Paid for in blue flowers — the life/water resource.
-
-  applyWellUpgrade() {
-    const tiers = this.gameData.well_upgrades.tiers;
-    const idx = Phaser.Math.Clamp(this.wellLevel, 0, tiers.length - 1);
-    this.player.setWaterCapacity(tiers[idx].capacity);
-  }
-
-  purchaseWellUpgrade() {
-    const tiers = this.gameData.well_upgrades.tiers;
-    const nextIndex = this.wellLevel + 1;
-    if (nextIndex >= tiers.length) return { ok: false };
-    const tier = tiers[nextIndex];
-    const currency = tier.currency;
-    const cost = tier.cost;
-    if ((this.plantBank[currency] || 0) < cost) return { ok: false };
-    this.plantBank[currency] -= cost;
-    this.wellLevel = nextIndex;
-    this.applyWellUpgrade();
-    // upgrade:purchased drives runStats + auto-save + particle burst via onUpgradePurchased.
-    EventBus.emit('upgrade:purchased', { plantType: currency, track: 'well', newLevel: nextIndex, cost });
-    EventBus.emit('bank:updated', { bank: { ...this.plantBank } });
-    return { ok: true, newLevel: nextIndex, cost };
   }
 
   applyStatEffect(plantType, level) {
@@ -2849,9 +2823,44 @@ export default class GameScene extends Phaser.Scene {
     this.player.statBonuses[stat.statKey] = stat.perLevelBonus * level;
   }
 
-  applyGearEffect(plantType, tierIndex) {
-    const tier = this.gameData.upgrades[plantType].gear.tiers[tierIndex];
-    switch (GEAR_SLOT_BY_PLANT[plantType]) {
+  // --- Coins (Sprint 2 dual economy) ----------------------------------------
+  // SINGLE mutation path for banked coins. The cheat menu, the Sprint 3
+  // marketplace (plant selling) and every gear/capacity purchase go through
+  // addCoins/spendCoins — never write this.coins directly. A future sortie sprint
+  // adds a "pending coins" layer (earned in the world, banked only on returning
+  // home) that will sit alongside this path; keeping all banked writes here keeps
+  // that refactor local. spendCoins refuses to overdraw (coins never go negative).
+
+  addCoins(amount) {
+    if (!amount) return this.coins;
+    this.coins += amount;
+    EventBus.emit('coins:changed', { coins: this.coins, delta: amount });
+    this.autoSave();
+    return this.coins;
+  }
+
+  spendCoins(amount) {
+    if (amount <= 0 || this.coins < amount) return false;
+    this.coins -= amount;
+    EventBus.emit('coins:spent', { coins: this.coins, amount });
+    EventBus.emit('coins:changed', { coins: this.coins, delta: -amount });
+    this.autoSave();
+    return true;
+  }
+
+  // --- Coin-funded gear -----------------------------------------------------
+  // economy.json.gear[slot] is an ordered, strictly-better tier list. The index
+  // of the equipped item is derived from equippedGear[slot]'s id (-1 = none).
+
+  gearTierIndex(slot) {
+    const id = this.player.equippedGear[slot];
+    if (!id) return -1;
+    return (this.economyData.gear[slot] || []).findIndex((g) => g.id === id);
+  }
+
+  // Apply a catalog tier's stats to the player for its slot (does not touch coins).
+  equipGearTier(slot, tier) {
+    switch (slot) {
       case 'weapon':
         this.player.equipWeapon(tier);
         break;
@@ -2861,18 +2870,87 @@ export default class GameScene extends Phaser.Scene {
       case 'boots':
         this.player.equipBoots(tier);
         break;
-      case 'satchel':
-        this.player.equipSatchel(tier);
-        break;
       case 'ranged':
         this.player.equipRanged(tier);
-        break;
-      case 'wateringCan':
-        this.player.equipWateringCan(tier);
         break;
       default:
         break;
     }
+    this.player.recalculateStats();
+  }
+
+  // Re-equip whatever the save had (called on load). Skips empty/unknown ids.
+  applyEquippedGear() {
+    const saved = (this.saveData && this.saveData.equippedGear) || {};
+    GEAR_SLOTS.forEach((slot) => {
+      const id = saved[slot];
+      if (!id) return;
+      const tier = (this.economyData.gear[slot] || []).find((g) => g.id === id);
+      if (tier) this.equipGearTier(slot, tier);
+    });
+  }
+
+  // Buy the NEXT tier in a slot with coins. Used by the marketplace (Sprint 3);
+  // the dev "grant all gear" cheat uses grantGearTier directly.
+  purchaseGear(slot, tierId) {
+    const list = this.economyData.gear[slot] || [];
+    const idx = list.findIndex((g) => g.id === tierId);
+    if (idx < 0) return { ok: false };
+    if (idx !== this.gearTierIndex(slot) + 1) return { ok: false }; // must buy in order
+    const tier = list[idx];
+    if (!this.spendCoins(tier.price)) return { ok: false };
+    this.grantGearTier(slot, tier);
+    return { ok: true, slot, tierId: tier.id, price: tier.price };
+  }
+
+  // Equip a tier and broadcast it (no coin cost). Shared by purchases + cheats.
+  grantGearTier(slot, tier) {
+    this.equipGearTier(slot, tier);
+    EventBus.emit('gear:purchased', { slot, tierId: tier.id, price: tier.price });
+    EventBus.emit('gear:equipped', { slot, tierId: tier.id });
+    this.autoSave();
+  }
+
+  // --- Coin-funded capacity (three independent trees) -----------------------
+  // economy.json.capacity[tree] = { base, tiers:[...] }; the bought tier count
+  // lives on this[CAPACITY_TIER_FIELD[tree]] (seedBagTier/gardenBedTier/wateringTier).
+
+  capacityValue(tree, key) {
+    const def = this.economyData.capacity[tree];
+    const tier = this[CAPACITY_TIER_FIELD[tree]] || 0;
+    return tier > 0 ? def.tiers[tier - 1][key] : def.base;
+  }
+
+  applySeedBagTier() {
+    this.player.resizeSeedSlots(this.capacityValue('seedBag', 'slots'));
+  }
+
+  applyGardenBedTier() {
+    const target = this.capacityValue('gardenBeds', 'beds');
+    while (this.beds.length < target) this.addGardenBed();
+  }
+
+  applyWateringTier() {
+    this.player.setWaterCapacity(this.capacityValue('watering', 'capacity'));
+  }
+
+  // Buy the next tier of one capacity tree with coins. Used by the marketplace
+  // (Sprint 3). seedBag → carry slots, gardenBeds → bed count, watering → charges.
+  purchaseCapacity(tree) {
+    const def = this.economyData.capacity[tree];
+    const field = CAPACITY_TIER_FIELD[tree];
+    if (!def || !field) return { ok: false };
+    const nextTier = (this[field] || 0) + 1;
+    if (nextTier > def.tiers.length) return { ok: false }; // already maxed
+    const price = def.tiers[nextTier - 1].price;
+    if (!this.spendCoins(price)) return { ok: false };
+    this[field] = nextTier;
+    if (tree === 'seedBag') this.applySeedBagTier();
+    else if (tree === 'gardenBeds') this.applyGardenBedTier();
+    else if (tree === 'watering') this.applyWateringTier();
+    EventBus.emit('capacity:purchased', { tree, tier: nextTier, price });
+    this.autoSave();
+    return { ok: true, tree, tier: nextTier, price };
   }
 
   // --- Save (Sprint 4) ------------------------------------------------------
@@ -2882,12 +2960,14 @@ export default class GameScene extends Phaser.Scene {
       dayNumber: this.daySystem.dayNumber,
       totalPlaytime: Math.floor(this._playtimeMs / 1000),
       bank: { ...this.plantBank },
+      coins: this.coins,
       upgrades: JSON.parse(JSON.stringify(this.upgradeLevels)),
       equippedGear: { ...this.player.equippedGear },
-      seedSlots: this.player.seedSlots.length,
+      seedBagTier: this.seedBagTier,
+      gardenBedTier: this.gardenBedTier,
+      wateringTier: this.wateringTier,
       gardenBeds: this.beds.map((b) => b.serialize()),
       plantsGrownEver: { ...this.plantsGrownEver },
-      wellLevel: this.wellLevel,
       // Sprint 11 retention state.
       todayWeather: this.daySystem && this.daySystem.todayWeather ? this.daySystem.todayWeather.id : null,
       dailySeedCollected: this._dailySeedCollected,
@@ -2944,10 +3024,10 @@ export default class GameScene extends Phaser.Scene {
   setupDevHandlers() {
     this.subscribe('dev:fillBank', () => this.devFillBank());
     this.subscribe('dev:addBank', (d) => this.devAddBank(d));
+    this.subscribe('dev:addCoins', (d) => this.devAddCoins(d));
     this.subscribe('dev:day', (d) => this.devDay(d));
-    this.subscribe('dev:unlockGear', () => this.devUnlockAllGear());
+    this.subscribe('dev:grantGear', () => this.devGrantAllGear());
     this.subscribe('dev:maxStats', () => this.devMaxAllStats());
-    this.subscribe('dev:nextTier', (d) => this.devNextTier(d));
     this.subscribe('dev:fullHeal', () => this.player.healToFull());
     this.subscribe('dev:restoreAmmo', () => this.player.restoreAmmo());
     this.subscribe('dev:spawnEnemy', (d) => this.devSpawnEnemy(d));
@@ -2969,6 +3049,11 @@ export default class GameScene extends Phaser.Scene {
     EventBus.emit('bank:updated', { bank: { ...this.plantBank } });
   }
 
+  // Coins go through the single addCoins path so the HUD + save stay in sync.
+  devAddCoins({ amount }) {
+    this.addCoins(amount);
+  }
+
   devDay({ delta }) {
     if (delta > 0) {
       // Forward: advance for real so bed growth, enemy scaling and bank events fire.
@@ -2981,20 +3066,13 @@ export default class GameScene extends Phaser.Scene {
     }
   }
 
-  devUnlockAllGear() {
-    Object.keys(this.gameData.upgrades).forEach((pt) => {
-      const tiers = this.gameData.upgrades[pt].gear.tiers;
-      const lastIndex = tiers.length - 1;
-      const oldIndex = this.upgradeLevels[pt].gear;
-      if (oldIndex >= lastIndex) return;
-      this.upgradeLevels[pt].gear = lastIndex;
-      this.applyGearEffect(pt, lastIndex);
-      // Each satchel tier also adds a garden bed (mirrors live purchases).
-      if (GEAR_SLOT_BY_PLANT[pt] === 'satchel') {
-        for (let i = oldIndex; i < lastIndex; i++) this.addGardenBed();
-      }
+  // Equip the top tier of every gear slot via the coin-gear path (free in dev).
+  devGrantAllGear() {
+    GEAR_SLOTS.forEach((slot) => {
+      const list = this.economyData.gear[slot] || [];
+      if (!list.length) return;
+      this.grantGearTier(slot, list[list.length - 1]);
     });
-    this.player.recalculateStats();
     this.syncHud();
   }
 
@@ -3006,18 +3084,6 @@ export default class GameScene extends Phaser.Scene {
     });
     this.player.recalculateStats();
     this.daySystem.setTimerBonus(this.player.statBonuses.timerBonus);
-    this.syncHud();
-  }
-
-  devNextTier({ plantType }) {
-    const tiers = this.gameData.upgrades[plantType].gear.tiers;
-    const lv = this.upgradeLevels[plantType];
-    const next = lv.gear + 1;
-    if (next >= tiers.length) return;
-    lv.gear = next;
-    this.applyGearEffect(plantType, next);
-    if (GEAR_SLOT_BY_PLANT[plantType] === 'satchel') this.addGardenBed();
-    this.player.recalculateStats();
     this.syncHud();
   }
 
