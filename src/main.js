@@ -13,6 +13,7 @@ import MenuScene from './scenes/MenuScene.js';
 import GameScene from './scenes/GameScene.js';
 import UIScene from './scenes/UIScene.js';
 import UpgradeScene from './scenes/UpgradeScene.js';
+import MarketplaceScene from './scenes/MarketplaceScene.js';
 import WinScene from './scenes/WinScene.js';
 import SignpostScene from './scenes/SignpostScene.js';
 import SeedDictScene from './scenes/SeedDictScene.js';
@@ -63,6 +64,7 @@ const config = {
     GameScene,
     UIScene,
     UpgradeScene,
+    MarketplaceScene,
     WinScene,
     SignpostScene,
     SeedDictScene,

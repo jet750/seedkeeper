@@ -116,6 +116,10 @@ const BEDS_PER_ROW = 4;
 // Workshop chest — lower-right of the garden interior.
 const CHEST_X = 3340;
 const CHEST_Y = 860;
+// Market stall (Sprint 3) — opens the marketplace on F-interact. Single config
+// point: move this when the LDtk world lands; nothing else hardcodes its tile.
+const MARKET_X = 3340;
+const MARKET_Y = 620;
 // obj_chest.png is a 48x48 sheet: row 0 is a closed→open progression.
 const CHEST_CLOSED_FRAME = 0;
 const CHEST_OPEN_FRAME = 4;
@@ -151,6 +155,7 @@ export default class GameScene extends Phaser.Scene {
     this._swapPickerOpen = false;
     this._swapSnoozedSeed = null;
     this._upgradeOpen = false;
+    this._marketOpen = false; // Sprint 3 — marketplace overlay open
     this._winOpen = false;
     this._signpostOpen = false;
     this._lastPromptText = null; // contextual F-prompt dedupe (Sprint 9)
@@ -377,6 +382,7 @@ export default class GameScene extends Phaser.Scene {
     this.subscribe('seed:collected', (d) => this.onSeedCollected(d));
     this.subscribe('projectile:spawn', (d) => this.firePooledProjectile(d));
     this.subscribe('upgrade:closed', () => this.onUpgradeClosed());
+    this.subscribe('market:closed', () => this.onMarketClosed());
     this.subscribe('upgrade:purchased', (d) => this.onUpgradePurchased(d));
     this.subscribe('player:slept', () => this.onPlayerSlept());
 
@@ -1165,6 +1171,7 @@ export default class GameScene extends Phaser.Scene {
     if (this._sleeping || this._paused) return;
     if (
       this._upgradeOpen ||
+      this._marketOpen ||
       this._winOpen ||
       this._signpostOpen ||
       this._dictionaryOpen ||
@@ -1542,11 +1549,26 @@ export default class GameScene extends Phaser.Scene {
       .setDepth(2);
     this.addStructureLabel(BOOK_X, BOOK_Y, BOOK_X, BOOK_Y - 34, 'FIELD NOTES  [F]', '#ABC4DE');
 
+    // Market stall (Sprint 3) — opens the marketplace (sell plants / buy gear +
+    // capacity). Placeholder ember-toned stall until a real shop sprite lands;
+    // placement is the MARKET_X/MARKET_Y config point.
+    this.add.rectangle(MARKET_X, MARKET_Y + 16, 64, 10, 0x6e4a22).setDepth(2); // counter base
+    this.market = this.add
+      .rectangle(MARKET_X, MARKET_Y - 8, 60, 40, 0xc96b42)
+      .setStrokeStyle(3, 0xe5b69a)
+      .setDepth(2);
+    this.add
+      .rectangle(MARKET_X, MARKET_Y - 30, 72, 12, 0x8a3a22)
+      .setStrokeStyle(2, 0x5a2a18)
+      .setDepth(2); // awning
+    this.addStructureLabel(MARKET_X, MARKET_Y, MARKET_X, MARKET_Y - 44, 'MARKET  [F]', '#E5B69A');
+
     // Solid garden props get a small static collider so the player routes around
     // them (Sprint 10c). Interaction stays distance-based, so this never blocks
     // the [F] prompt — only the body of the object is impassable.
     this.addPropCollision(this.signpost, 10, 20);
     this.addPropCollision(this.book, 24, 16);
+    this.addPropCollision(this.market, 56, 24);
   }
 
   // Give a static prop a narrow collider and route the player around it.
@@ -1605,6 +1627,7 @@ export default class GameScene extends Phaser.Scene {
     };
 
     consider(this.chest, INTERACT_RANGE, () => ({ text: '[F] Open Workshop', actionable: true }));
+    consider(this.market, INTERACT_RANGE, () => ({ text: '[F] Open Market', actionable: true }));
     consider(this.signpost, INTERACT_RANGE, () => ({ text: '[F] View achievements', actionable: true }));
     consider(this.sleepObject, INTERACT_RANGE, () => ({
       text: `[F] Sleep — advance to Day ${this.daySystem.dayNumber + 1}`,
@@ -1849,13 +1872,19 @@ export default class GameScene extends Phaser.Scene {
 
   handleInteract() {
     // The planting picker owns input while open — F does nothing until the
-    // player chooses a seed or cancels (Sprint 10c).
-    if (this._plantPickerOpen) return;
+    // player chooses a seed or cancels (Sprint 10c). Likewise a modal overlay
+    // (workshop / market) owns input until dismissed (matters on mobile, where
+    // the touch interact button can still fire while the world loop is frozen).
+    if (this._plantPickerOpen || this._upgradeOpen || this._marketOpen) return;
     // Priority: chest > sleep > well > garden bed > seed swap. Objects are
     // spatially separated so only one is ever in range, but ordering keeps it
     // deterministic.
     if (this.chest && this.within(this.chest, INTERACT_RANGE)) {
       this.openUpgrade();
+      return;
+    }
+    if (this.market && this.within(this.market, INTERACT_RANGE)) {
+      this.openMarket();
       return;
     }
     if (this.signpost && this.within(this.signpost, INTERACT_RANGE)) {
@@ -2704,6 +2733,43 @@ export default class GameScene extends Phaser.Scene {
     }
   }
 
+  // --- Marketplace (Sprint 3) -----------------------------------------------
+
+  openMarket() {
+    if (this._marketOpen) return;
+    this._marketOpen = true;
+    this.player.setVelocity(0, 0);
+    if (this._swapPickerOpen) this.closeSwapPicker(false);
+    EventBus.emit('market:opened', {});
+    this.scene.launch('MarketplaceScene');
+  }
+
+  onMarketClosed() {
+    this._marketOpen = false;
+  }
+
+  // Plant sell value scales with grow time (economy.json.sellPrices, keyed by
+  // growthDays). Returns coins per unit.
+  sellPrice(plantType) {
+    const plant = this.gameData.plants[plantType];
+    if (!plant) return 0;
+    return this.economyData.sellPrices[String(plant.growthDays)] || 0;
+  }
+
+  // Sell up to `qty` of a plant for coins. Routes the payout through addCoins so
+  // the HUD + save stay in sync; never sells more than the player owns.
+  sellPlant(plantType, qty = 1) {
+    const have = this.plantBank[plantType] || 0;
+    const n = Math.min(qty, have);
+    if (n <= 0) return { ok: false };
+    const total = this.sellPrice(plantType) * n;
+    this.plantBank[plantType] -= n;
+    this.addCoins(total); // emits coins:changed + autoSave
+    EventBus.emit('bank:updated', { bank: { ...this.plantBank } });
+    EventBus.emit('plant:sold', { plantType, qty: n, coins: total });
+    return { ok: true, qty: n, coins: total };
+  }
+
   onUpgradeClosed() {
     this._upgradeOpen = false;
     if (!this.chest) return;
@@ -3119,10 +3185,10 @@ export default class GameScene extends Phaser.Scene {
   update(time, delta) {
     if (this._fpsText) this._fpsText.setText(`FPS: ${Math.round(this.game.loop.actualFps)}`);
     if (!GameState.is('PLAYING')) return;
-    // Freeze the world (but keep rendering) while a modal overlay (workshop, win,
-    // achievement log, or seed dictionary) is open. The world-detail popup is
-    // non-modal, so it deliberately does NOT freeze the world.
-    if (this._upgradeOpen || this._winOpen || this._signpostOpen || this._dictionaryOpen) return;
+    // Freeze the world (but keep rendering) while a modal overlay (workshop,
+    // market, win, achievement log, or seed dictionary) is open. The world-detail
+    // popup is non-modal, so it deliberately does NOT freeze the world.
+    if (this._upgradeOpen || this._marketOpen || this._winOpen || this._signpostOpen || this._dictionaryOpen) return;
 
     const dt = delta / 1000;
     this._playtimeMs += delta;
