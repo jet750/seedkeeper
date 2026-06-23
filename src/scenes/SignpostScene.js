@@ -19,6 +19,12 @@ const CHIP_H = 58;
 const ROW_GAP = 8;
 const HEADER_H = 30;
 
+// Scroll viewport — chapter content is clipped to this band and scrolls within
+// it so the log never overflows the bottom of the screen (40+ achievements
+// exceed a single fixed page).
+const VIEWPORT_TOP = 100;
+const VIEWPORT_BOTTOM = VIRTUAL_HEIGHT - 24;
+
 export default class SignpostScene extends Phaser.Scene {
   constructor() {
     super('SignpostScene');
@@ -55,6 +61,7 @@ export default class SignpostScene extends Phaser.Scene {
       .setDepth(101);
 
     this.layout();
+    this.setupScroll();
 
     this.makeButton(VIRTUAL_WIDTH - MARGIN - 110, 44, 220, 40, '[ Close ]   Esc', () =>
       this.close()
@@ -64,6 +71,11 @@ export default class SignpostScene extends Phaser.Scene {
   }
 
   layout() {
+    // All chapter content lives in one scrollable container so it can be
+    // clipped and panned within the viewport band.
+    this.content = this.add.container(0, 0).setDepth(101);
+    this.scrollY = 0;
+
     const chipW = (VIRTUAL_WIDTH - MARGIN * 2 - GAP * (COLS - 1)) / COLS;
     let y = 108;
 
@@ -74,14 +86,13 @@ export default class SignpostScene extends Phaser.Scene {
       // Chapter IV stays fully concealed until one of its secrets is found.
       if (tier === 4 && !anyHiddenUnlocked) return;
 
-      this.add
-        .text(MARGIN, y, TIER_LABELS[tier], {
-          fontFamily: '"SproutLands", "Courier New", monospace',
-          fontSize: '20px',
-          fontStyle: 'bold',
-          color: '#D4A83F'
-        })
-        .setDepth(101);
+      const header = this.add.text(MARGIN, y, TIER_LABELS[tier], {
+        fontFamily: '"SproutLands", "Courier New", monospace',
+        fontSize: '20px',
+        fontStyle: 'bold',
+        color: '#D4A83F'
+      });
+      this.content.add(header);
       y += HEADER_H;
 
       entries.forEach((a, i) => {
@@ -95,6 +106,66 @@ export default class SignpostScene extends Phaser.Scene {
       const rows = Math.ceil(entries.length / COLS);
       y += rows * (CHIP_H + ROW_GAP) + 14;
     });
+
+    this.contentBottom = y;
+  }
+
+  setupScroll() {
+    const viewportH = VIEWPORT_BOTTOM - VIEWPORT_TOP;
+
+    // Clip chapter content to the viewport so scrolled rows never paint over
+    // the title bar or run past the bottom edge.
+    const maskShape = this.make.graphics({ x: 0, y: 0, add: false });
+    maskShape.fillStyle(0xffffff);
+    maskShape.fillRect(0, VIEWPORT_TOP, VIRTUAL_WIDTH, viewportH);
+    this.content.setMask(maskShape.createGeometryMask());
+
+    if (this.contentBottom <= VIEWPORT_BOTTOM) return; // everything fits — no scroll needed
+
+    // Scrollbar: faint track + accent thumb on the right gutter.
+    const barX = VIRTUAL_WIDTH - 18;
+    this.add
+      .rectangle(barX, VIEWPORT_TOP, 6, viewportH, 0x000000, 0.35)
+      .setOrigin(0, 0)
+      .setDepth(103);
+    const thumbH = Math.max(40, (viewportH * viewportH) / (this.contentBottom - VIEWPORT_TOP));
+    this.scrollThumb = this.add
+      .rectangle(barX, VIEWPORT_TOP, 6, thumbH, 0xedd49a, 0.7)
+      .setOrigin(0, 0)
+      .setDepth(104);
+    this.thumbTravel = viewportH - thumbH;
+
+    // Mouse wheel.
+    this.input.on('wheel', (pointer, over, dx, dy) => this.applyScroll(this.scrollY - dy));
+
+    // Click / touch drag.
+    let dragging = false;
+    let lastY = 0;
+    this.input.on('pointerdown', (pointer) => {
+      if (pointer.y >= VIEWPORT_TOP && pointer.y <= VIEWPORT_BOTTOM) {
+        dragging = true;
+        lastY = pointer.y;
+      }
+    });
+    this.input.on('pointermove', (pointer) => {
+      if (!dragging) return;
+      this.applyScroll(this.scrollY + (pointer.y - lastY));
+      lastY = pointer.y;
+    });
+    const stopDrag = () => {
+      dragging = false;
+    };
+    this.input.on('pointerup', stopDrag);
+    this.input.on('pointerupoutside', stopDrag);
+  }
+
+  applyScroll(targetY) {
+    const minY = Math.min(0, VIEWPORT_BOTTOM - this.contentBottom);
+    this.scrollY = Phaser.Math.Clamp(targetY, minY, 0);
+    this.content.y = this.scrollY;
+    if (this.scrollThumb && minY < 0) {
+      this.scrollThumb.y = VIEWPORT_TOP + (this.scrollY / minY) * this.thumbTravel;
+    }
   }
 
   buildChip(a, x, y, w) {
@@ -107,6 +178,7 @@ export default class SignpostScene extends Phaser.Scene {
       .setStrokeStyle(2, isUnlocked ? 0x4d4843 : 0x2f2b27)
       .setDepth(101);
     bg.setAlpha(isUnlocked ? 1 : 0.85);
+    this.content.add(bg);
 
     const iconChar = concealed ? '❔' : a.icon;
     const icon = this.add
@@ -114,9 +186,10 @@ export default class SignpostScene extends Phaser.Scene {
       .setOrigin(0.5)
       .setDepth(102);
     if (!isUnlocked) icon.setAlpha(0.4);
+    this.content.add(icon);
 
     const nameText = concealed ? '???' : a.name;
-    this.add
+    const name = this.add
       .text(x + 52, y + 12, nameText, {
         fontFamily: '"SproutLands", "Courier New", monospace',
         fontSize: '15px',
@@ -124,13 +197,14 @@ export default class SignpostScene extends Phaser.Scene {
         color: isUnlocked ? '#F5EFE6' : '#7a746c'
       })
       .setDepth(102);
+    this.content.add(name);
 
     let flavorText;
     if (isUnlocked) flavorText = `"${a.flavor}"`;
     else if (a.hidden) flavorText = '???';
     else flavorText = '???';
 
-    this.add
+    const flavor = this.add
       .text(x + 52, y + 32, flavorText, {
         fontFamily: '"SproutLands", "Courier New", monospace',
         fontSize: '11px',
@@ -138,11 +212,12 @@ export default class SignpostScene extends Phaser.Scene {
         wordWrap: { width: w - 64 }
       })
       .setDepth(102);
+    this.content.add(flavor);
 
     if (isUnlocked) {
       const day = this.days[a.id];
       if (day !== undefined) {
-        this.add
+        const dayText = this.add
           .text(x + w - 10, y + 10, `Day ${day}`, {
             fontFamily: '"SproutLands", "Courier New", monospace',
             fontSize: '11px',
@@ -150,6 +225,7 @@ export default class SignpostScene extends Phaser.Scene {
           })
           .setOrigin(1, 0)
           .setDepth(102);
+        this.content.add(dayText);
       }
     }
   }
