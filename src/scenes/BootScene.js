@@ -9,8 +9,15 @@
 
 import Phaser from 'phaser';
 import GameState from '../core/GameState.js';
-import { VIRTUAL_WIDTH, VIRTUAL_HEIGHT } from '../core/Constants.js';
+import { VIRTUAL_WIDTH, VIRTUAL_HEIGHT, USE_TILED_WORLD, TILED_WORLD_KEY } from '../core/Constants.js';
 import manifest from '../data/assetManifest.json';
+// The baked, Phaser-ready Tiled world (Sprint 9): embedded tilesets, the heavy
+// nature_dynamic layer stripped. Built by scripts/bake_world.cjs. Imported as a URL
+// so Vite emits it as a static asset; its tileset images load via the manifest
+// (ts_* keys) and GameScene assembles the layers.
+import worldMapUrl from '../../assets/tilemaps/world_v1.json?url';
+// Explicit (glob-proof) tileset image URLs for the Tiled world.
+import TILESET_IMAGES, { tilesetKey } from '../world/tilesetImages.js';
 
 // Eager URL maps of whatever currently exists on disk. Empty objects when the
 // folders are empty (Sprint 1 state) — no network requests are made for them.
@@ -83,6 +90,21 @@ export default class BootScene extends Phaser.Scene {
         // TODO(asset): drop ${entry.path} into /assets/audio.
       }
     });
+
+    // Hand-built Tiled world (Sprint 9) as TILED_JSON, plus its 17 tileset images
+    // via explicit ?url imports (the glob pipeline above drops some in prod — see
+    // tilesetImages.js). GameScene builds the layers and falls back to the
+    // procedural world if the map is absent.
+    if (USE_TILED_WORLD) {
+      this.load.tilemapTiledJSON(TILED_WORLD_KEY, worldMapUrl);
+      queued++;
+      for (const [name, url] of Object.entries(TILESET_IMAGES)) {
+        if (url) {
+          this.load.image(tilesetKey(name), url);
+          queued++;
+        }
+      }
+    }
 
     this.load.on('progress', (value) => this.updateProgress(value));
     this.load.on('loaderror', (file) => {

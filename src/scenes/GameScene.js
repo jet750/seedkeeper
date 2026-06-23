@@ -26,9 +26,13 @@ import {
   VIRTUAL_WIDTH,
   VIRTUAL_HEIGHT,
   FONT_FAMILY,
+  TILE_SIZE,
+  USE_TILED_WORLD,
+  TILED_WORLD_KEY,
   isDevModeActive
 } from '../core/Constants.js';
 import WorldZoneSystem, { RIVER_WIDTH, CREEK_WIDTH } from '../systems/WorldZoneSystem.js';
+import { tilesetKey } from '../world/tilesetImages.js';
 import Player from '../entities/Player.js';
 import Slime from '../entities/Slime.js';
 import Skeleton from '../entities/Skeleton.js';
@@ -121,18 +125,21 @@ const PROJECTILE_POOL_SIZE = 10;
 // Garden bed grid layout (row-wraps as garden-bed tiers add beds). Anchored to the
 // centered garden homestead: the 4-bed top row is centred on the garden's x-axis
 // (BED_BASE_X + 1.5*COL_GAP == garden centre 3200) and sits in the upper third.
+// Garden-interior placements are authored relative to GARDEN_TOP so the whole
+// homestead follows the garden anchor — Sprint 9 re-centred the garden (GARDEN_TOP
+// 200 → 2800) and these offsets keep every structure in its original layout.
 const BED_BASE_X = 2960;
-const BED_BASE_Y = 320;
+const BED_BASE_Y = GARDEN_TOP + 120; // was 320 (GARDEN_TOP 200 + 120)
 const BED_COL_GAP = 160;
 const BED_ROW_GAP = 150;
 const BEDS_PER_ROW = 4;
 // Workshop chest — lower-right of the garden interior.
 const CHEST_X = 3340;
-const CHEST_Y = 860;
+const CHEST_Y = GARDEN_TOP + 660; // was 860
 // Market stall (Sprint 3) — opens the marketplace on F-interact. Single config
-// point: move this when the LDtk world lands; nothing else hardcodes its tile.
+// point: move this when the world layout changes; nothing else hardcodes its tile.
 const MARKET_X = 3340;
-const MARKET_Y = 620;
+const MARKET_Y = GARDEN_TOP + 420; // was 620
 // obj_chest.png is a 48x48 sheet: row 0 is a closed→open progression.
 const CHEST_CLOSED_FRAME = 0;
 const CHEST_OPEN_FRAME = 4;
@@ -324,6 +331,10 @@ export default class GameScene extends Phaser.Scene {
     // blocks the player (except at the gates) and keeps enemies out ---
     this.createGardenFence();
 
+    // Tiled-world solid-layer colliders (Sprint 9) — player + enemy groups now
+    // exist. No-op on the procedural world.
+    this.wireTiledWorldCollision();
+
     // --- Sprint 2 world objects ---
     this.seeds = [];
     this.spawnSeeds();
@@ -340,9 +351,13 @@ export default class GameScene extends Phaser.Scene {
 
     // --- Sprint 10c organic world structure ---
     // Built here (after the player, enemy groups and seeds exist) so colliders
-    // wire immediately and tree placement can avoid burying seeds.
-    this.createRiverSystem(); // winding river + creeks + bridges + collision
-    this.createOrganicTrees(); // clustered tree barriers with navigable gaps
+    // wire immediately and tree placement can avoid burying seeds. Skipped on the
+    // Tiled world (Sprint 9) — it supplies its own water and tree layers and their
+    // collision; running these would double up the river and trees.
+    if (!this._tiledWorldActive) {
+      this.createRiverSystem(); // winding river + creeks + bridges + collision
+      this.createOrganicTrees(); // clustered tree barriers with navigable gaps
+    }
 
     this.createWorldDetails(); // examinable storytelling objects
     this.maybeSpawnDailySeed(); // once-a-day glowing gift
@@ -538,15 +553,19 @@ export default class GameScene extends Phaser.Scene {
   // --- World construction ---------------------------------------------------
 
   buildWorld() {
-    // TODO Sprint 5/10d: replace placeholder geometry with a Tiled map / real
-    // tileset art. createOrganicBackground() samples the WorldZoneSystem into a
-    // colour map for now; the river, bridges and tree clusters are built later in
-    // create() (they need the player and enemy groups to exist).
+    // Sprint 9: prefer the hand-built Tiled world (world_v1). When it loads it
+    // replaces the procedural background, river and tree clusters; the procedural
+    // generator below is retained as the fallback if the map is absent or fails.
+    this._tiledWorldActive = false;
+    if (USE_TILED_WORLD && this.cache.tilemap.exists(TILED_WORLD_KEY)) {
+      this._tiledWorldActive = this.createTiledWorld();
+    }
+    if (this._tiledWorldActive) return;
 
-    // Organic biome map (Sprint 10c revised) — irregular zones sampled from the
-    // WorldZoneSystem instead of flat horizontal bands. The 4-sided garden fence
-    // (visual + colliders) is built later by createGardenFence(), once the player
-    // and enemy groups exist.
+    // --- Procedural fallback (Sprint 10c) -------------------------------------
+    // Organic biome map — irregular zones sampled from the WorldZoneSystem. The
+    // 4-sided garden fence (visual + colliders) is built later by
+    // createGardenFence(), once the player and enemy groups exist.
     this.createOrganicBackground();
     // Real grass/soil tiles laid over the sampled colour map (Sprint 10d). The
     // colour map stays underneath as a safe base so nothing gaps if a tileset is
@@ -559,6 +578,98 @@ export default class GameScene extends Phaser.Scene {
     this.addZoneLabel('MEADOW', 1000, '#3d6b28', 0.30);
     this.addZoneLabel('FOREST', 1380, '#24412a', 0.35);
     this.addZoneLabel('DEEP WOODS', 2120, '#16280c', 0.45);
+  }
+
+  // --- Hand-built Tiled world (Sprint 9) ------------------------------------
+  // Builds world_v1: its ten tile layers render as a backdrop (negative depths so
+  // the player, enemies, beds, fence and props all sit on top), with collision on
+  // the solid layers and a walkable cut through the water where bridges cross.
+  // Tileset images load in BootScene under ts_<name> keys; a missing one is skipped
+  // (its tiles render blank) rather than throwing. Returns true on success so
+  // buildWorld() can fall back to the procedural world otherwise.
+  createTiledWorld() {
+    let map;
+    try {
+      map = this.make.tilemap({ key: TILED_WORLD_KEY });
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.warn('[world] tiled map failed to build; procedural fallback:', err && err.message);
+      return false;
+    }
+    if (!map || !map.layers || !map.layers.length) return false;
+    this.tiledMap = map;
+
+    // Add every embedded tileset, keyed ts_<name-with-underscores>. The texture must
+    // be loaded (BootScene); guard so a missing image skips just that tileset.
+    const tilesets = [];
+    const missingTilesets = [];
+    for (const ts of map.tilesets) {
+      const key = tilesetKey(ts.name);
+      if (!this.textures.exists(key)) {
+        missingTilesets.push(`${ts.name} -> ${key}`);
+        continue;
+      }
+      const added = map.addTilesetImage(ts.name, key, TILE_SIZE, TILE_SIZE);
+      if (added) tilesets.push(added);
+    }
+    this._tiledMissingTilesets = missingTilesets;
+    if (missingTilesets.length) {
+      // eslint-disable-next-line no-console
+      console.warn('[world] tileset images not loaded (tiles render blank):', missingTilesets.join(', '));
+    }
+    if (!tilesets.length) return false; // nothing to draw — use the procedural world
+
+    // Back-to-front backdrop. All depths < 0 so every gameplay object sits on top.
+    const LAYER_DEPTH = {
+      ground: -20, water: -19, paths_main: -18, paths_spur: -17, bridges: -16,
+      props_ground: -15, fences: -14, structures: -13, props_water: -12, props_trees: -11
+    };
+    this.tiledLayers = {};
+    for (const ld of map.layers) {
+      const layer = map.createLayer(ld.name, tilesets, 0, 0);
+      if (!layer) continue;
+      layer.setDepth(LAYER_DEPTH[ld.name] != null ? LAYER_DEPTH[ld.name] : -10);
+      this.tiledLayers[ld.name] = layer;
+    }
+
+    // Solid layers: water, trees, fences, structures and water props block movement.
+    // Player/enemy colliders are wired later (wireTiledWorldCollision) once the
+    // player and enemy groups exist.
+    const SOLID = ['water', 'props_trees', 'fences', 'structures', 'props_water'];
+    this.tiledSolidLayers = [];
+    for (const name of SOLID) {
+      const layer = this.tiledLayers[name];
+      if (!layer) continue;
+      layer.setCollisionByExclusion([-1]);
+      this.tiledSolidLayers.push(layer);
+    }
+    // Bridges are walkable: clear water collision under every bridge tile.
+    const water = this.tiledLayers.water;
+    const bridges = this.tiledLayers.bridges;
+    if (water && bridges) {
+      water.forEachTile((t) => {
+        if (t.index === -1) return;
+        const b = bridges.getTileAt(t.x, t.y);
+        if (b && b.index !== -1) t.resetCollision();
+      });
+    }
+
+    // World + camera bounds to the map's true pixel size (6400x6400).
+    this.physics.world.setBounds(0, 0, map.widthInPixels, map.heightInPixels);
+    this.cameras.main.setBounds(0, 0, map.widthInPixels, map.heightInPixels);
+    return true;
+  }
+
+  // Wire player + enemy colliders against the Tiled solid layers. Called from
+  // create() after the player and both enemy groups exist. No-op on the
+  // procedural world (tiledSolidLayers is unset).
+  wireTiledWorldCollision() {
+    if (!this._tiledWorldActive || !this.tiledSolidLayers) return;
+    for (const layer of this.tiledSolidLayers) {
+      this.physics.add.collider(this.player, layer);
+      this.physics.add.collider(this.slimeGroup, layer);
+      this.physics.add.collider(this.skeletonGroup, layer);
+    }
   }
 
   // A single faint, centered biome name drawn into the ground layer.
@@ -1073,10 +1184,24 @@ export default class GameScene extends Phaser.Scene {
 
   randomForestPosition() {
     const margin = ENEMY_SPAWN_MARGIN;
-    return {
-      x: Phaser.Math.Between(margin, WORLD_WIDTH - margin),
-      y: Phaser.Math.Between(GARDEN_ZONE_HEIGHT + margin, WORLD_HEIGHT - margin)
-    };
+    for (let attempt = 0; attempt < 30; attempt++) {
+      const x = Phaser.Math.Between(margin, WORLD_WIDTH - margin);
+      const y = Phaser.Math.Between(GARDEN_ZONE_HEIGHT + margin, WORLD_HEIGHT - margin);
+      if (!this.isInGarden(x, y)) return { x, y };
+    }
+    return { x: margin, y: WORLD_HEIGHT - margin };
+  }
+
+  // True when (x, y) falls inside the garden homestead (plus a small margin) — used
+  // to keep enemy spawns out of the safe centred garden (Sprint 9). The garden moved
+  // from the top band to the world centre, so spawn gating can no longer rely on the
+  // legacy GARDEN_ZONE_HEIGHT top-strip test alone.
+  isInGarden(x, y) {
+    const m = 48;
+    return (
+      x >= GARDEN_LEFT - m && x <= GARDEN_RIGHT + m &&
+      y >= GARDEN_TOP - m && y <= GARDEN_BOTTOM + m
+    );
   }
 
   // Green slimes roam the meadow + mid-forest (Sprint 10c revised).
@@ -1098,6 +1223,7 @@ export default class GameScene extends Phaser.Scene {
       const x = Phaser.Math.Between(margin, WORLD_WIDTH - margin);
       const y = Phaser.Math.Between(GARDEN_ZONE_HEIGHT + margin, WORLD_HEIGHT - margin);
       if (this.worldZoneSystem.isNearRiver(x, y)) continue;
+      if (this.isInGarden(x, y)) continue; // never inside the safe centred garden (Sprint 9)
       if (zoneNames.includes(this.worldZoneSystem.getZoneAt(x, y))) return { x, y };
     }
     return { x: WORLD_WIDTH / 2, y: GARDEN_ZONE_HEIGHT + 400 };
@@ -1568,33 +1694,37 @@ export default class GameScene extends Phaser.Scene {
 
     // Well — fill the watering can here. Real Sprout Lands well sprite when the
     // art is present (Sprint 10), else the Sprint 2 placeholder rectangle.
+    // Garden-interior Y coords are GARDEN_TOP-relative so they followed the
+    // Sprint 9 re-centre (the +280 / +660 offsets reproduce the old y=480 / y=860).
+    const WELL_Y = GARDEN_TOP + 280; // was 480
     if (this.textures.exists('obj_well')) {
-      this.well = this.add.image(2880, 480, 'obj_well').setScale(2).setDepth(2);
+      this.well = this.add.image(2880, WELL_Y, 'obj_well').setScale(2).setDepth(2);
     } else {
       this.well = this.add
-        .rectangle(2880, 480, 50, 50, 0x3b6ea5)
+        .rectangle(2880, WELL_Y, 50, 50, 0x3b6ea5)
         .setStrokeStyle(3, 0x244a6e)
         .setDepth(2);
     }
-    this.addStructureLabel(2880, 480, 2880, 440, 'WELL', '#ABC4DE');
+    this.addStructureLabel(2880, WELL_Y, 2880, WELL_Y - 40, 'WELL', '#ABC4DE');
 
     // Sleep bed — advance the day. Uses a bed slice from the Sprout Lands
     // Basic_Furniture sheet when present; the crop region is a best fit and can be
     // nudged (x/y/w/h below) if it lands off the bed.
+    const SLEEP_Y = GARDEN_TOP + 280; // was 480
     if (this.textures.exists('furniture_sheet')) {
       const furnTex = this.textures.get('furniture_sheet');
       if (!furnTex.has('bed')) furnTex.add('bed', 0, 0, 48, 64, 48);
       this.sleepObject = this.add
-        .image(3520, 480, 'furniture_sheet', 'bed')
+        .image(3520, SLEEP_Y, 'furniture_sheet', 'bed')
         .setDisplaySize(96, 72)
         .setDepth(2);
     } else {
       this.sleepObject = this.add
-        .rectangle(3520, 480, 72, 48, 0x8a5a3a)
+        .rectangle(3520, SLEEP_Y, 72, 48, 0x8a5a3a)
         .setStrokeStyle(3, 0x5a3a22)
         .setDepth(2);
     }
-    this.addStructureLabel(3520, 480, 3520, 438, 'SLEEP  [F]', '#EDD49A');
+    this.addStructureLabel(3520, SLEEP_Y, 3520, SLEEP_Y - 42, 'SLEEP  [F]', '#EDD49A');
 
     // Workshop station — open the upgrade overlay. Prefers the workbench art
     // (Sprint 3-polish), then the chest sheet (48x48, open frames), then a
@@ -1624,7 +1754,7 @@ export default class GameScene extends Phaser.Scene {
     // Signpost — open the achievement log. Placed near the chest but well
     // outside its interaction radius so the two never overlap.
     const SIGN_X = 3120;
-    const SIGN_Y = 860;
+    const SIGN_Y = GARDEN_TOP + 660; // was 860
     if (this.textures.exists('signs')) {
       // Sprout Lands sign board (frame 0), scaled up from its 16px source.
       this.signpost = this.add.sprite(SIGN_X, SIGN_Y, 'signs', 0).setScale(3).setDepth(2);
@@ -1640,7 +1770,7 @@ export default class GameScene extends Phaser.Scene {
     // Field Notes book (Sprint 11) — opens the Seed Dictionary. Distinct blue
     // book on a stand, set apart from the signpost and the bed grid.
     const BOOK_X = 3000;
-    const BOOK_Y = 860;
+    const BOOK_Y = GARDEN_TOP + 660; // was 860
     this.add.rectangle(BOOK_X, BOOK_Y + 14, 8, 36, 0x6e4a22).setDepth(2); // stand
     this.book = this.add
       .rectangle(BOOK_X, BOOK_Y - 8, 30, 22, 0x395a7a)

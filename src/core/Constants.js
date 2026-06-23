@@ -4,22 +4,33 @@
 // Import from this file instead.
 
 // World / canvas dimensions
+// Sprint 9: the hand-built Tiled world (world_v1) is a 400x400 tile map = 6400x6400px.
+// WORLD_HEIGHT grew from 4800 to match it (square world). The procedural fallback
+// still builds at this size; its zones just leave the extra southern band sparse.
 export const WORLD_WIDTH = 6400; // doubled (was 3200) for the Sprint 10c organic world
-export const WORLD_HEIGHT = 4800; // doubled (was 2400) — more room below the garden
+export const WORLD_HEIGHT = 6400; // Sprint 9: was 4800 — now matches the square Tiled world
 export const VIRTUAL_WIDTH = 1600;
 export const VIRTUAL_HEIGHT = 900;
 export const TILE_SIZE = 16;
 
+// --- World source (Sprint 9) ---
+// When true (and the map is in the tilemap cache), GameScene renders the hand-built
+// Tiled world (world_v1) instead of the procedural background/river/trees. The
+// procedural generator is retained as the fallback when the map fails to load.
+export const USE_TILED_WORLD = true;
+export const TILED_WORLD_KEY = 'world_v1';
+
 // Zones
 export const GARDEN_ZONE_HEIGHT = 800; // legacy band height — still used for enemy/tree spawn gating
 
-// Garden homestead (centered square). The garden is no longer the full top band;
-// it's an 800x800 fenced square sitting near the top-center of the world, with the
-// forest wrapping around it on all sides.
+// Garden homestead (centered square). The garden is an 800x800 fenced square.
+// Sprint 9 re-centered it to the middle of the world (was top-center at y=200) so it
+// sits on the Tiled world's authored garden and the distance-from-home enemy gradient
+// (ENEMY_HOME = garden centre) radiates outward in every direction.
 export const GARDEN_WIDTH  = 800;
 export const GARDEN_HEIGHT = 800;
 export const GARDEN_X      = (WORLD_WIDTH - GARDEN_WIDTH) / 2; // 2800 — left edge
-export const GARDEN_Y      = 200; // top edge (leaves a forest margin above)
+export const GARDEN_Y      = (WORLD_HEIGHT - GARDEN_HEIGHT) / 2; // 2800 — Sprint 9: centred (was 200)
 export const GARDEN_LEFT   = GARDEN_X;
 export const GARDEN_RIGHT  = GARDEN_X + GARDEN_WIDTH;
 export const GARDEN_TOP    = GARDEN_Y;
