@@ -22,10 +22,16 @@ const DOUBLE_PER_TIER = 0.04;
 
 // Per-plant growth art (Economy Sprint 6/3d). Each plant now has its OWN
 // spritesheet keyed by its plant type (e.g. 'corn', 'carrots') — a clean 7-column
-// growth strip: col 0 = just-planted seed, cols 1-4 = sprout → mid growth, col 6 =
+// growth strip: col 0 = just-planted seed, cols 1-4 = sprout → mid growth, col 5 =
 // ready to harvest. This replaces the single shared "farming_plants" sheet plus
 // the PLANT_ROW_MAP row lookup; the frame is now the growth column alone.
 const PLANT_SPRITE_FRAMES = 7; // columns 0..6 within a plant's strip
+// Sprint 8 fix: the mature/READY crop renders the LAST NON-EMPTY column. Across all
+// 28 plant sheets columns 0..5 are populated and only corn has art in col 6 — every
+// other plant's col 6 is empty, so pointing READY at the literal last column
+// (PLANT_SPRITE_FRAMES - 1 = 6) rendered grown plants as a blank frame. Frame 5 is
+// safe for every plant (corn's col-5 art reads fine too).
+const PLANT_READY_FRAME = 5;
 const PLANT_SPRITE_SCALE = 2.4; // 16px source → ~38px, sits on a 56px bed
 const PLANT_SPRITE_ORIGIN_Y = 0.78; // standard crops root near the soil, not centre
 const PLANT_SPRITE_ORIGIN_Y_TALL = 0.85; // tall (16x32) crops root lower onto the soil
@@ -180,11 +186,12 @@ export default class GardenBed {
     s.setVisible(true);
   }
 
-  // Growth column (0..6) within this plant's 7-frame strip: col 0 just-planted,
-  // cols 1-4 interpolated by growth progress, col 6 ready to harvest (Sprint 6/3d).
+  // Growth column within this plant's 7-frame strip: col 0 just-planted, cols 1-4
+  // interpolated by growth progress, col 5 ready to harvest (last non-empty frame —
+  // Sprint 8 fix; col 6 is empty on all but corn and rendered grown plants blank).
   plantSpriteFrame(state) {
     if (state === STATE.PLANTED) return 0;
-    if (state === STATE.READY) return PLANT_SPRITE_FRAMES - 1; // col 6
+    if (state === STATE.READY) return PLANT_READY_FRAME; // col 5 (last non-empty)
     const total = this.totalGrowthDays || 1;
     const progress = Phaser.Math.Clamp(1 - this.daysRemaining / total, 0, 1);
     return Phaser.Math.Clamp(Math.floor(progress * 4) + 1, 1, 4);
