@@ -14,7 +14,10 @@ import manifest from '../data/assetManifest.json';
 
 // Eager URL maps of whatever currently exists on disk. Empty objects when the
 // folders are empty (Sprint 1 state) — no network requests are made for them.
-const imageFiles = import.meta.glob('/assets/images/*.{png,jpg,jpeg}', {
+// Recursive glob: assets were reorganized into categorized subfolders
+// (character/, enemies/, ground/, …). urlFor() matches by basename, so the
+// directory is cosmetic — but the glob must descend with ** to discover them.
+const imageFiles = import.meta.glob('/assets/images/**/*.{png,jpg,jpeg}', {
   eager: true,
   query: '?url',
   import: 'default'

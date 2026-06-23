@@ -6,3 +6,5 @@ dist/
 Thumbs.db
 *.log
 assets-raw/
+asset-inventory.txt
+assets/*.tiled-session

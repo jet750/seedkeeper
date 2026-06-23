@@ -1,0 +1,170 @@
+[
+  {
+    "key": "corn",
+    "path": "assets/images/plants/corn.png",
+    "frameWidth": 16,
+    "frameHeight": 32
+  },
+  {
+    "key": "carrots",
+    "path": "assets/images/plants/carrots.png",
+    "frameWidth": 16,
+    "frameHeight": 16
+  },
+  {
+    "key": "cauliflower",
+    "path": "assets/images/plants/cauliflower.png",
+    "frameWidth": 16,
+    "frameHeight": 16
+  },
+  {
+    "key": "red_berry",
+    "path": "assets/images/plants/red_berry.png",
+    "frameWidth": 16,
+    "frameHeight": 16
+  },
+  {
+    "key": "eggplant",
+    "path": "assets/images/plants/eggplant.png",
+    "frameWidth": 16,
+    "frameHeight": 16
+  },
+  {
+    "key": "blue_flower",
+    "path": "assets/images/plants/blue_flower.png",
+    "frameWidth": 16,
+    "frameHeight": 16
+  },
+  {
+    "key": "cabbage",
+    "path": "assets/images/plants/cabbage.png",
+    "frameWidth": 16,
+    "frameHeight": 16
+  },
+  {
+    "key": "wheat",
+    "path": "assets/images/plants/wheat.png",
+    "frameWidth": 16,
+    "frameHeight": 16
+  },
+  {
+    "key": "pumpkin",
+    "path": "assets/images/plants/pumpkin.png",
+    "frameWidth": 16,
+    "frameHeight": 16
+  },
+  {
+    "key": "parsnip",
+    "path": "assets/images/plants/parsnip.png",
+    "frameWidth": 16,
+    "frameHeight": 16
+  },
+  {
+    "key": "red_lettuce",
+    "path": "assets/images/plants/red_lettuce.png",
+    "frameWidth": 16,
+    "frameHeight": 16
+  },
+  {
+    "key": "purple_beets",
+    "path": "assets/images/plants/purple_beets.png",
+    "frameWidth": 16,
+    "frameHeight": 16
+  },
+  {
+    "key": "blue_flower_2",
+    "path": "assets/images/plants/blue_flower_2.png",
+    "frameWidth": 16,
+    "frameHeight": 16
+  },
+  {
+    "key": "cucumber",
+    "path": "assets/images/plants/cucumber.png",
+    "frameWidth": 16,
+    "frameHeight": 16
+  },
+  {
+    "key": "sunflower",
+    "path": "assets/images/plants/sunflower.png",
+    "frameWidth": 16,
+    "frameHeight": 32
+  },
+  {
+    "key": "sweet_potatoes",
+    "path": "assets/images/plants/sweet_potatoes.png",
+    "frameWidth": 16,
+    "frameHeight": 16
+  },
+  {
+    "key": "white_carrots",
+    "path": "assets/images/plants/white_carrots.png",
+    "frameWidth": 16,
+    "frameHeight": 16
+  },
+  {
+    "key": "watermelon",
+    "path": "assets/images/plants/watermelon.png",
+    "frameWidth": 16,
+    "frameHeight": 16
+  },
+  {
+    "key": "purple_carrot",
+    "path": "assets/images/plants/purple_carrot.png",
+    "frameWidth": 16,
+    "frameHeight": 16
+  },
+  {
+    "key": "blue_melon",
+    "path": "assets/images/plants/blue_melon.png",
+    "frameWidth": 16,
+    "frameHeight": 16
+  },
+  {
+    "key": "beanstalk",
+    "path": "assets/images/plants/beanstalk.png",
+    "frameWidth": 16,
+    "frameHeight": 32
+  },
+  {
+    "key": "pineapple",
+    "path": "assets/images/plants/pineapple.png",
+    "frameWidth": 16,
+    "frameHeight": 32
+  },
+  {
+    "key": "green_melon",
+    "path": "assets/images/plants/green_melon.png",
+    "frameWidth": 16,
+    "frameHeight": 16
+  },
+  {
+    "key": "horseradish",
+    "path": "assets/images/plants/horseradish.png",
+    "frameWidth": 16,
+    "frameHeight": 16
+  },
+  {
+    "key": "tomato",
+    "path": "assets/images/plants/tomato.png",
+    "frameWidth": 16,
+    "frameHeight": 32
+  },
+  {
+    "key": "purple_cauliflower",
+    "path": "assets/images/plants/purple_cauliflower.png",
+    "frameWidth": 16,
+    "frameHeight": 16
+  },
+  {
+    "key": "blue_carrot",
+    "path": "assets/images/plants/blue_carrot.png",
+    "frameWidth": 16,
+    "frameHeight": 16
+  },
+  {
+    "key": "bok_choy",
+    "path": "assets/images/plants/bok_choy.png",
+    "frameWidth": 16,
+    "frameHeight": 16
+  }
+]
