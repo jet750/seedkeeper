@@ -7,9 +7,10 @@
 //
 // All prices/values come from economy.json via GameScene; this scene only renders
 // and dispatches. Every coin change flows through GameScene's addCoins/spendCoins
-// (Sprint 2), so the HUD counter stays in sync. The "always a visible next
-// purchase" rule is honoured: owned tiers are ticked, the next tier shows a BUY
-// (greyed when unaffordable), and farther tiers render as priced silhouettes.
+// (Sprint 2), so the HUD counter stays in sync. Tiers are fully transparent: owned
+// tiers are ticked, the next tier shows a BUY (greyed when unaffordable), and
+// farther tiers render their real name + price, greyed — so the player can judge
+// whether a future upgrade is worth saving for before committing coins.
 
 import Phaser from 'phaser';
 import EventBus from '../core/EventBus.js';
@@ -41,10 +42,26 @@ const COLOR_PANEL = 0x221e1b;
 const COLOR_AFFORD = 0x3a7d44;
 const COLOR_DISABLED = 0x444039;
 const COLOR_OWNED = 0x2f4a33;
-const COLOR_LOCKED = 0x1c1a17;
+const COLOR_LOCKED = 0x2b2723; // future/locked tier — visible surface, clearly greyed text
 const COLOR_CLOSE = 0x36322e;
+// Tabs (Sprint 3-polish): the active tab is the ember section accent with dark
+// text; the inactive tab is a lifted ash surface with a visible border + light
+// text — so BOTH read as real, clickable tabs, not one bright button + one void.
 const COLOR_TAB_ON = 0xc96b42;
-const COLOR_TAB_OFF = 0x2d2926;
+const COLOR_TAB_OFF = 0x3d3833;
+const TAB_BORDER_ON = 0xedd49a; // pastel-gold highlight ring on the active tab
+const TAB_BORDER_OFF = 0x6b655d; // muted but clearly visible border, inactive tab
+const TAB_TEXT_ON = '#1a1410';
+const TAB_TEXT_OFF = '#D6D0C8';
+
+// BUY-tab row metrics (Sprint 3-polish). Taller rows + larger chips give the
+// name + price + state room to breathe at the game's 2.5 camera zoom.
+const ROW_H = 64; // panel height per tier row
+const ROW_STRIDE = 76; // row-to-row vertical step (ROW_H + breathing gap)
+const CHIP_W = 172;
+const CHIP_H = 52;
+const CHIP_GAP = 12;
+const CHIP_START_X = 296;
 
 const SELL_NUDGE =
   'Selling plants is the fastest way to earn coins — but these same plants level your\n' +
@@ -95,13 +112,11 @@ export default class MarketplaceScene extends Phaser.Scene {
       .setOrigin(1, 0.5)
       .setDepth(101);
 
-    // Tabs.
-    this.tabButtons.sell = this.makeButton(360, 96, 160, 40, '[ SELL ]', COLOR_TAB_ON, true, () =>
-      this.switchTab('sell')
-    );
-    this.tabButtons.buy = this.makeButton(536, 96, 160, 40, '[ BUY ]', COLOR_TAB_OFF, true, () =>
-      this.switchTab('buy')
-    );
+    // Tabs — both rendered as real, legible tabs; restyleTabs sets the active /
+    // inactive look (run once now to paint the initial SELL-active state).
+    this.tabButtons.sell = this.makeTab(360, 98, 168, 46, 'SELL', () => this.switchTab('sell'));
+    this.tabButtons.buy = this.makeTab(540, 98, 168, 46, 'BUY', () => this.switchTab('buy'));
+    this.restyleTabs();
 
     // Close.
     this.makeButton(
@@ -161,15 +176,37 @@ export default class MarketplaceScene extends Phaser.Scene {
   }
 
   restyleTabs() {
-    const paint = (objs, on) => {
-      const [bg] = objs;
-      const color = on ? COLOR_TAB_ON : COLOR_TAB_OFF;
-      if (bg.setTint) bg.setTint(color);
-      else bg.setFillStyle(color);
-      bg._baseColor = color;
+    const paint = ([bg, text], on) => {
+      bg._active = on; // hover handlers leave the active tab alone
+      bg.setFillStyle(on ? COLOR_TAB_ON : COLOR_TAB_OFF);
+      bg.setStrokeStyle(on ? 3 : 2, on ? TAB_BORDER_ON : TAB_BORDER_OFF);
+      text.setColor(on ? TAB_TEXT_ON : TAB_TEXT_OFF);
     };
     paint(this.tabButtons.sell, this.tab === 'sell');
     paint(this.tabButtons.buy, this.tab === 'buy');
+  }
+
+  // A flat-rectangle tab with a readable label in BOTH states. The active look
+  // (ember fill + gold ring + dark text) vs inactive (ash fill + visible border +
+  // light text) is applied by restyleTabs; hover only brightens an inactive tab.
+  makeTab(cx, cy, w, h, label, onClick) {
+    const bg = this.add
+      .rectangle(cx, cy, w, h, COLOR_TAB_OFF)
+      .setStrokeStyle(2, TAB_BORDER_OFF)
+      .setDepth(101)
+      .setInteractive({ useHandCursor: true });
+    const text = this.add
+      .text(cx, cy, label, { fontFamily: FONT, fontSize: '20px', fontStyle: 'bold', color: TAB_TEXT_OFF })
+      .setOrigin(0.5)
+      .setDepth(102);
+    bg.on('pointerover', () => {
+      if (!bg._active) bg.setStrokeStyle(2, TAB_BORDER_ON);
+    });
+    bg.on('pointerout', () => {
+      if (!bg._active) bg.setStrokeStyle(2, TAB_BORDER_OFF);
+    });
+    bg.on('pointerup', onClick);
+    return [bg, text];
   }
 
   buildContent() {
@@ -257,7 +294,7 @@ export default class MarketplaceScene extends Phaser.Scene {
       const owned = this.gameScene.gearTierIndex(slot); // -1 = none
       const items = list.map((g) => ({ label: g.name, price: g.price, id: g.id }));
       this.buildTierRow(y, label, items, owned, (idx) => this.doBuyGear(slot, items[idx].id));
-      y += 64;
+      y += ROW_STRIDE;
     });
 
     y += 10;
@@ -273,34 +310,36 @@ export default class MarketplaceScene extends Phaser.Scene {
       );
       const owned = tierCount; // base(0) + tierCount bought → highest owned index
       this.buildTierRow(y, label, items, owned, () => this.doBuyCapacity(tree));
-      y += 64;
+      y += ROW_STRIDE;
     });
   }
 
-  // Render a labelled row of tier chips: owned (✓), the next purchasable tier
-  // (BUY, greyed when unaffordable), then locked silhouettes with prices visible.
+  // Render a labelled row of tier chips with three distinct, fully-labelled states:
+  //   owned        — ticked (✓ name)
+  //   next         — the buyable highlight (BUY price, greyed when unaffordable)
+  //   future/locked — real name + price, greyed (no "???"), so the player can judge
+  //                   whether a later upgrade is worth saving for before committing.
   // onBuyNext receives the next tier's index in `items`.
   buildTierRow(y, label, items, ownedIndex, onBuyNext) {
     this.track(
-      this.add.rectangle(80, y, 1440, 56, COLOR_PANEL).setOrigin(0, 0).setStrokeStyle(2, 0x4d4843).setDepth(100)
+      this.add.rectangle(80, y, 1440, ROW_H, COLOR_PANEL).setOrigin(0, 0).setStrokeStyle(2, 0x4d4843).setDepth(100)
     );
     this.track(
       this.add
-        .text(100, y + 28, label, { fontFamily: FONT, fontSize: '18px', fontStyle: 'bold', color: '#F5EFE6' })
+        .text(100, y + ROW_H / 2, label, { fontFamily: FONT, fontSize: '18px', fontStyle: 'bold', color: '#F5EFE6' })
         .setOrigin(0, 0.5)
         .setDepth(101)
     );
 
     const next = ownedIndex + 1;
-    const startX = 300;
-    const chipW = 150;
-    const gap = 8;
+    const cy = y + ROW_H / 2;
     items.forEach((item, i) => {
-      const cx = startX + i * (chipW + gap) + chipW / 2;
-      const cy = y + 28;
+      const cx = CHIP_START_X + i * (CHIP_W + CHIP_GAP) + CHIP_W / 2;
       if (i <= ownedIndex) {
-        this.chip(cx, cy, chipW, COLOR_OWNED, `✓ ${item.label}`, '#B8D5B1');
+        // Owned tier — ticked.
+        this.chip(cx, cy, COLOR_OWNED, `✓ ${item.label}`, '#B8D5B1');
       } else if (i === next) {
+        // Next tier — the buyable highlight; greyed/"Need" when unaffordable.
         const price = item.price;
         const affordable = this.coins() >= price;
         const sub = affordable ? `BUY  ${price}🪙` : `Need ${price}🪙`;
@@ -308,28 +347,34 @@ export default class MarketplaceScene extends Phaser.Scene {
           this.makeButton(
             cx,
             cy,
-            chipW,
-            44,
+            CHIP_W,
+            CHIP_H,
             `${item.label}\n${sub}`,
             affordable ? COLOR_AFFORD : COLOR_DISABLED,
             affordable,
             () => onBuyNext(i),
-            affordable ? '#141210' : '#9B9389'
+            affordable ? '#141210' : '#C9C2B8'
           )
         );
       } else {
-        // Locked silhouette — price stays visible (the "always a visible next
-        // purchase" rule), name hidden behind ???.
-        this.chip(cx, cy, chipW, COLOR_LOCKED, `🔒 ???\n${item.price}🪙`, '#6b655d');
+        // Future/locked tier — fully labelled (real name + price) but greyed.
+        this.chip(cx, cy, COLOR_LOCKED, `${item.label}\n${item.price}🪙`, '#9B9389');
       }
     });
   }
 
-  chip(cx, cy, w, color, text, textColor) {
-    this.track(this.add.rectangle(cx, cy, w, 44, color).setStrokeStyle(2, 0x36322e).setDepth(101));
+  chip(cx, cy, color, text, textColor) {
+    this.track(this.add.rectangle(cx, cy, CHIP_W, CHIP_H, color).setStrokeStyle(2, 0x4d4843).setDepth(101));
     this.track(
       this.add
-        .text(cx, cy, text, { fontFamily: FONT, fontSize: '13px', fontStyle: 'bold', color: textColor, align: 'center' })
+        .text(cx, cy, text, {
+          fontFamily: FONT,
+          fontSize: '14px',
+          fontStyle: 'bold',
+          color: textColor,
+          align: 'center',
+          lineSpacing: 2
+        })
         .setOrigin(0.5)
         .setDepth(102)
     );

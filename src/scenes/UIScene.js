@@ -197,16 +197,18 @@ export default class UIScene extends Phaser.Scene {
       .setOrigin(1, 0.5)
       .setVisible(false);
 
-    // TOP RIGHT (under timer) — banked coin counter (Sprint 2 dual economy).
-    // Always visible; updated via the 'coins:changed' event.
+    // TOP STATUS BAR (left of centre, right of the HP bar) — banked coin counter
+    // (Sprint 2 dual economy). Relocated here in Sprint 3-polish so currency sits
+    // alongside the Day / HP readout instead of crowding the minimap. Always
+    // visible; updated via the 'coins:changed' event.
     this.coinText = this.add
-      .text(VIRTUAL_WIDTH - pad, 96, '🪙 0', {
+      .text(300, 40, '🪙 0', {
         fontFamily: '"SproutLands", "Courier New", monospace',
         fontSize: '22px',
         fontStyle: 'bold',
         color: '#EDD49A'
       })
-      .setOrigin(1, 0.5);
+      .setOrigin(0, 0.5);
 
     // TOP CENTER (under zone badge) — New Game+ indicator, shown only on NG+.
     this.ngPlusIndicator = this.add
@@ -1205,8 +1207,8 @@ export default class UIScene extends Phaser.Scene {
       ds && ds.height ? ds.height : window.innerHeight
     );
 
-    // Top-left cluster (HP + water) clears a left notch and the status bar.
-    [this.hpFill, this.hpBorder, this.hpText, this.waterIndicator].forEach((o) => {
+    // Top-left cluster (HP + water + coins) clears a left notch and the status bar.
+    [this.hpFill, this.hpBorder, this.hpText, this.waterIndicator, this.coinText].forEach((o) => {
       if (!o) return;
       o.x += safe.left;
       o.y += safe.top;

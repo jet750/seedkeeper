@@ -123,6 +123,10 @@ const MARKET_Y = 620;
 // obj_chest.png is a 48x48 sheet: row 0 is a closed→open progression.
 const CHEST_CLOSED_FRAME = 0;
 const CHEST_OPEN_FRAME = 4;
+// Upgrade-station art (Sprint 3-polish): the station prefers the workbench image
+// (work_station, 32x32) over the old chest sprite. Scaled to ~72px so it keeps
+// the chest's former footprint at the same garden spot.
+const WORKBENCH_SCALE = 2.25;
 
 export default class GameScene extends Phaser.Scene {
   constructor() {
@@ -647,13 +651,20 @@ export default class GameScene extends Phaser.Scene {
   // each bed draws its own darker soil square on top (depth 2). No-op without art.
   createBedSoil() {
     if (!this.textures.exists('soil_tiles') || !this.beds) return;
-    const FILL = this.GROUND_FILL_FRAME();
-    this.beds.forEach((bed) => {
-      this.add
-        .tileSprite(bed.x, bed.y, 76, 76, 'soil_tiles', FILL)
-        .setOrigin(0.5, 0.5)
-        .setDepth(1);
-    });
+    this.beds.forEach((bed) => this.addBedSoil(bed));
+  }
+
+  // The tan/beige tilled-soil frame under a single bed — the bordered look the
+  // starting beds have. addGardenBed() calls this for capacity-tree spawns too so
+  // newly bought beds are visually identical to the starting four (Sprint 3-polish:
+  // spawned beds previously appeared as a bare dirt square with no frame). No-op
+  // without the soil art (the prod build may not emit every tileset).
+  addBedSoil(bed) {
+    if (!this.textures.exists('soil_tiles')) return;
+    this.add
+      .tileSprite(bed.x, bed.y, 76, 76, 'soil_tiles', this.GROUND_FILL_FRAME())
+      .setOrigin(0.5, 0.5)
+      .setDepth(1);
   }
 
   // --- River system (Sprint 10c revised) ------------------------------------
@@ -1467,7 +1478,9 @@ export default class GameScene extends Phaser.Scene {
   addGardenBed() {
     const i = this.beds.length;
     const pos = this.bedPosition(i);
-    this.beds.push(new GardenBed(this, pos.x, pos.y, i, this.gameData));
+    const bed = new GardenBed(this, pos.x, pos.y, i, this.gameData);
+    this.beds.push(bed);
+    this.addBedSoil(bed); // give spawned beds the same tilled-soil frame as the starters
   }
 
   spawnGardenStructures() {
@@ -1505,11 +1518,19 @@ export default class GameScene extends Phaser.Scene {
     }
     this.addStructureLabel(3520, 480, 3520, 438, 'SLEEP  [F]', '#EDD49A');
 
-    // Workshop chest — open the upgrade overlay. Real chest sprite (48x48 sheet
-    // with open frames) when present; the Sprint 9 open animation frame-swaps
-    // instead of the scaleY tween in that case.
-    this._chestIsSprite = this.textures.exists('obj_chest');
-    if (this._chestIsSprite) {
+    // Workshop station — open the upgrade overlay. Prefers the workbench art
+    // (Sprint 3-polish), then the chest sheet (48x48, open frames), then a
+    // placeholder rect. The open animation is per-visual: the workbench/chest pop,
+    // the placeholder does the Sprint 9 scaleY squash. `this.chest` stays the
+    // handle every interaction path already uses, whichever art is shown.
+    this._stationIsWorkbench = this.textures.exists('work_station');
+    this._chestIsSprite = !this._stationIsWorkbench && this.textures.exists('obj_chest');
+    if (this._stationIsWorkbench) {
+      this.chest = this.add
+        .image(CHEST_X, CHEST_Y, 'work_station')
+        .setScale(WORKBENCH_SCALE)
+        .setDepth(2);
+    } else if (this._chestIsSprite) {
       this.chest = this.add
         .sprite(CHEST_X, CHEST_Y, 'obj_chest', CHEST_CLOSED_FRAME)
         .setScale(1.5)
@@ -2704,14 +2725,25 @@ export default class GameScene extends Phaser.Scene {
     this.animateChestOpen(() => this.scene.launch('UpgradeScene'));
   }
 
-  // Lid opens before the overlay appears. Real chest sprite → swap to the open
-  // frame with a small pop; placeholder rectangle → the Sprint 9 scaleY squash.
+  // Opens before the overlay appears. Workbench image → a self-restoring pop (the
+  // yoyo returns it to its base scale); chest sprite → swap to the open frame with
+  // a pop; placeholder rectangle → the Sprint 9 scaleY squash.
   animateChestOpen(done) {
     if (!this.chest) {
       done();
       return;
     }
-    if (this._chestIsSprite) {
+    if (this._stationIsWorkbench) {
+      this.tweens.add({
+        targets: this.chest,
+        scaleX: WORKBENCH_SCALE * 1.12,
+        scaleY: WORKBENCH_SCALE * 1.12,
+        duration: 110,
+        yoyo: true,
+        ease: 'Quad.easeOut',
+        onComplete: () => this.time.delayedCall(120, done)
+      });
+    } else if (this._chestIsSprite) {
       this.chest.setFrame(CHEST_OPEN_FRAME);
       this.tweens.add({
         targets: this.chest,
@@ -2742,6 +2774,9 @@ export default class GameScene extends Phaser.Scene {
     if (this._swapPickerOpen) this.closeSwapPicker(false);
     EventBus.emit('market:opened', {});
     this.scene.launch('MarketplaceScene');
+    // Render above the HUD scene (as every other overlay does) so no stray HUD
+    // sprite — e.g. a lingering combo counter mid-screen — bleeds into the panel.
+    this.scene.bringToTop('MarketplaceScene');
   }
 
   onMarketClosed() {
@@ -2773,8 +2808,11 @@ export default class GameScene extends Phaser.Scene {
   onUpgradeClosed() {
     this._upgradeOpen = false;
     if (!this.chest) return;
-    // Lid closes: reset to the closed frame, or reverse the squash tween.
-    if (this._chestIsSprite) {
+    // Settle the station back to rest: workbench/chest reset their scale/frame, the
+    // placeholder reverses its squash tween.
+    if (this._stationIsWorkbench) {
+      this.chest.setScale(WORKBENCH_SCALE); // safety — the open pop's yoyo already restored it
+    } else if (this._chestIsSprite) {
       this.chest.setScale(1.5);
       this.chest.setFrame(CHEST_CLOSED_FRAME);
     } else {

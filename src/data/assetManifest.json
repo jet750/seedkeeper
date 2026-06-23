@@ -145,7 +145,8 @@
     { "key": "tileset_forest", "path": "assets/images/tileset_forest.png" },
     { "key": "tileset_fence", "path": "assets/images/tileset_fence.png" },
     { "key": "obj_well", "path": "assets/images/obj_well.png" },
-    { "key": "ui_dialog_big", "path": "assets/images/ui_dialog_big.png" }
+    { "key": "ui_dialog_big", "path": "assets/images/ui_dialog_big.png" },
+    { "key": "work_station", "path": "assets/images/work_station.png" }
   ],
   "audio": [
     { "key": "bgm_garden", "path": "assets/audio/bgm_garden.mp3" },
