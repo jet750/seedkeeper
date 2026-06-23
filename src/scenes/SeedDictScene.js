@@ -11,25 +11,26 @@ import EventBus from '../core/EventBus.js';
 import { VIRTUAL_WIDTH, VIRTUAL_HEIGHT } from '../core/Constants.js';
 import entitiesData from '../data/entities.json';
 
-const PLANT_ORDER = [
-  'red_mushroom',
-  'blue_flower',
-  'golden_wheat',
-  'green_herb',
-  'glowshroom',
-  'sunflower'
-];
+// v3 (Sprint 6/3d): derive from the catalog so the dictionary matches the current
+// plants (was a hardcoded 6 retired keys). NOTE: 21 plants overflow the current
+// grid — a scroll/paging pass is a flagged follow-up.
+const PLANT_ORDER = Object.keys(entitiesData.plants);
 
-// What each plant's resource feeds in the workshop (player-facing summary).
-// v2: plants fund STAT trees only — gear + capacity are bought with coins.
-const PLANT_USE = {
-  red_mushroom: 'Attack power',
-  blue_flower: 'Max HP',
-  golden_wheat: 'Move speed',
-  green_herb: 'Day timer',
-  glowshroom: 'Crit chance',
-  sunflower: 'Harvest range'
+// What each plant's resource feeds in the workshop (player-facing summary), derived
+// from the plant's stat tree. Sell-only crops have no upgrade — they fund coins.
+const STAT_LABEL = {
+  attackMult: 'Attack power',
+  hpMult: 'Max HP',
+  speedMult: 'Move speed',
+  timerBonus: 'Day timer',
+  critBonus: 'Crit chance',
+  harvestRange: 'Harvest range'
 };
+function plantUse(pt) {
+  const up = entitiesData.upgrades[pt];
+  if (up && up.stat) return STAT_LABEL[up.stat.statKey] || up.stat.name;
+  return 'Sell for coins';
+}
 
 function hexToNum(hex) {
   return parseInt(hex.replace('#', ''), 16);
@@ -147,7 +148,7 @@ export default class SeedDictScene extends Phaser.Scene {
     const lines = [
       `Grows in:   ${humanize(plant.foundNear)}`,
       `Growth:     ${plant.growthDays} ${plant.growthDays === 1 ? 'day' : 'days'}`,
-      `Used for:   ${PLANT_USE[pt] || '—'}`,
+      `Used for:   ${plantUse(pt)}`,
       `Grown ever: ${this.grown[pt] || 0}`
     ];
     this.add

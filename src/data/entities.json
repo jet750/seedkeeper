@@ -121,70 +121,50 @@
     "postTimerSpeedMult": 1.5,
     "postTimerDamageMult": 1.5
   },
+  "_plantsNote": "Economy Sprint 6/3d: expanded catalog. statTree groups three plants per stat (see upgrades); sell-only plants (statTree null) have no upgrades entry. isTall plants use 16x32 frames and root lower to the soil. Reserved keys (cabbage, purple_beets, horseradish, sweet_potatoes, parsnip, blue_carrot, blue_flower) are extracted but intentionally NOT wired here.",
   "plants": {
-    "red_mushroom": {
-      "name": "Red Mushroom",
-      "growthDays": 1,
-      "color": "#cc3333",
-      "foundNear": "dark_trees",
-      "seedRespawn": 90000
-    },
-    "blue_flower": {
-      "name": "Blue Flower",
-      "growthDays": 1,
-      "color": "#3366cc",
-      "foundNear": "water",
-      "seedRespawn": 90000
-    },
-    "golden_wheat": {
-      "name": "Golden Wheat",
-      "growthDays": 1,
-      "color": "#ccaa00",
-      "foundNear": "clearing",
-      "seedRespawn": 90000
-    },
-    "green_herb": {
-      "name": "Green Herb",
-      "growthDays": 3,
-      "color": "#33aa44",
-      "foundNear": "entrance",
-      "seedRespawn": 120000
-    },
-    "glowshroom": {
-      "name": "Glowshroom",
-      "growthDays": 2,
-      "color": "#aa44ff",
-      "foundNear": "deep_forest",
-      "seedRespawn": 150000
-    },
-    "sunflower": {
-      "name": "Sunflower",
-      "growthDays": 1,
-      "color": "#ffcc00",
-      "foundNear": "meadow",
-      "seedRespawn": 90000
-    }
+    "carrots":            { "name": "Carrots",            "growthDays": 1, "color": "#E8862B", "foundNear": "meadow",      "seedRespawn": 90000,  "statTree": "speed",   "sellValue": 3,  "isTall": false },
+    "purple_carrot":      { "name": "Purple Carrot",      "growthDays": 1, "color": "#8E5BB5", "foundNear": "meadow",      "seedRespawn": 90000,  "statTree": "speed",   "sellValue": 3,  "isTall": false },
+    "white_carrots":      { "name": "White Carrots",      "growthDays": 1, "color": "#EFE6D2", "foundNear": "meadow",      "seedRespawn": 90000,  "statTree": "speed",   "sellValue": 3,  "isTall": false },
+    "cauliflower":        { "name": "Cauliflower",        "growthDays": 1, "color": "#EDE3C8", "foundNear": "meadow",      "seedRespawn": 90000,  "statTree": "defense", "sellValue": 3,  "isTall": false },
+    "purple_cauliflower": { "name": "Purple Cauliflower", "growthDays": 1, "color": "#9B59B6", "foundNear": "meadow",      "seedRespawn": 90000,  "statTree": "defense", "sellValue": 3,  "isTall": false },
+    "red_lettuce":        { "name": "Red Lettuce",        "growthDays": 1, "color": "#C0492B", "foundNear": "meadow",      "seedRespawn": 90000,  "statTree": "defense", "sellValue": 3,  "isTall": false },
+    "corn":               { "name": "Corn",               "growthDays": 2, "color": "#F4D03F", "foundNear": "meadow",      "seedRespawn": 120000, "statTree": "crit",    "sellValue": 7,  "isTall": true },
+    "sunflower":          { "name": "Sunflower",          "growthDays": 2, "color": "#FFCC00", "foundNear": "meadow",      "seedRespawn": 120000, "statTree": "crit",    "sellValue": 7,  "isTall": true },
+    "wheat":              { "name": "Wheat",              "growthDays": 2, "color": "#D4B15A", "foundNear": "meadow",      "seedRespawn": 120000, "statTree": "crit",    "sellValue": 7,  "isTall": false },
+    "tomato":             { "name": "Tomato",             "growthDays": 2, "color": "#E0402F", "foundNear": "mid_forest",  "seedRespawn": 120000, "statTree": "attack",  "sellValue": 7,  "isTall": true },
+    "eggplant":           { "name": "Eggplant",           "growthDays": 2, "color": "#6A3D8F", "foundNear": "mid_forest",  "seedRespawn": 120000, "statTree": "attack",  "sellValue": 7,  "isTall": false },
+    "beanstalk":          { "name": "Beanstalk",          "growthDays": 2, "color": "#4A9D3F", "foundNear": "mid_forest",  "seedRespawn": 120000, "statTree": "attack",  "sellValue": 7,  "isTall": true },
+    "pumpkin":            { "name": "Pumpkin",            "growthDays": 2, "color": "#D2691E", "foundNear": "mid_forest",  "seedRespawn": 120000, "statTree": "harvest", "sellValue": 7,  "isTall": false },
+    "cucumber":           { "name": "Cucumber",           "growthDays": 2, "color": "#5A9D3F", "foundNear": "mid_forest",  "seedRespawn": 120000, "statTree": "harvest", "sellValue": 7,  "isTall": false },
+    "bok_choy":           { "name": "Bok Choy",           "growthDays": 2, "color": "#9ACD5A", "foundNear": "mid_forest",  "seedRespawn": 120000, "statTree": "harvest", "sellValue": 7,  "isTall": false },
+    "blue_flower_2":      { "name": "Blue Flower",        "growthDays": 3, "color": "#3366CC", "foundNear": "deep_forest", "seedRespawn": 150000, "statTree": "magic",   "sellValue": 12, "isTall": false },
+    "red_berry":          { "name": "Red Berry",          "growthDays": 3, "color": "#C0392B", "foundNear": "deep_forest", "seedRespawn": 150000, "statTree": "magic",   "sellValue": 12, "isTall": false },
+    "pineapple":          { "name": "Pineapple",          "growthDays": 3, "color": "#D4A017", "foundNear": "deep_forest", "seedRespawn": 150000, "statTree": "magic",   "sellValue": 12, "isTall": true },
+    "watermelon":         { "name": "Watermelon",         "growthDays": 3, "color": "#2E8B57", "foundNear": "deep_forest", "seedRespawn": 150000, "statTree": null,      "sellValue": 15, "isTall": false },
+    "blue_melon":         { "name": "Blue Melon",         "growthDays": 3, "color": "#4A7FC0", "foundNear": "deep_forest", "seedRespawn": 150000, "statTree": null,      "sellValue": 15, "isTall": false },
+    "green_melon":        { "name": "Green Melon",        "growthDays": 3, "color": "#6AB04C", "foundNear": "deep_forest", "seedRespawn": 150000, "statTree": null,      "sellValue": 15, "isTall": false }
   },
   "_upgradesNote": "STAT TREES ONLY (Economy Sprint 2). Plant resources buy stat levels here; gear + capacity moved to coins (see economy.json). Per-level stat costs are unchanged from before the dual-economy split.",
   "upgrades": {
-    "red_mushroom": {
-      "stat": { "name": "Attack Power", "statKey": "attackMult", "levels": 5, "perLevelBonus": 0.05, "costs": [1, 3, 6, 10, 15] }
-    },
-    "blue_flower": {
-      "stat": { "name": "Max HP", "statKey": "hpMult", "levels": 5, "perLevelBonus": 0.08, "costs": [1, 3, 6, 10, 15] }
-    },
-    "golden_wheat": {
-      "stat": { "name": "Move Speed", "statKey": "speedMult", "levels": 5, "perLevelBonus": 0.03, "costs": [1, 3, 6, 10, 15] }
-    },
-    "green_herb": {
-      "stat": { "name": "Day Timer", "statKey": "timerBonus", "levels": 5, "perLevelBonus": 15000, "costs": [1, 2, 4, 7, 11] }
-    },
-    "glowshroom": {
-      "stat": { "name": "Crit Chance", "statKey": "critBonus", "levels": 5, "perLevelBonus": 0.02, "costs": [1, 3, 6, 10, 15] }
-    },
-    "sunflower": {
-      "stat": { "name": "Harvest Range", "statKey": "harvestRange", "levels": 5, "perLevelBonus": 0.05, "costs": [1, 3, 6, 10, 15] }
-    }
+    "carrots":            { "stat": { "name": "Move Speed",    "statKey": "speedMult",   "levels": 5, "perLevelBonus": 0.03,  "costs": [1, 3, 6, 10, 15] } },
+    "purple_carrot":      { "stat": { "name": "Move Speed",    "statKey": "speedMult",   "levels": 5, "perLevelBonus": 0.03,  "costs": [1, 3, 6, 10, 15] } },
+    "white_carrots":      { "stat": { "name": "Move Speed",    "statKey": "speedMult",   "levels": 5, "perLevelBonus": 0.03,  "costs": [1, 3, 6, 10, 15] } },
+    "cauliflower":        { "stat": { "name": "Max HP",        "statKey": "hpMult",      "levels": 5, "perLevelBonus": 0.08,  "costs": [1, 3, 6, 10, 15] } },
+    "purple_cauliflower": { "stat": { "name": "Max HP",        "statKey": "hpMult",      "levels": 5, "perLevelBonus": 0.08,  "costs": [1, 3, 6, 10, 15] } },
+    "red_lettuce":        { "stat": { "name": "Max HP",        "statKey": "hpMult",      "levels": 5, "perLevelBonus": 0.08,  "costs": [1, 3, 6, 10, 15] } },
+    "corn":               { "stat": { "name": "Crit Chance",   "statKey": "critBonus",   "levels": 5, "perLevelBonus": 0.02,  "costs": [1, 3, 6, 10, 15] } },
+    "sunflower":          { "stat": { "name": "Crit Chance",   "statKey": "critBonus",   "levels": 5, "perLevelBonus": 0.02,  "costs": [1, 3, 6, 10, 15] } },
+    "wheat":              { "stat": { "name": "Crit Chance",   "statKey": "critBonus",   "levels": 5, "perLevelBonus": 0.02,  "costs": [1, 3, 6, 10, 15] } },
+    "tomato":             { "stat": { "name": "Attack Power",  "statKey": "attackMult",  "levels": 5, "perLevelBonus": 0.05,  "costs": [1, 3, 6, 10, 15] } },
+    "eggplant":           { "stat": { "name": "Attack Power",  "statKey": "attackMult",  "levels": 5, "perLevelBonus": 0.05,  "costs": [1, 3, 6, 10, 15] } },
+    "beanstalk":          { "stat": { "name": "Attack Power",  "statKey": "attackMult",  "levels": 5, "perLevelBonus": 0.05,  "costs": [1, 3, 6, 10, 15] } },
+    "pumpkin":            { "stat": { "name": "Day Timer",     "statKey": "timerBonus",  "levels": 5, "perLevelBonus": 15000, "costs": [1, 2, 4, 7, 11] } },
+    "cucumber":           { "stat": { "name": "Day Timer",     "statKey": "timerBonus",  "levels": 5, "perLevelBonus": 15000, "costs": [1, 2, 4, 7, 11] } },
+    "bok_choy":           { "stat": { "name": "Day Timer",     "statKey": "timerBonus",  "levels": 5, "perLevelBonus": 15000, "costs": [1, 2, 4, 7, 11] } },
+    "blue_flower_2":      { "stat": { "name": "Harvest Range", "statKey": "harvestRange","levels": 5, "perLevelBonus": 0.05,  "costs": [1, 3, 6, 10, 15] } },
+    "red_berry":          { "stat": { "name": "Harvest Range", "statKey": "harvestRange","levels": 5, "perLevelBonus": 0.05,  "costs": [1, 3, 6, 10, 15] } },
+    "pineapple":          { "stat": { "name": "Harvest Range", "statKey": "harvestRange","levels": 5, "perLevelBonus": 0.05,  "costs": [1, 3, 6, 10, 15] } }
   },
   "weather": [
     { "id": "cloudy", "name": "Cloudy Day",    "icon": "☁️",  "description": "Overcast skies slow plant growth today.",            "effect": "growthPenalty",   "value": 1 },

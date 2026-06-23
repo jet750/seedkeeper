@@ -17,14 +17,6 @@ import EventBus from '../core/EventBus.js';
 import MobileDetect from '../core/MobileDetect.js';
 import { VIRTUAL_WIDTH, VIRTUAL_HEIGHT } from '../core/Constants.js';
 
-const PLANT_ORDER = [
-  'red_mushroom',
-  'blue_flower',
-  'golden_wheat',
-  'green_herb',
-  'glowshroom',
-  'sunflower'
-];
 const GEAR_SLOTS = [
   ['weapon', 'Weapon'],
   ['armor', 'Armor'],
@@ -240,7 +232,10 @@ export default class MarketplaceScene extends Phaser.Scene {
     );
 
     let y = 248;
-    PLANT_ORDER.forEach((pt) => {
+    // v3 (Sprint 6/3d): sell every growable plant from the catalog (was a
+    // hardcoded 6 retired keys). NOTE: 21 rows overflow this panel — a scroll/
+    // paging pass is a flagged follow-up.
+    Object.keys(this.gameData.plants).forEach((pt) => {
       const plant = this.gameData.plants[pt];
       const have = this.gameScene.plantBank[pt] || 0;
       const unit = this.gameScene.sellPrice(pt);

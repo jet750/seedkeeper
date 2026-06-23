@@ -6,33 +6,40 @@
 // save(); load() returns a plain object GameScene applies on create.
 
 // v2 (Economy Sprint 2): dual economy. Plants → stat trees only; coins → gear +
-// capacity. Saves are disposable in this pre-launch showcase, so a version bump
-// WIPES old slots to a fresh v2 default instead of migrating (no shim).
-const SAVE_VERSION = 2;
+// capacity. v3 (Economy Sprint 6/3d): expanded 21-plant catalog + per-plant
+// sprite keys; old plant keys (red_mushroom, blue_flower, golden_wheat,
+// green_herb, glowshroom) retired. Saves are disposable in this pre-launch
+// showcase, so a version bump WIPES old slots to a fresh default (no shim).
+const SAVE_VERSION = 3;
 const SAVE_KEY_PREFIX = 'seedkeeper_save_';
 const SETTINGS_KEY = 'seedkeeper_settings'; // global audio settings (Sprint 12)
 
+// v3: one entry per growable plant (entities.json `plants`). Includes the three
+// sell-only melons so harvesting/selling them banks correctly.
 function freshBank() {
   return {
-    red_mushroom: 0,
-    blue_flower: 0,
-    golden_wheat: 0,
-    green_herb: 0,
-    glowshroom: 0,
-    sunflower: 0
+    carrots: 0, purple_carrot: 0, white_carrots: 0,
+    cauliflower: 0, purple_cauliflower: 0, red_lettuce: 0,
+    corn: 0, sunflower: 0, wheat: 0,
+    tomato: 0, eggplant: 0, beanstalk: 0,
+    pumpkin: 0, cucumber: 0, bok_choy: 0,
+    blue_flower_2: 0, red_berry: 0, pineapple: 0,
+    watermelon: 0, blue_melon: 0, green_melon: 0
   };
 }
 
 function freshUpgrades() {
   // stat = number of stat levels bought per plant. Gear is no longer plant-funded
   // (v2): it lives on the coin economy via equippedGear (see economy.json).
+  // v3: one entry per stat-tree plant (must match entities.json `upgrades` keys
+  // exactly — checkFullWin indexes upgradeLevels[pt] for every upgrades key).
   return {
-    red_mushroom: { stat: 0 },
-    blue_flower: { stat: 0 },
-    golden_wheat: { stat: 0 },
-    green_herb: { stat: 0 },
-    glowshroom: { stat: 0 },
-    sunflower: { stat: 0 }
+    carrots: { stat: 0 }, purple_carrot: { stat: 0 }, white_carrots: { stat: 0 },
+    cauliflower: { stat: 0 }, purple_cauliflower: { stat: 0 }, red_lettuce: { stat: 0 },
+    corn: { stat: 0 }, sunflower: { stat: 0 }, wheat: { stat: 0 },
+    tomato: { stat: 0 }, eggplant: { stat: 0 }, beanstalk: { stat: 0 },
+    pumpkin: { stat: 0 }, cucumber: { stat: 0 }, bok_choy: { stat: 0 },
+    blue_flower_2: { stat: 0 }, red_berry: { stat: 0 }, pineapple: { stat: 0 }
   };
 }
 

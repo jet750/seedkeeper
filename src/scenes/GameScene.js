@@ -45,6 +45,7 @@ import TutorialSystem from '../systems/TutorialSystem.js';
 import SaveSystem from '../core/SaveSystem.js';
 import entitiesData from '../data/entities.json';
 import economyData from '../data/economy.json';
+import DynamicNature from '../world/DynamicNature.js';
 
 const INTERACT_RANGE = 48; // px — F-key reach for beds, well, sleep
 const SEED_COLLECT_RANGE = 26; // px — player must be this close to pick up a seed
@@ -57,7 +58,6 @@ const SWAP_TIMEOUT_DIST = 80; // px — walking this far from a seed cancels the
 // (Dark slime tint moved to data-driven per-level tints in Sprint 5.)
 const MAX_DARK_SLIMES = 4;
 const ENEMY_SPAWN_MARGIN = 80; // keep spawns off the world edges
-const DEEP_FOREST_THRESHOLD = 0.7; // skeletons spawn below this fraction of WORLD_HEIGHT
 const SKELETON_PATROL_SPREAD = 220; // px between a skeleton's patrol waypoints
 const DEATH_DROP_SCATTER = 40; // spread of seeds dropped on player death
 const SEED_RECOVERY_MS = 30000; // recovery window before death-dropped seeds vanish
@@ -105,13 +105,17 @@ const CAPACITY_TIER_FIELD = {
   gardenBeds: 'gardenBedTier',
   watering: 'wateringTier'
 };
+// v3 (Sprint 6/3d): one entry per growable plant. Mirrors SaveSystem.freshBank();
+// harvest/grant paths guard missing keys with `|| 0`, but seeding the full set
+// keeps plantBank/plantsGrownEver shapes stable for the bank HUD and win checks.
 const DEFAULT_BANK = {
-  red_mushroom: 0,
-  blue_flower: 0,
-  golden_wheat: 0,
-  green_herb: 0,
-  glowshroom: 0,
-  sunflower: 0
+  carrots: 0, purple_carrot: 0, white_carrots: 0,
+  cauliflower: 0, purple_cauliflower: 0, red_lettuce: 0,
+  corn: 0, sunflower: 0, wheat: 0,
+  tomato: 0, eggplant: 0, beanstalk: 0,
+  pumpkin: 0, cucumber: 0, bok_choy: 0,
+  blue_flower_2: 0, red_berry: 0, pineapple: 0,
+  watermelon: 0, blue_melon: 0, green_melon: 0
 };
 const PROJECTILE_POOL_SIZE = 10;
 // Garden bed grid layout (row-wraps as garden-bed tiers add beds). Anchored to the
@@ -342,6 +346,11 @@ export default class GameScene extends Phaser.Scene {
 
     this.createWorldDetails(); // examinable storytelling objects
     this.maybeSpawnDailySeed(); // once-a-day glowing gift
+
+    // --- Living-world nature cycling (world-v1) — additive, static-safe ---
+    // No-op until the engine loads a Tiled world map with a `nature_dynamic`
+    // object layer (see src/world/DynamicNature.js). Never touches gameplay.
+    this.dynamicNature = new DynamicNature(this).init();
 
     // --- Day timer (extracted system) ---
     this.daySystem = new DaySystem(this, this.gameData);
@@ -1023,7 +1032,6 @@ export default class GameScene extends Phaser.Scene {
   // dev menu passes an explicit position to spawn one at the player.
   spawnSkeleton(devX, devY) {
     const margin = ENEMY_SPAWN_MARGIN;
-    const deepMinY = Math.ceil(WORLD_HEIGHT * DEEP_FOREST_THRESHOLD);
     const devSpawn = devX !== undefined && devY !== undefined;
     // Normal skeletons spawn inside a deep-forest pocket (Sprint 10c revised);
     // the dev menu drops one at an explicit position.
@@ -1038,10 +1046,11 @@ export default class GameScene extends Phaser.Scene {
       baseY = pos.y;
     }
 
-    // Three patrol waypoints fanned around the spawn point. Normal skeletons keep
-    // their patrol in the deep forest; dev-placed ones may patrol the whole
-    // forest band around where they were dropped.
-    const minY = devSpawn ? GARDEN_ZONE_HEIGHT + margin : deepMinY;
+    // Three patrol waypoints fanned around the spawn point. Waypoints clamp to the
+    // forest band (below the garden) so they stay near the zone-query spawn point;
+    // the old deepMinY (0.7*WORLD_HEIGHT) clamp pushed them far south of the actual
+    // deep_forest zone (~y2000), making skeletons immediately walk away (Sprint 6/3d).
+    const minY = GARDEN_ZONE_HEIGHT + margin;
     const clampX = (v) => Phaser.Math.Clamp(v, margin, WORLD_WIDTH - margin);
     const clampY = (v) => Phaser.Math.Clamp(v, minY, WORLD_HEIGHT - margin);
     const s = SKELETON_PATROL_SPREAD;
@@ -1341,26 +1350,26 @@ export default class GameScene extends Phaser.Scene {
     // easy entrance seeds; mid-forest is moderate risk; the best seeds (glowshroom)
     // live deep in the three forest pockets, reachable only across the bridges.
     const placements = [
-      // MEADOW POCKETS — easy reach.
-      ['green_herb', 700, 1050],
-      ['green_herb', 2500, 950],
+      // MEADOW POCKETS — easy reach (speed + defense trees, 1-day grow).
+      ['carrots', 700, 1050],
+      ['cauliflower', 2500, 950],
       ['sunflower', 1500, 1100],
-      ['sunflower', 400, 1280],
-      ['sunflower', 2750, 1350],
-      // MID FOREST — moderate risk.
-      ['red_mushroom', 600, 1400],
-      ['red_mushroom', 2000, 1380],
-      ['red_mushroom', 1400, 1450],
-      ['blue_flower', 250, 1480],
-      ['blue_flower', 2950, 1460],
-      ['golden_wheat', 1100, 1350],
-      ['golden_wheat', 2200, 1400],
-      // DEEP FOREST POCKETS — high risk, best seeds.
-      ['glowshroom', 450, 2050], // left pocket
-      ['glowshroom', 1650, 2150], // center pocket
-      ['glowshroom', 2750, 2000], // right pocket
-      ['red_mushroom', 1200, 1900],
-      ['blue_flower', 2100, 1950]
+      ['white_carrots', 400, 1280],
+      ['red_lettuce', 2750, 1350],
+      // MID FOREST — moderate risk (attack / crit / harvest trees, 2-day grow).
+      ['tomato', 600, 1400],
+      ['corn', 2000, 1380],
+      ['pumpkin', 1400, 1450],
+      ['wheat', 250, 1480],
+      ['cucumber', 2950, 1460],
+      ['eggplant', 1100, 1350],
+      ['bok_choy', 2200, 1400],
+      // DEEP FOREST POCKETS — high risk, best seeds (magic tree, 3-day grow).
+      ['blue_flower_2', 450, 2050], // left pocket
+      ['red_berry', 1650, 2150], // center pocket
+      ['pineapple', 2750, 2000], // right pocket
+      ['beanstalk', 1200, 1900],
+      ['eggplant', 2100, 1950]
     ];
     placements.forEach(([type, x, y]) => {
       const pos = this.clearOfRiver(x, y);
@@ -1838,13 +1847,15 @@ export default class GameScene extends Phaser.Scene {
   // bushes, row 3 flowers incl. the yellow sunflower at 38, row 4 blue/purple).
   scatterTilesetProps() {
     if (!this.textures.exists('mushrooms_flowers') || !this.seeds) return;
+    // v3 (Sprint 6/3d): keyed to the new catalog by dominant colour (decorative
+    // hint near each seed; the mushrooms/flowers/stones sheet has no crop art, so
+    // these are approximate — unmapped plants simply get no scatter). Flagged.
     const FRAME_BY_PLANT = {
-      red_mushroom: 0, // red mushroom
-      glowshroom: 4, // purple mushroom
-      blue_flower: 52, // blue flower
-      sunflower: 38, // yellow sunflower
-      green_herb: 24, // green bush tuft
-      golden_wheat: 24 // grass tuft (no grain in this sheet)
+      tomato: 0, red_berry: 0, red_lettuce: 0, pumpkin: 0, // red/orange → red mushroom
+      eggplant: 4, // purple → purple mushroom
+      sunflower: 38, corn: 38, pineapple: 38, wheat: 38, // yellow/gold → sunflower
+      beanstalk: 24, cucumber: 24, bok_choy: 24, cauliflower: 24, // green → bush tuft
+      blue_flower_2: 52 // blue → blue flower
     };
     const ROCK_FRAMES = [13, 14, 15];
 
@@ -2288,7 +2299,9 @@ export default class GameScene extends Phaser.Scene {
     const hash = dateStr.split('').reduce((acc, c) => acc + c.charCodeAt(0), 0);
     const x = 400 + (hash % (WORLD_WIDTH - 800));
     const y = GARDEN_ZONE_HEIGHT + 600 + (hash % (WORLD_HEIGHT - GARDEN_ZONE_HEIGHT - 800));
-    const rarePlants = ['glowshroom', 'green_herb', 'glowshroom', 'green_herb', 'blue_flower'];
+    // High-value crops for the daily gift (v3 Sprint 6/3d): the magic tree plus a
+    // sell-only melon, weighted toward the magic crops.
+    const rarePlants = ['blue_flower_2', 'red_berry', 'pineapple', 'blue_flower_2', 'watermelon'];
     const plantType = rarePlants[hash % rarePlants.length];
 
     const seed = new Seed(this, x, y, plantType, this.gameData);
@@ -3026,7 +3039,7 @@ export default class GameScene extends Phaser.Scene {
     if (this.plantBank[plantType] < cost) return { ok: false };
     this.plantBank[plantType] -= cost;
     lv.stat += 1;
-    this.applyStatEffect(plantType, lv.stat);
+    this.applyStatEffect(plantType);
     this.player.recalculateStats();
     if (def.stat.statKey === 'timerBonus') {
       this.daySystem.setTimerBonus(this.player.statBonuses.timerBonus);
@@ -3042,7 +3055,7 @@ export default class GameScene extends Phaser.Scene {
   applyAllUpgrades() {
     Object.keys(this.upgradeLevels).forEach((plantType) => {
       const lv = this.upgradeLevels[plantType];
-      if (lv.stat > 0) this.applyStatEffect(plantType, lv.stat);
+      if (lv.stat > 0) this.applyStatEffect(plantType);
     });
     this.applyEquippedGear();
     this.applySeedBagTier();
@@ -3052,10 +3065,21 @@ export default class GameScene extends Phaser.Scene {
     this.daySystem.setTimerBonus(this.player.statBonuses.timerBonus);
   }
 
-  applyStatEffect(plantType, level) {
-    const stat = this.gameData.upgrades[plantType].stat;
-    // Recompute from base each time (level * perLevelBonus) to avoid drift.
-    this.player.statBonuses[stat.statKey] = stat.perLevelBonus * level;
+  applyStatEffect(plantType) {
+    // v3 (Sprint 6/3d): a stat tree is now fed by THREE plants that share one
+    // statKey. Recompute the bonus by SUMMING every upgrade entry with the same
+    // statKey, so contributions stack and no single plant's level overwrites the
+    // others' (the old `= perLevelBonus * level` was last-write-wins and broke
+    // with multiple plants per stat). Recompute-from-scratch keeps it idempotent.
+    const statKey = this.gameData.upgrades[plantType].stat.statKey;
+    let total = 0;
+    Object.keys(this.gameData.upgrades).forEach((pt) => {
+      const s = this.gameData.upgrades[pt].stat;
+      if (s.statKey !== statKey) return;
+      const lvl = (this.upgradeLevels[pt] && this.upgradeLevels[pt].stat) || 0;
+      total += s.perLevelBonus * lvl;
+    });
+    this.player.statBonuses[statKey] = total;
   }
 
   // --- Coins (Sprint 2 dual economy) ----------------------------------------
@@ -3314,11 +3338,12 @@ export default class GameScene extends Phaser.Scene {
   }
 
   devMaxAllStats() {
+    // Set every level first, THEN recompute — applyStatEffect now sums across all
+    // plants sharing a statKey, so all levels must be in place before recompute.
     Object.keys(this.gameData.upgrades).forEach((pt) => {
-      const levels = this.gameData.upgrades[pt].stat.levels;
-      this.upgradeLevels[pt].stat = levels;
-      this.applyStatEffect(pt, levels);
+      this.upgradeLevels[pt].stat = this.gameData.upgrades[pt].stat.levels;
     });
+    Object.keys(this.gameData.upgrades).forEach((pt) => this.applyStatEffect(pt));
     this.player.recalculateStats();
     this.daySystem.setTimerBonus(this.player.statBonuses.timerBonus);
     this.syncHud();

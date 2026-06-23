@@ -3,7 +3,7 @@
 // Deep-forest patrolling enemy introduced in Sprint 3. Walks a fixed 3-waypoint
 // loop until the player enters detectRange, chases until the player escapes
 // loseRange, then navigates back to the nearest waypoint and resumes patrol.
-// Tankier and harder-hitting than slimes; drops a guaranteed Glowshroom plus one
+// Tankier and harder-hitting than slimes; drops a guaranteed Red Berry plus one
 // weighted-random seed on death. Damage to the player and death notifications go
 // out via EventBus only — the skeleton never calls Player methods directly.
 
@@ -478,8 +478,8 @@ export default class Skeleton extends Phaser.Physics.Arcade.Sprite {
   }
 
   dropSeeds() {
-    // Guaranteed Glowshroom + one weighted-random seed.
-    const drops = ['glowshroom', getRandomSeedDrop()];
+    // Guaranteed deep-forest magic seed (red_berry) + one weighted-random seed.
+    const drops = ['red_berry', getRandomSeedDrop()];
     drops.forEach((plantType) => {
       new Seed(
         this.scene,

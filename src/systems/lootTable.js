@@ -1,29 +1,32 @@
 // lootTable.js
 //
 // Shared weighted seed-drop table used by every enemy on death (Slime,
-// Skeleton). Common plants are weighted high and Glowshroom is rare, so killing
-// enemies is a viable but unreliable way to stock seeds — guaranteed drops (the
-// skeleton's glowshroom) are layered on top by the caller, not here.
+// Skeleton). Common early crops are weighted high and rare magic crops are low, so
+// killing enemies is a viable but unreliable way to stock seeds — guaranteed drops
+// (the skeleton's red_berry) are layered on top by the caller, not here.
+// v3 (Sprint 6/3d): keys repointed to the expanded plant catalog.
 
 const SEED_DROP_WEIGHTS = {
-  red_mushroom: 30,
-  blue_flower: 25,
-  golden_wheat: 25,
-  green_herb: 10,
-  sunflower: 9,
-  glowshroom: 1
+  carrots: 30,
+  cauliflower: 25,
+  tomato: 15,
+  corn: 12,
+  pumpkin: 10,
+  pineapple: 5,
+  red_berry: 3
 };
 
 // Plant-bundle drop table (Sprint 7). Bundles are pre-grown plants that go
 // straight to the bank, so the weighting leans toward slow-grow / high-value
-// plants (green herb, the expensive late-game staple) and away from sunflower.
+// crops (the magic tree) and away from the cheap early crops.
 const BUNDLE_DROP_WEIGHTS = {
-  red_mushroom: 20,
-  blue_flower: 20,
-  golden_wheat: 15,
-  green_herb: 25,
-  glowshroom: 15,
-  sunflower: 5
+  tomato: 20,
+  corn: 20,
+  pumpkin: 15,
+  wheat: 15,
+  blue_flower_2: 15,
+  pineapple: 10,
+  red_berry: 5
 };
 
 // Generic weighted pick over a { key: weight } map.

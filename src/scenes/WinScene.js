@@ -15,24 +15,15 @@ import { VIRTUAL_WIDTH, VIRTUAL_HEIGHT } from '../core/Constants.js';
 import entitiesData from '../data/entities.json';
 import { ACHIEVEMENT_COUNT } from '../data/achievements.js';
 
-// Rarest → commonest, for the run-summary "Rarest Find" line.
-const RARITY_ORDER = [
-  'glowshroom',
-  'green_herb',
-  'blue_flower',
-  'golden_wheat',
-  'red_mushroom',
-  'sunflower'
-];
+// v3 (Sprint 6/3d): derive from the catalog (was hardcoded 6 retired keys).
+// NOTE: 21 plant icons may overflow the win-screen rows — layout pass flagged.
+const PLANT_ORDER = Object.keys(entitiesData.plants);
 
-const PLANT_ORDER = [
-  'red_mushroom',
-  'blue_flower',
-  'golden_wheat',
-  'green_herb',
-  'glowshroom',
-  'sunflower'
-];
+// Rarest → commonest, for the run-summary "Rarest Find" line: longer-growing
+// crops (magic / sell-only) are the rare ones.
+const RARITY_ORDER = [...PLANT_ORDER].sort(
+  (a, b) => entitiesData.plants[b].growthDays - entitiesData.plants[a].growthDays
+);
 
 const COLOR_GOLD = '#EDD49A';
 const COLOR_TEXT = '#F5EFE6';

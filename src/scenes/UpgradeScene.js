@@ -11,15 +11,12 @@ import Phaser from 'phaser';
 import EventBus from '../core/EventBus.js';
 import MobileDetect from '../core/MobileDetect.js';
 import { VIRTUAL_WIDTH, VIRTUAL_HEIGHT } from '../core/Constants.js';
+import entitiesData from '../data/entities.json';
 
-const PLANT_ORDER = [
-  'red_mushroom',
-  'blue_flower',
-  'golden_wheat',
-  'green_herb',
-  'glowshroom',
-  'sunflower'
-];
+// v3 (Sprint 6/3d): one panel per stat-tree plant, derived from the upgrades
+// catalog (was a hardcoded 6 retired keys). NOTE: 18 panels overflow the current
+// 2-column grid — a scroll/paging pass on the workshop UI is a flagged follow-up.
+const PLANT_ORDER = Object.keys(entitiesData.upgrades);
 
 const PANEL_W = 700;
 const PANEL_H = 190;

@@ -13,14 +13,9 @@ import SaveSystem from '../core/SaveSystem.js';
 import { VIRTUAL_WIDTH, VIRTUAL_HEIGHT, FONT_FAMILY, UI_ACCENT_GOLD } from '../core/Constants.js';
 import entitiesData from '../data/entities.json';
 
-const PLANT_ORDER = [
-  'red_mushroom',
-  'blue_flower',
-  'golden_wheat',
-  'green_herb',
-  'glowshroom',
-  'sunflower'
-];
+// v3 (Sprint 6/3d): derive the plant set from the catalog so the menu always
+// matches the current plants (was a hardcoded 6 retired keys).
+const PLANT_ORDER = Object.keys(entitiesData.plants);
 
 const CARD_W = 640;
 const CARD_H = 124;
@@ -167,13 +162,17 @@ export default class MenuScene extends Phaser.Scene {
       })
       .setOrigin(0, 0);
 
-    // Plant-progress dots — filled in colour once grown at least once.
-    const dotGap = 26;
+    // Plant-progress dots — filled in colour once grown at least once. The gap
+    // auto-fits a fixed span so the expanded catalog (21 plants) never overflows
+    // into the continue button (Sprint 6/3d).
+    const dotSpan = 320;
+    const dotGap = Math.min(26, dotSpan / PLANT_ORDER.length);
+    const dotR = dotGap < 20 ? 5 : 7;
     const dotY = topY + 78;
     PLANT_ORDER.forEach((pt, i) => {
       const grown = slot.plantsGrownEver && (slot.plantsGrownEver[pt] || 0) >= 1;
       const color = grown ? parseInt(entitiesData.plants[pt].color.replace('#', ''), 16) : 0x3a3531;
-      this.add.circle(leftX + 8 + i * dotGap, dotY, 7, color).setStrokeStyle(1, 0x57514b);
+      this.add.circle(leftX + 8 + i * dotGap, dotY, dotR, color).setStrokeStyle(1, 0x57514b);
     });
 
     // Continue button (right) — clicking the card body also continues.

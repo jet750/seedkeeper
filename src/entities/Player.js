@@ -133,7 +133,7 @@ export default class Player extends Phaser.Physics.Arcade.Sprite {
 
     // --- Inventory (Sprint 2) ---
     this.gameData = gameData;
-    this.seedSlots = new Array(stats.seedSlots).fill(null); // e.g. ['red_mushroom', null, null]
+    this.seedSlots = new Array(stats.seedSlots).fill(null); // e.g. ['carrots', null, null]
 
     // --- Water charges (Sprint 9; v2 watering capacity tree) ---
     // Replaces the old binary hasWater. A well visit fills `waterCharges` up to

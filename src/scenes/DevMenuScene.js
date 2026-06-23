@@ -16,13 +16,16 @@ import Phaser from 'phaser';
 import EventBus from '../core/EventBus.js';
 import { VIRTUAL_WIDTH, isDevModeActive } from '../core/Constants.js';
 
+// One representative crop per stat tree (Sprint 6/3d). Keeps the 2-col grant grid
+// the same size while covering speed/defense/crit/attack/harvest/magic — corn and
+// tomato are tall crops, useful for eyeballing tall-plant rendering.
 const PLANT_ORDER = [
-  'red_mushroom',
-  'blue_flower',
-  'golden_wheat',
-  'green_herb',
-  'glowshroom',
-  'sunflower'
+  'carrots', // speed
+  'cauliflower', // defense
+  'corn', // crit (tall)
+  'tomato', // attack (tall)
+  'pumpkin', // harvest
+  'blue_flower_2' // magic
 ];
 
 const PANEL_W = 388;
