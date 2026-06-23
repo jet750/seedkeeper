@@ -25,6 +25,9 @@ const SPEED_RUNNER_WINDOW_MS = 15000;
 const FULL_BLOOM_MIN_BEDS = 8;
 const HARVEST_BEGINS_PER_PLANT = 10; // matches the demo-win threshold (10 of each)
 const MASTER_STAT_LEVEL = 5;
+const SLIME_CULL_THRESHOLD = 5;
+const SKELETON_THRESHOLD = 5;
+const COINS_EARNED_THRESHOLD = 100; // cumulative coins EARNED, not current balance
 
 export default class AchievementSystem {
   constructor(scene, saveData) {
@@ -38,6 +41,9 @@ export default class AchievementSystem {
     this.deathCount = stats.deathCount || 0;
     this.timerExpiredCount = stats.timerExpiredCount || 0;
     this.darkSlimeKills = stats.darkSlimeKills || 0;
+    this.slimeKills = stats.slimeKills || 0;
+    this.skeletonKills = stats.skeletonKills || 0;
+    this.coinsEarned = stats.coinsEarned || 0;
 
     // Per-run / per-day transient trackers.
     this.daysForestNoKill = 0;
@@ -83,6 +89,10 @@ export default class AchievementSystem {
     this.on('upgrade:purchased', (data) => this.handleUpgrade(data));
     this.on('gear:equipped', (data) => this.handleGearEquipped(data));
     this.on('capacity:purchased', (data) => this.handleCapacityPurchased(data));
+    this.on('coins:changed', (data) => this.handleCoinsChanged(data));
+    // 'plant:sold' ships with the Sprint 3 marketplace; the listener is inert
+    // until that emitter lands on dev, then 'first_sale' fires on the first sale.
+    this.on('plant:sold', () => this.unlock('first_sale'));
 
     // --- Tier 2 ---
     this.on('player:dashed', () => this.unlock('blur'));
@@ -148,8 +158,21 @@ export default class AchievementSystem {
 
     if (this.killCount === 1) this.unlock('first_blood');
     if (this.killCount >= SLAYER_THRESHOLD) this.unlock('slayer');
-    if (type === 'skeleton') this.unlock('bonecrusher');
+
+    // Per-type kill tracks (dual-economy combat progression). A slime is a
+    // slime — green and dark both count toward 'slime_culler'; dark slimes
+    // additionally drive the dark-specific milestones, skeletons their own.
+    if (type === 'green_slime' || type === 'dark_slime') {
+      this.slimeKills++;
+      if (this.slimeKills >= SLIME_CULL_THRESHOLD) this.unlock('slime_culler');
+    }
+    if (type === 'skeleton') {
+      this.unlock('bonecrusher');
+      this.skeletonKills++;
+      if (this.skeletonKills >= SKELETON_THRESHOLD) this.unlock('skeleton_crew');
+    }
     if (type === 'dark_slime') {
+      this.unlock('dark_first');
       this.darkSlimeKills++;
       if (this.darkSlimeKills >= DARKWALKER_THRESHOLD) this.unlock('darkwalker');
     }
@@ -180,17 +203,43 @@ export default class AchievementSystem {
     this.checkBroke();
   }
 
-  // Coin-funded gear (v2). 'armed'/'layered' on the relevant tiers; 'full_kit'
-  // once every slot holds its top tier.
-  handleGearEquipped({ tierId }) {
+  // Coin-funded gear (v2). 'the_stick' = the cold-start first weapon; 'armed'/
+  // 'layered' on the relevant tiers; 'slot_maxed' once any one slot hits its top
+  // tier; 'full_kit' once every slot holds its top tier.
+  handleGearEquipped({ slot, tierId }) {
+    if (tierId === 'stick') this.unlock('the_stick');
     if (['dagger', 'sword'].includes(tierId)) this.unlock('armed');
     if (['tunic', 'leather', 'chainmail'].includes(tierId)) this.unlock('layered');
+    if (this.isSlotMaxed(slot)) this.unlock('slot_maxed');
     if (this.allGearMaxed()) this.unlock('full_kit');
   }
 
-  // Coin-funded capacity (v2). 'satchel_bearer' = bought a seed-bag (carry) tier.
-  handleCapacityPurchased({ tree }) {
+  // Coin-funded capacity (v2). 'satchel_bearer' = bought a seed-bag (carry) tier;
+  // 'capacity_maxed' once any one tree reaches its final tier.
+  handleCapacityPurchased({ tree, tier }) {
     if (tree === 'seedBag') this.unlock('satchel_bearer');
+    const def = this.scene.economyData && this.scene.economyData.capacity[tree];
+    if (def && def.tiers && tier >= def.tiers.length) this.unlock('capacity_maxed');
+  }
+
+  // Cumulative coins EARNED (positive deltas only). Spends emit a negative delta
+  // and syncHud emits delta:0 — both ignored so balance churn doesn't inflate
+  // the total. Cheat coin grants flow through addCoins, so they count too.
+  handleCoinsChanged({ delta }) {
+    if (!delta || delta <= 0) return;
+    this.coinsEarned += delta;
+    this.unlock('first_coin');
+    if (this.coinsEarned >= COINS_EARNED_THRESHOLD) this.unlock('coin_purse');
+  }
+
+  // True once the equipped tier in `slot` is the top catalog tier for it.
+  isSlotMaxed(slot) {
+    const gear = this.scene.economyData && this.scene.economyData.gear;
+    const equipped = this.scene.player && this.scene.player.equippedGear;
+    if (!gear || !equipped) return false;
+    const list = gear[slot] || [];
+    if (!list.length) return false;
+    return equipped[slot] === list[list.length - 1].id;
   }
 
   // Every coin-gear slot at its top catalog tier.
@@ -234,7 +283,10 @@ export default class AchievementSystem {
         killCount: this.killCount,
         deathCount: this.deathCount,
         timerExpiredCount: this.timerExpiredCount,
-        darkSlimeKills: this.darkSlimeKills
+        darkSlimeKills: this.darkSlimeKills,
+        slimeKills: this.slimeKills,
+        skeletonKills: this.skeletonKills,
+        coinsEarned: this.coinsEarned
       }
     };
   }
