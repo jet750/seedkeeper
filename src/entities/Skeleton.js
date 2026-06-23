@@ -11,6 +11,7 @@ import Phaser from 'phaser';
 import EventBus from '../core/EventBus.js';
 import { GARDEN_LEFT, GARDEN_RIGHT, GARDEN_TOP, GARDEN_BOTTOM } from '../core/Constants.js';
 import { spawnEnemyAlert } from './enemyIndicator.js';
+import { createLevelMarker, setMarkerLevel, positionLevelMarker } from './enemyLevelMarker.js';
 import Seed from './Seed.js';
 import PlantBundle from './PlantBundle.js';
 import { getRandomSeedDrop, getRandomBundleDrop } from '../systems/lootTable.js';
@@ -36,7 +37,7 @@ const SPRITE_SCALE = 2;
 const BODY_RADIUS = 8;
 
 export default class Skeleton extends Phaser.Physics.Arcade.Sprite {
-  constructor(scene, x, y, waypoints, gameData) {
+  constructor(scene, x, y, waypoints, gameData, opts = {}) {
     // Prefer the Anokolisa animated sheets (run + death, 64x64). Fall back to the
     // legacy 16x16 skeleton_sheet, then to a generated bone placeholder.
     const useReal = scene.textures.exists('skeleton_run');
@@ -50,38 +51,64 @@ export default class Skeleton extends Phaser.Physics.Arcade.Sprite {
     scene.add.existing(this);
     scene.physics.add.existing(this);
 
-    // Visual draw scale for zoom visibility (set before the body below; the
-    // collider radius derives from this.width, the unscaled source size). The
-    // real 64x64 frames carry transparent padding, so 2x reads as a tanky enemy.
-    this.setScale(SPRITE_SCALE);
-    if (useReal) this.setupRealAnimations();
-
     this.enemyType = 'skeleton';
 
-    // --- Stats (from data, never hardcoded) ---
+    // --- Level (Sprint 5): difficulty driver — scales stats, size, tint. ---
     const stats = gameData.enemies.skeleton;
-    this.hp = stats.hp;
-    this.maxHP = stats.hp;
-    this.damage = stats.damage;
-    this.patrolSpeed = stats.patrolSpeed;
-    this.chaseSpeed = stats.chaseSpeed;
+    const cfg = gameData.enemies.leveling;
+    this.level = Phaser.Math.Clamp(Math.round((opts && opts.level) || 1), 1, 5);
+    const i = this.level - 1;
+    const curve = stats.levelCurve;
+    const hpMult = curve ? curve.hp[i] : 1;
+    const dmgMult = curve ? curve.damage[i] : 1;
+    const spdMult = curve ? curve.speed[i] : 1;
+
+    // Visual draw scale for zoom visibility + a per-level size step (set before
+    // the body below; the collider radius derives from this.width, unscaled). The
+    // real 64x64 frames carry transparent padding, so 2x reads as a tanky enemy.
+    const sizeStep = cfg ? cfg.sizeStepPerLevel * (this.level - 1) : 0;
+    this._baseScale = SPRITE_SCALE * (1 + sizeStep);
+    this.setScale(this._baseScale);
+    if (useReal) this.setupRealAnimations();
+
+    // --- Stats (data → level curve) ---
+    this.hp = Math.max(1, Math.round(stats.hp * hpMult));
+    this.maxHP = this.hp;
+    this.damage = Math.max(1, Math.round(stats.damage * dmgMult));
+    this.patrolSpeed = stats.patrolSpeed * spdMult;
+    this.chaseSpeed = stats.chaseSpeed * spdMult;
     this.detectRange = stats.detectRange;
     this.loseRange = stats.loseRange;
 
     // Overhead-strike telegraph config (Sprint 4) — all timings from data.
+    // Level can speed the wind-up and add a follow-up strike (Sprint 5).
     this.overhead = stats.overhead || null;
-    this._baseScale = SPRITE_SCALE;
+    this._windUpMult =
+      this.overhead && this.overhead.windUpMultByLevel ? this.overhead.windUpMultByLevel[i] : 1;
+    this._followUp =
+      this.overhead && this.overhead.followUpFromLevel
+        ? this.level >= this.overhead.followUpFromLevel
+        : false;
+    this._strikesDone = 0;
     this._attackCdUntil = 0;
     this._recoverTimer = 0;
     this._telegraphTween = null;
     this._strikeFacingLeft = false;
+
+    // Per-level body tint (Sprint 5), restored after every hit-flash/telegraph.
+    this._baseTint = stats.levelTint ? parseInt(stats.levelTint[i], 16) : null;
+    if (this._baseTint !== null) this.setTint(this._baseTint);
+
+    // Level marker (Sprint 5): pips above the skeleton, colored by danger.
+    this.levelMarker = createLevelMarker(scene);
+    this.refreshDangerColor();
 
     // --- Combat state ---
     this.isDead = false;
     this._knockbackUntil = 0;
 
     // --- Physics: fixed-radius collider, centred in the sprite ---
-    // Pinned to BODY_RADIUS (not width*ratio) so the 2x sprite scale doesn't
+    // Pinned to BODY_RADIUS (not width*ratio) so the sprite scale doesn't
     // inflate the hitbox. Offset stays centred on the 16px frame.
     this.setCollideWorldBounds(true);
     const radius = BODY_RADIUS;
@@ -92,6 +119,19 @@ export default class Skeleton extends Phaser.Physics.Arcade.Sprite {
     this.waypoints = waypoints && waypoints.length ? waypoints : [{ x, y }];
     this._wpIndex = 0;
     this.state = STATE.PATROL;
+  }
+
+  // Recolor the level marker by how this skeleton compares to the player's power.
+  refreshDangerColor() {
+    const color = this.scene.dangerColorForLevel
+      ? this.scene.dangerColorForLevel(this.level)
+      : null;
+    setMarkerLevel(this.levelMarker, this.level, color);
+  }
+
+  restoreBaseTint() {
+    if (this._baseTint !== null) this.setTint(this._baseTint);
+    else this.clearTint();
   }
 
   // Create the shared walk/death animations from the Anokolisa sheets once, then
@@ -120,6 +160,7 @@ export default class Skeleton extends Phaser.Physics.Arcade.Sprite {
   }
 
   update(dt, player) {
+    if (this.levelMarker) positionLevelMarker(this.levelMarker, this);
     if (this.isDead) return;
 
     // While being knocked back, let the impulse play out — skip AI steering so
@@ -171,7 +212,7 @@ export default class Skeleton extends Phaser.Physics.Arcade.Sprite {
     if (this.state === STATE.CHASE) {
       // Wind up the overhead when in range and off cooldown; otherwise close in.
       if (this.overhead && dist <= this.overhead.attackRange && this.scene.time.now >= this._attackCdUntil) {
-        this.startWindUp(player);
+        this.beginAttack();
       } else {
         this.moveToward(player.x, player.y, this.chaseSpeed);
       }
@@ -184,21 +225,35 @@ export default class Skeleton extends Phaser.Physics.Arcade.Sprite {
 
   // --- Overhead strike telegraph (Sprint 4) ---------------------------------
 
+  // Begin an attack: a high-level skeleton follows the first overhead with a
+  // second, snappier one (Sprint 5). Tracks how many strikes this attack runs.
+  beginAttack() {
+    this._strikesPlanned = 1 + (this._followUp ? 1 : 0);
+    this._strikesDone = 0;
+    this.startWindUp();
+  }
+
   // Rear back with a red flash + upward stretch (the tell), then slam. A player
   // who dashes out of strike range (or behind the locked facing) before the slam
-  // takes no hit and gets a long punish window.
-  startWindUp(player) {
+  // takes no hit and gets a long punish window. Higher levels wind up faster, and
+  // a follow-up strike is snappier than the lead (Sprint 5).
+  startWindUp() {
+    const player = this.scene.player;
     this.state = STATE.WIND_UP;
     this.setVelocity(0, 0);
-    this._strikeFacingLeft = player.x < this.x;
-    this.setFlipX(this._strikeFacingLeft);
+    if (player) {
+      this._strikeFacingLeft = player.x < this.x;
+      this.setFlipX(this._strikeFacingLeft);
+    }
     if (this.useReal && this.anims) this.anims.pause();
     if (this._telegraphTween) this._telegraphTween.stop();
     this.setTint(0xff3333); // red wind-up flash — shared telegraph grammar
+    const base = this.overhead.windUpMs * this._windUpMult;
+    const duration = this._strikesDone > 0 ? base * 0.7 : base;
     this._telegraphTween = this.scene.tweens.add({
       targets: this,
       scaleY: this._baseScale * this.overhead.raiseScale,
-      duration: this.overhead.windUpMs,
+      duration,
       ease: 'Quad.easeOut',
       onComplete: () => {
         if (this.isDead || this.state !== STATE.WIND_UP) return;
@@ -210,9 +265,19 @@ export default class Skeleton extends Phaser.Physics.Arcade.Sprite {
   strike() {
     this._telegraphTween = null;
     this.setScale(this._baseScale); // slam down to neutral
-    this.clearTint();
+    this.restoreBaseTint();
     this.resolveStrike();
-    this.enterRecover();
+    this.afterStrike();
+  }
+
+  // Chain a follow-up wind-up if this attack has strikes left, else recover.
+  afterStrike() {
+    this._strikesDone++;
+    if (this._strikesDone < this._strikesPlanned) {
+      this.startWindUp();
+    } else {
+      this.enterRecover();
+    }
   }
 
   // Land the overhead if the player is still inside strikeRange and within the
@@ -247,7 +312,7 @@ export default class Skeleton extends Phaser.Physics.Arcade.Sprite {
       this._telegraphTween = null;
     }
     this.setScale(this._baseScale);
-    this.clearTint();
+    this.restoreBaseTint();
     if (this.useReal && this.anims) this.anims.resume();
     this.state = STATE.CHASE;
     this._attackCdUntil = this.scene.time.now + this.overhead.cooldownMs;
@@ -318,7 +383,7 @@ export default class Skeleton extends Phaser.Physics.Arcade.Sprite {
     spawnEnemyAlert(this, '!', '#ff3333', false);
     this.setTint(0xff6666);
     this.scene.time.delayedCall(200, () => {
-      if (!this.isDead) this.clearTint();
+      if (!this.isDead) this.restoreBaseTint();
     });
   }
 
@@ -345,7 +410,7 @@ export default class Skeleton extends Phaser.Physics.Arcade.Sprite {
     // Hit flash.
     this.setTint(0xffffff);
     this.scene.time.delayedCall(HIT_FLASH_MS, () => {
-      if (!this.isDead) this.clearTint();
+      if (!this.isDead) this.restoreBaseTint();
     });
 
     // Knockback away from the hit source.
@@ -369,6 +434,7 @@ export default class Skeleton extends Phaser.Physics.Arcade.Sprite {
     this.isDead = true;
     this.body.enable = false;
     this.setVelocity(0, 0);
+    if (this.levelMarker) this.levelMarker.setVisible(false);
     // Clear any in-flight overhead tell so a dying skeleton doesn't crumble while
     // stuck mid-rear-back (raised scale / red tint).
     if (this._telegraphTween) {
@@ -394,6 +460,10 @@ export default class Skeleton extends Phaser.Physics.Arcade.Sprite {
         EventBus.emit('enemy:died', { type: 'skeleton', position: { x: this.x, y: this.y } });
         const idx = this.scene.enemies.indexOf(this);
         if (idx > -1) this.scene.enemies.splice(idx, 1);
+        if (this.levelMarker) {
+          this.levelMarker.destroy();
+          this.levelMarker = null;
+        }
         this.destroy();
       }
     });

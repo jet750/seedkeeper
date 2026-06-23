@@ -8,6 +8,7 @@ import Phaser from 'phaser';
 import EventBus from '../core/EventBus.js';
 import { GARDEN_LEFT, GARDEN_RIGHT, GARDEN_TOP, GARDEN_BOTTOM } from '../core/Constants.js';
 import { spawnEnemyAlert } from './enemyIndicator.js';
+import { createLevelMarker, setMarkerLevel, positionLevelMarker } from './enemyLevelMarker.js';
 import Seed from './Seed.js';
 import PlantBundle from './PlantBundle.js';
 import { getRandomSeedDrop, getRandomBundleDrop } from '../systems/lootTable.js';
@@ -67,55 +68,48 @@ export default class Slime extends Phaser.Physics.Arcade.Sprite {
     super(scene, x, y, hasSheet ? 'slime_sheet' : placeholderKey);
 
     this.hasSheet = hasSheet;
-    if (!hasSheet) {
-      // TODO(asset): drop slime_sheet.png into /assets/images for animated
-      // slimes. Colored-circle placeholder in use until then.
-    }
 
     scene.add.existing(this);
     scene.physics.add.existing(this);
 
-    // Split children draw smaller; the collider (BODY_RADIUS) scales with this so
-    // a smaller slime gets a smaller hitbox too. Stored so the telegraph tweens
-    // (squash, pulse) yoyo back to the correct baseline rather than full size.
-    this._baseScale = SPRITE_SCALE * (opts.scaleFactor || 1);
-    // Visual draw scale for zoom visibility (set before the body below; the
-    // collider radius derives from this.width, the unscaled source size).
-    this.setScale(this._baseScale);
-
     this.slimeType = slimeType;
 
-    // Split-child flags (Sprint 4): children don't split again, don't drop loot
-    // (the economy is untouched), and recycle through GameScene's split pool.
+    // Split-child flags + factors (Sprint 4): children don't split again, drop no
+    // loot (economy untouched), recycle through GameScene's split pool, and keep
+    // their size/HP/damage factors so a pooled reuse re-derives stats correctly.
     this.canSplit = opts.canSplit !== false;
     this.isSplitChild = opts.isSplitChild === true;
     this._pooled = opts.pooled === true;
+    this._hpFactor = opts.hpFactor || 1;
+    this._dmgFactor = opts.damageFactor || 1;
+    this._splitScaleFactor = opts.scaleFactor || 1;
 
-    // --- Stats (from data) ---
+    // Level-independent stats.
     const stats = gameData.enemies[slimeType];
-    const hpFactor = opts.hpFactor || 1;
-    const dmgFactor = opts.damageFactor || 1;
-    this.hp = Math.max(1, Math.round(stats.hp * hpFactor));
-    this.maxHP = this.hp;
-    this.baseDamage = Math.max(1, Math.round(stats.damage * dmgFactor));
-    this.baseChaseSpeed = stats.chaseSpeed;
     this.wanderSpeed = stats.wanderSpeed;
     this.detectRange = stats.detectRange;
     this.loseRange = stats.loseRange;
 
-    // Lunge telegraph config (Sprint 4) — all timings from data, never hardcoded.
+    // Lunge telegraph config (Sprint 4) — timings from data, never hardcoded.
     this.lunge = stats.lunge || null;
+    this._lungeCount = 1; // set by applyLevel (a lvl-5 green double-lunges)
+    this._attackStrikesDone = 0;
     this._attackCdUntil = 0;
     this._strikeTimer = 0;
     this._recoverTimer = 0;
     this._telegraphTween = null;
+    this._baseTint = null;
 
-    // Mutable copies — the day timer expiry scales these up.
-    this.currentDamage = this.baseDamage;
-    this.currentChaseSpeed = this.baseChaseSpeed;
+    // Level marker (Sprint 5): pips above the slime, colored by danger vs player.
+    this.levelMarker = createLevelMarker(scene);
+
+    // Level (Sprint 5) is the single difficulty driver — it sets HP/damage/speed,
+    // size, body tint and the danger marker. Re-applied on pooled reuse so a
+    // recycled split slime matches its new parent's level.
+    this.applyLevel(opts.level);
 
     // --- Physics ---
-    // Fixed-radius collider (BODY_RADIUS, not width*ratio) so the 2x sprite scale
+    // Fixed-radius collider (BODY_RADIUS, not width*ratio) so the sprite scale
     // doesn't inflate the hitbox. Offset stays centred on the 16px frame.
     this.setCollideWorldBounds(true);
     this.setBounce(1, 1);
@@ -138,9 +132,46 @@ export default class Slime extends Phaser.Physics.Arcade.Sprite {
     // --- Combat state ---
     this.isDead = false;
     this._knockbackUntil = 0;
-    // Tint to restore after a white hit-flash. Dark slimes get a purple tint set
-    // by GameScene; green slimes have no base tint (null → clearTint).
-    this._baseTint = null;
+  }
+
+  // Apply a 1-5 level: scales HP/damage/speed, size, body tint, and the danger
+  // marker (Sprint 5). Called from the constructor and on pooled reuse. Split
+  // factors persist on the instance so children re-derive correctly.
+  applyLevel(level) {
+    const stats = this.scene.gameData.enemies[this.slimeType];
+    const cfg = this.scene.gameData.enemies.leveling;
+    this.level = Phaser.Math.Clamp(Math.round(level || 1), 1, 5);
+    const i = this.level - 1;
+    const curve = stats.levelCurve;
+    const hpMult = curve ? curve.hp[i] : 1;
+    const dmgMult = curve ? curve.damage[i] : 1;
+    const spdMult = curve ? curve.speed[i] : 1;
+
+    const sizeStep = cfg ? cfg.sizeStepPerLevel * (this.level - 1) : 0;
+    this._baseScale = SPRITE_SCALE * this._splitScaleFactor * (1 + sizeStep);
+    this.setScale(this._baseScale);
+
+    this.maxHP = Math.max(1, Math.round(stats.hp * hpMult * this._hpFactor));
+    this.hp = this.maxHP;
+    this.baseDamage = Math.max(1, Math.round(stats.damage * dmgMult * this._dmgFactor));
+    this.baseChaseSpeed = stats.chaseSpeed * spdMult;
+    this.currentDamage = this.baseDamage;
+    this.currentChaseSpeed = this.baseChaseSpeed;
+    this._lungeCount = stats.lungeCountByLevel ? stats.lungeCountByLevel[i] : 1;
+
+    // levelTint[0] is 0xffffff (no shift), so lvl-1 reads as the base sprite;
+    // for dark slimes the array carries the purple identity, darker per level.
+    this._baseTint = stats.levelTint ? parseInt(stats.levelTint[i], 16) : null;
+    this.restoreBaseTint();
+    this.refreshDangerColor();
+  }
+
+  // Recolor the level marker by how this enemy compares to the player's power.
+  refreshDangerColor() {
+    const color = this.scene.dangerColorForLevel
+      ? this.scene.dangerColorForLevel(this.level)
+      : null;
+    setMarkerLevel(this.levelMarker, this.level, color);
   }
 
   pickNewWanderDirection() {
@@ -153,6 +184,7 @@ export default class Slime extends Phaser.Physics.Arcade.Sprite {
   }
 
   update(dt, player) {
+    if (this.levelMarker) positionLevelMarker(this.levelMarker, this);
     if (this.isDead) return;
 
     // While being knocked back, let the impulse play out — skip steering so the
@@ -174,7 +206,7 @@ export default class Slime extends Phaser.Physics.Arcade.Sprite {
     if (this.state === STATE.STRIKE) {
       // Velocity was locked in at strike start; let the committed leap ride.
       this._strikeTimer -= dtMs;
-      if (this._strikeTimer <= 0) this.enterRecover();
+      if (this._strikeTimer <= 0) this.afterStrike();
       this.confineToForest();
       return;
     }
@@ -207,7 +239,7 @@ export default class Slime extends Phaser.Physics.Arcade.Sprite {
     } else if (this.state === STATE.CHASE) {
       // Commit to a lunge when in range and off cooldown; otherwise close in.
       if (this.lunge && dist <= this.lunge.attackRange && this.scene.time.now >= this._attackCdUntil) {
-        this.startWindUp();
+        this.beginLunge();
       } else {
         const angle = Math.atan2(player.y - this.y, player.x - this.x);
         this.setVelocity(
@@ -223,6 +255,24 @@ export default class Slime extends Phaser.Physics.Arcade.Sprite {
   }
 
   // --- Lunge telegraph (Sprint 4) -------------------------------------------
+
+  // Begin an attack: a high-level slime chains multiple lunges (Sprint 5), each
+  // with its own readable wind-up. Tracks how many strikes this attack will run.
+  beginLunge() {
+    this._attackStrikesDone = 0;
+    this.startWindUp();
+  }
+
+  // After a leap resolves: chain another wind-up if this level's lunge count
+  // isn't spent yet (double-lunge), otherwise drop into the recovery window.
+  afterStrike() {
+    this._attackStrikesDone++;
+    if (this._attackStrikesDone < this._lungeCount) {
+      this.startWindUp();
+    } else {
+      this.enterRecover();
+    }
+  }
 
   // Freeze and squash down (the readable tell), then spring at the player's
   // locked-in position. A player who dashes clear during the squash is out of
@@ -427,6 +477,7 @@ export default class Slime extends Phaser.Physics.Arcade.Sprite {
     this.isDead = true;
     this.body.enable = false;
     this.setVelocity(0, 0);
+    if (this.levelMarker) this.levelMarker.setVisible(false);
     // Don't leave a frozen squash/tint on a dying slime.
     if (this._telegraphTween) {
       this._telegraphTween.stop();
@@ -442,10 +493,11 @@ export default class Slime extends Phaser.Physics.Arcade.Sprite {
   }
 
   onDeathComplete() {
-    // Dark slimes fracture into two smaller, pooled slimes at the death spot
-    // (Sprint 4). Split children carry canSplit=false so a chain can't snowball.
+    // Dark slimes fracture into smaller, pooled slimes at the death spot (Sprint
+    // 4); children inherit the parent's level (Sprint 5) and carry canSplit=false
+    // so a chain can't snowball.
     if (this.slimeType === 'dark_slime' && this.canSplit && this.scene.spawnDarkSlimeSplit) {
-      this.scene.spawnDarkSlimeSplit(this.x, this.y);
+      this.scene.spawnDarkSlimeSplit(this.x, this.y, this.level);
     }
     // Split children award no loot — they exist for pressure, not income, so the
     // resource economy stays untouched (Sprint 4 hard rule).
@@ -464,37 +516,39 @@ export default class Slime extends Phaser.Physics.Arcade.Sprite {
     if (this._pooled && this.scene.releaseSplitSlime) {
       this.scene.releaseSplitSlime(this);
     } else {
+      if (this.levelMarker) {
+        this.levelMarker.destroy();
+        this.levelMarker = null;
+      }
       this.destroy();
     }
   }
 
-  // Bring a pooled split slime back to life at (x, y). Mirrors the per-instance
-  // state the constructor sets so a recycled slime behaves like a fresh one.
-  // Split stats (maxHP, baseDamage, _baseScale) persist from construction.
-  resetForReuse(x, y) {
+  // Bring a pooled split slime back to life at (x, y), re-derived at `level`
+  // (its new parent's level). applyLevel resets stats/size/tint/marker; the rest
+  // mirrors the per-instance state the constructor sets.
+  resetForReuse(x, y, level) {
     this.setPosition(x, y);
+    this.applyLevel(level != null ? level : this.level);
     this.isDead = false;
     this.setActive(true);
     this.setVisible(true);
     this.setAlpha(1);
-    this.setScale(this._baseScale);
     if (this.body) this.body.enable = true;
     this.setVelocity(0, 0);
-    this.hp = this.maxHP;
-    this.currentDamage = this.baseDamage;
-    this.currentChaseSpeed = this.baseChaseSpeed;
     this._knockbackUntil = 0;
     this._attackCdUntil = 0;
     this._strikeTimer = 0;
     this._recoverTimer = 0;
+    this._attackStrikesDone = 0;
     if (this._telegraphTween) {
       this._telegraphTween.stop();
       this._telegraphTween = null;
     }
     this.state = STATE.WANDER;
     this._isWanderPaused = false;
-    this.restoreBaseTint();
     this.pickNewWanderDirection();
+    if (this.levelMarker) this.levelMarker.setVisible(true);
   }
 
   // Dark slimes have a chance to drop a pre-grown plant bundle (Sprint 7).

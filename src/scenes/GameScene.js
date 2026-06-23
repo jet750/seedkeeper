@@ -54,7 +54,7 @@ const SLEEP_FADE_MS = 500;
 const SWAP_TIMEOUT_DIST = 80; // px — walking this far from a seed cancels the swap picker
 
 // --- Combat & enemy spawning (Sprint 3) ---
-const DARK_SLIME_TINT = 0x8833cc;
+// (Dark slime tint moved to data-driven per-level tints in Sprint 5.)
 const MAX_DARK_SLIMES = 4;
 const ENEMY_SPAWN_MARGIN = 80; // keep spawns off the world edges
 const DEEP_FOREST_THRESHOLD = 0.7; // skeletons spawn below this fraction of WORLD_HEIGHT
@@ -84,6 +84,15 @@ const ENEMY_DEATH_COLORS = {
   dark_slime: '#8833cc',
   skeleton: '#E8E2D0'
 };
+
+// Player-power heuristic (Sprint 5): a 1-5 read of how far the player has
+// invested across the six stat trees and four gear slots, used to color enemy
+// level markers (green safe / yellow risky / red dangerous). Tunable weights.
+const PLAYER_POWER = { statWeight: 1, gearWeight: 2 };
+
+// Home anchor for the procedural enemy-level gradient (further from home = higher
+// level). Garden centre — the LDtk world will instead set per-zone levels.
+const ENEMY_HOME = { x: GARDEN_X + GARDEN_WIDTH / 2, y: GARDEN_Y + GARDEN_HEIGHT / 2 };
 
 // --- Upgrades, save & projectiles (Sprint 4) ---
 // Equip slots filled by the coin economy (economy.json gear catalog). v2 moved
@@ -265,6 +274,7 @@ export default class GameScene extends Phaser.Scene {
       .setDepth(50);
 
     // --- Slimes ---
+    this.recomputePlayerPower(); // seed the player-power read before enemies spawn (Sprint 5)
     this.spawnSlimes();
     this.physics.add.collider(this.slimeGroup, this.slimeGroup);
     this.physics.add.overlap(
@@ -948,11 +958,10 @@ export default class GameScene extends Phaser.Scene {
       x = pos.x;
       y = pos.y;
     }
-    const slime = new Slime(this, x, y, type, this.gameData);
-    if (type === 'dark_slime') {
-      slime.setTint(DARK_SLIME_TINT);
-      slime._baseTint = DARK_SLIME_TINT; // restored after each white hit-flash
-    }
+    // Level (Sprint 5) drives stats + the per-level body tint (dark slimes get
+    // their purple identity from levelTint, so no manual tint is needed here).
+    const level = this.computeEnemyLevel(x, y);
+    const slime = new Slime(this, x, y, type, this.gameData, { level });
     this.slimeGroup.add(slime);
     this.enemies.push(slime);
     return slime;
@@ -962,10 +971,14 @@ export default class GameScene extends Phaser.Scene {
   // death spot. Children are drawn from splitSlimePool (or built once and added),
   // carry halved HP + reduced damage, never split again, and the total active
   // slime count is capped so a chain can't snowball on mobile.
-  spawnDarkSlimeSplit(x, y) {
+  spawnDarkSlimeSplit(x, y, parentLevel) {
     const cfg = this.gameData.enemies.dark_slime.split;
     if (!cfg) return;
     const cap = this.gameData.enemies.scaling.maxActiveSlimes || 16;
+    // Children inherit the parent's level; high-level dark slimes shed more pieces
+    // (Sprint 5), still bounded by the total-slime cap from Sprint 4.
+    const level = Phaser.Math.Clamp(Math.round(parentLevel || 1), 1, 5);
+    const count = cfg.splitCountByLevel ? cfg.splitCountByLevel[level - 1] : cfg.count;
     const scatter = 14;
     const opts = {
       canSplit: false,
@@ -973,9 +986,10 @@ export default class GameScene extends Phaser.Scene {
       isSplitChild: true,
       hpFactor: cfg.hpFactor,
       damageFactor: cfg.damageFactor,
-      scaleFactor: cfg.scaleFactor
+      scaleFactor: cfg.scaleFactor,
+      level
     };
-    for (let i = 0; i < cfg.count; i++) {
+    for (let i = 0; i < count; i++) {
       const activeSlimes = this.enemies.filter(
         (e) => e.slimeType === 'green_slime' || e.slimeType === 'dark_slime'
       ).length;
@@ -985,13 +999,10 @@ export default class GameScene extends Phaser.Scene {
       let slime = this.splitSlimePool.pop();
       if (slime) {
         // Reused: it never left slimeGroup (mirrors the projectile pool), so just
-        // reactivate it in place.
-        slime._baseTint = DARK_SLIME_TINT;
-        slime.resetForReuse(cx, cy);
+        // reactivate it in place, re-derived at the inherited level.
+        slime.resetForReuse(cx, cy, level);
       } else {
         slime = new Slime(this, cx, cy, 'dark_slime', this.gameData, opts);
-        slime._baseTint = DARK_SLIME_TINT;
-        slime.setTint(DARK_SLIME_TINT);
         this.slimeGroup.add(slime);
       }
       this.enemies.push(slime);
@@ -1040,7 +1051,8 @@ export default class GameScene extends Phaser.Scene {
       { x: clampX(baseX), y: clampY(baseY + s / 2) }
     ];
 
-    const skeleton = new Skeleton(this, baseX, baseY, waypoints, this.gameData);
+    const level = this.computeEnemyLevel(baseX, baseY);
+    const skeleton = new Skeleton(this, baseX, baseY, waypoints, this.gameData, { level });
     this.skeletonGroup.add(skeleton);
     this.enemies.push(skeleton);
     return skeleton;
@@ -2543,28 +2555,90 @@ export default class GameScene extends Phaser.Scene {
     }
   }
 
-  // Day-based enemy scaling: dark slimes ramp in from day 3 (one more every two
-  // days, capped); a single skeleton patrols the deep forest from day 5 on.
+  // Spawn cadence only (Sprint 5): day gates which enemy TYPES are present and
+  // tops them up to a fixed baseline population. Per-enemy difficulty is driven
+  // solely by level (see computeEnemyLevel, which folds in a day bump) — there is
+  // no day-based stat or count ramp, so only one scaling system is active.
   handleEnemyScaling(dayNumber) {
     const scaling = this.gameData.enemies.scaling;
-    // New Game+ multiplies dark-slime density and raises the cap proportionally.
+    // New Game+ scales the baseline population (and split cap) proportionally.
     const mult = this.newGamePlus ? this.gameData.newGamePlus.enemyDensityMult || 1 : 1;
 
     if (dayNumber >= scaling.startDay_darkSlime) {
-      const cap = Math.ceil(MAX_DARK_SLIMES * mult);
-      const base = Math.floor((dayNumber - scaling.startDay_darkSlime) / 2) + 1;
-      const wantCount = Math.min(cap, Math.floor(base * mult));
+      const target = Math.ceil((scaling.darkSlimeBaseline || MAX_DARK_SLIMES) * mult);
       const have = this.enemies.filter((e) => e.slimeType === 'dark_slime').length;
-      for (let i = 0; i < wantCount - have; i++) {
-        this.spawnSlime('dark_slime');
-      }
+      for (let i = 0; i < target - have; i++) this.spawnSlime('dark_slime');
     }
 
     if (dayNumber >= scaling.startDay_skeleton) {
-      if (!this.enemies.some((e) => e instanceof Skeleton)) {
-        this.spawnSkeleton();
-      }
+      if (!this.enemies.some((e) => e instanceof Skeleton)) this.spawnSkeleton();
     }
+  }
+
+  // --- Enemy level + player-power read (Sprint 5) ----------------------------
+
+  // The level (1-5) for an enemy spawning at (x, y). An authored zone level wins
+  // when present; otherwise a procedural distance-from-home gradient. The current
+  // day is folded in as a bump (single scaling system), plus a small per-guard
+  // spread so a zone isn't perfectly uniform (Sprint 6 chest guards need variety).
+  computeEnemyLevel(x, y) {
+    const cfg = this.gameData.enemies.leveling;
+    const zoneLevel = this.worldZoneSystem.getZoneLevelAt
+      ? this.worldZoneSystem.getZoneLevelAt(x, y)
+      : null;
+    let base;
+    if (zoneLevel != null) {
+      base = zoneLevel;
+    } else {
+      const dist = Phaser.Math.Distance.Between(x, y, ENEMY_HOME.x, ENEMY_HOME.y);
+      const t = Phaser.Math.Clamp(dist / cfg.distanceForMaxLevel, 0, 1);
+      base = 1 + Math.floor(t * 5);
+    }
+    const day = this.daySystem ? this.daySystem.dayNumber : 1;
+    const dayBump = cfg.dayLevelBumpEvery ? Math.floor((day - 1) / cfg.dayLevelBumpEvery) : 0;
+    const spread = cfg.spread ? Phaser.Math.Between(-cfg.spread, cfg.spread) : 0;
+    return Phaser.Math.Clamp(base + dayBump + spread, 1, 5);
+  }
+
+  // A 1-5 read of player power from invested stat-tree tiers + owned gear tiers.
+  computePlayerPowerLevel() {
+    let statSum = 0;
+    let statMax = 0;
+    Object.keys(this.gameData.upgrades).forEach((pt) => {
+      statSum += (this.upgradeLevels[pt] && this.upgradeLevels[pt].stat) || 0;
+      statMax += this.gameData.upgrades[pt].stat.levels;
+    });
+    let gearSum = 0;
+    let gearMax = 0;
+    GEAR_SLOTS.forEach((slot) => {
+      gearSum += this.gearTierIndex(slot) + 1; // -1 (none) → 0
+      gearMax += (this.economyData.gear[slot] || []).length;
+    });
+    const invest = statSum * PLAYER_POWER.statWeight + gearSum * PLAYER_POWER.gearWeight;
+    const maxInvest = statMax * PLAYER_POWER.statWeight + gearMax * PLAYER_POWER.gearWeight;
+    const frac = maxInvest > 0 ? invest / maxInvest : 0;
+    return Phaser.Math.Clamp(1 + Math.floor(frac * 5), 1, 5);
+  }
+
+  // Recompute cached player power and refresh every enemy's danger marker, so the
+  // same enemies shift from red toward yellow/green as the player grows.
+  recomputePlayerPower() {
+    this.playerPowerLevel = this.computePlayerPowerLevel();
+    if (this.enemies) {
+      this.enemies.forEach((e) => {
+        if (e.refreshDangerColor) e.refreshDangerColor();
+      });
+    }
+  }
+
+  // Marker color rule (provisional, tunable): safe at/below player power, risky
+  // one level above, dangerous two or more above.
+  dangerColorForLevel(level) {
+    const c = this.gameData.enemies.leveling.dangerColors;
+    const p = this.playerPowerLevel || 1;
+    if (level <= p) return c.safe;
+    if (level === p + 1) return c.risky;
+    return c.dangerous;
   }
 
   onPlantHarvested({ plantType, position, yield: harvestYield = 1 }) {
@@ -2605,6 +2679,7 @@ export default class GameScene extends Phaser.Scene {
     this.runStats.upgradesPurchased++;
     this.shake('upgrade_purchase');
     this.autoSave();
+    this.recomputePlayerPower(); // stat tier changed → refresh enemy danger colors
     const plant = d && this.gameData.plants[d.plantType];
     this.particleSystem.upgradeBurst({ x: CHEST_X, y: CHEST_Y }, plant ? plant.color : '#EDD49A');
   }
@@ -2763,12 +2838,10 @@ export default class GameScene extends Phaser.Scene {
 
   // Base green-slime count plus a slow per-day ramp, capped, so deeper runs stay
   // dense without overwhelming early days.
+  // Fixed baseline green population (Sprint 5): difficulty comes from per-enemy
+  // level, not from spawning more green slimes as days pass.
   getTargetGreenSlimeCount() {
-    const s = this.gameData.enemies.scaling;
-    return Math.min(
-      s.greenSlimeBaseCount + Math.floor(this.daySystem.dayNumber * s.greenSlimePerDay),
-      s.greenSlimeMaxCount
-    );
+    return this.gameData.enemies.scaling.greenSlimeBaseCount;
   }
 
   // --- Upgrade economy (Sprint 4) -------------------------------------------
@@ -3050,6 +3123,7 @@ export default class GameScene extends Phaser.Scene {
       const tier = (this.economyData.gear[slot] || []).find((g) => g.id === id);
       if (tier) this.equipGearTier(slot, tier);
     });
+    this.recomputePlayerPower(); // restored gear on load → seed danger colors
   }
 
   // Buy the NEXT tier in a slot with coins. Used by the marketplace (Sprint 3);
@@ -3071,6 +3145,7 @@ export default class GameScene extends Phaser.Scene {
     EventBus.emit('gear:purchased', { slot, tierId: tier.id, price: tier.price });
     EventBus.emit('gear:equipped', { slot, tierId: tier.id });
     this.autoSave();
+    this.recomputePlayerPower(); // gear tier changed → refresh enemy danger colors
   }
 
   // --- Coin-funded capacity (three independent trees) -----------------------
@@ -3247,6 +3322,7 @@ export default class GameScene extends Phaser.Scene {
     this.player.recalculateStats();
     this.daySystem.setTimerBonus(this.player.statBonuses.timerBonus);
     this.syncHud();
+    this.recomputePlayerPower(); // maxed stats → refresh enemy danger colors
   }
 
   devSpawnEnemy({ type }) {
@@ -3261,6 +3337,10 @@ export default class GameScene extends Phaser.Scene {
     this.enemies.forEach((e) => {
       e.isDead = true;
       if (e.body) e.body.enable = false;
+      if (e.levelMarker) {
+        e.levelMarker.destroy();
+        e.levelMarker = null;
+      }
       e.destroy();
     });
     this.enemies = [];
