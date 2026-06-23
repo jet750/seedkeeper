@@ -53,10 +53,20 @@ export default class Skeleton extends Phaser.Physics.Arcade.Sprite {
 
     this.enemyType = 'skeleton';
 
-    // --- Level (Sprint 5): difficulty driver — scales stats, size, tint. ---
+    // --- Variant (Sprint 7): 'standard' (smaller, white-tinted, Lv1-3) vs 'mega'
+    // (current oversized, no tint, Lv3-5, higher HP/damage). Both share the same
+    // Anokolisa sheets; the variant only changes scale, tint, level band, stats. ---
     const stats = gameData.enemies.skeleton;
     const cfg = gameData.enemies.leveling;
-    this.level = Phaser.Math.Clamp(Math.round((opts && opts.level) || 1), 1, 5);
+    this.variant = (opts && opts.variant) === 'mega' ? 'mega' : 'standard';
+    const v = (stats.variants && stats.variants[this.variant]) || {};
+
+    // --- Level (Sprint 5): difficulty driver — clamped to the variant's band. ---
+    this.level = Phaser.Math.Clamp(
+      Math.round((opts && opts.level) || 1),
+      v.minLevel || 1,
+      v.maxLevel || 5
+    );
     const i = this.level - 1;
     const curve = stats.levelCurve;
     const hpMult = curve ? curve.hp[i] : 1;
@@ -67,14 +77,14 @@ export default class Skeleton extends Phaser.Physics.Arcade.Sprite {
     // the body below; the collider radius derives from this.width, unscaled). The
     // real 64x64 frames carry transparent padding, so 2x reads as a tanky enemy.
     const sizeStep = cfg ? cfg.sizeStepPerLevel * (this.level - 1) : 0;
-    this._baseScale = SPRITE_SCALE * (1 + sizeStep);
+    this._baseScale = SPRITE_SCALE * (1 + sizeStep) * (v.scaleMult || 1);
     this.setScale(this._baseScale);
     if (useReal) this.setupRealAnimations();
 
     // --- Stats (data → level curve) ---
-    this.hp = Math.max(1, Math.round(stats.hp * hpMult));
+    this.hp = Math.max(1, Math.round(stats.hp * hpMult * (v.hpMult || 1)));
     this.maxHP = this.hp;
-    this.damage = Math.max(1, Math.round(stats.damage * dmgMult));
+    this.damage = Math.max(1, Math.round(stats.damage * dmgMult * (v.damageMult || 1)));
     this.patrolSpeed = stats.patrolSpeed * spdMult;
     this.chaseSpeed = stats.chaseSpeed * spdMult;
     this.detectRange = stats.detectRange;
@@ -95,8 +105,10 @@ export default class Skeleton extends Phaser.Physics.Arcade.Sprite {
     this._telegraphTween = null;
     this._strikeFacingLeft = false;
 
-    // Per-level body tint (Sprint 5), restored after every hit-flash/telegraph.
-    this._baseTint = stats.levelTint ? parseInt(stats.levelTint[i], 16) : null;
+    // Variant body tint (Sprint 7), restored after every hit-flash/telegraph:
+    // standard is white-tinted to read as the lesser skeleton, mega is natural
+    // bone (no tint). Overrides the Sprint 5 per-level tint.
+    this._baseTint = v.tint != null ? parseInt(v.tint, 16) : null;
     if (this._baseTint !== null) this.setTint(this._baseTint);
 
     // Level marker (Sprint 5): pips above the skeleton, colored by danger.
@@ -232,6 +244,12 @@ export default class Skeleton extends Phaser.Physics.Arcade.Sprite {
     this._strikesDone = 0;
     this.startWindUp();
   }
+
+  // TODO Sprint N — sword animation on overhead strike:
+  // When sword sprite assets are imported, add a sword child sprite
+  // to the skeleton that animates during the WIND_UP → STRIKE states.
+  // The telegraph (red flash + jiggle) should be replaced with a
+  // visible weapon raise so the wind-up reads as intentional not glitchy.
 
   // Rear back with a red flash + upward stretch (the tell), then slam. A player
   // who dashes out of strike range (or behind the locked facing) before the slam

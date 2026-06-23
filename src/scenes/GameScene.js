@@ -1060,8 +1060,12 @@ export default class GameScene extends Phaser.Scene {
       { x: clampX(baseX), y: clampY(baseY + s / 2) }
     ];
 
+    // Variant by danger (Sprint 7): the leveling gradient is distance-from-home,
+    // so high-level spawns are the far/outer perimeter → mega; nearer/lower → the
+    // smaller standard skeleton. The Skeleton clamps level into its variant band.
     const level = this.computeEnemyLevel(baseX, baseY);
-    const skeleton = new Skeleton(this, baseX, baseY, waypoints, this.gameData, { level });
+    const variant = level >= 4 ? 'mega' : 'standard';
+    const skeleton = new Skeleton(this, baseX, baseY, waypoints, this.gameData, { level, variant });
     this.skeletonGroup.add(skeleton);
     this.enemies.push(skeleton);
     return skeleton;
@@ -3295,6 +3299,9 @@ export default class GameScene extends Phaser.Scene {
     this.subscribe('dev:clearEnemies', () => this.devClearEnemies());
     this.subscribe('dev:clearSave', () => this.devClearSave());
     this.subscribe('dev:forceSave', () => this.devForceSave());
+    this.subscribe('dev:toggleSpeed', (d) => this.devToggleSpeed(d));
+    this.subscribe('dev:toggleNoclip', (d) => this.devToggleNoclip(d));
+    this.subscribe('dev:maxCapacity', () => this.devMaxCapacity());
   }
 
   devFillBank() {
@@ -3348,6 +3355,41 @@ export default class GameScene extends Phaser.Scene {
     this.daySystem.setTimerBonus(this.player.statBonuses.timerBonus);
     this.syncHud();
     this.recomputePlayerPower(); // maxed stats → refresh enemy danger colors
+  }
+
+  // Cheat: 2x player move speed (runtime only, never saved). Sprint 7.
+  devToggleSpeed({ on } = {}) {
+    this.player.devSpeedMult = on ? 2 : 1;
+    this.player.recalculateStats();
+  }
+
+  // Cheat: no-clip — the player body collides with nothing (river, trees, fences,
+  // world bounds) while active. Runtime only; toggle off to restore. Sprint 7.
+  devToggleNoclip({ on } = {}) {
+    this._noclip = !!on;
+    const body = this.player && this.player.body;
+    if (!body) return;
+    body.checkCollision.none = !!on;
+    this.player.setCollideWorldBounds(!on);
+  }
+
+  // Cheat: buy every capacity tree to its max tier (no coin cost). Sets the tier
+  // directly and applies it, mirroring purchaseCapacity's effects + events so the
+  // marketplace/HUD update. Sprint 7. Fills the gap left by "Grant All Gear".
+  devMaxCapacity() {
+    ['seedBag', 'gardenBeds', 'watering'].forEach((tree) => {
+      const def = this.economyData.capacity[tree];
+      const field = CAPACITY_TIER_FIELD[tree];
+      if (!def || !field) return;
+      this[field] = def.tiers.length; // max tier index
+      if (tree === 'seedBag') this.applySeedBagTier();
+      else if (tree === 'gardenBeds') this.applyGardenBedTier();
+      else if (tree === 'watering') this.applyWateringTier();
+      EventBus.emit('capacity:purchased', { tree, tier: this[field], price: 0 });
+    });
+    this.player.recalculateStats();
+    this.syncHud();
+    this.autoSave();
   }
 
   devSpawnEnemy({ type }) {

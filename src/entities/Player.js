@@ -481,7 +481,10 @@ export default class Player extends Phaser.Physics.Arcade.Sprite {
     const base = this.gameData.player;
     this.effectiveAttack = base.attackDamage * (1 + this.statBonuses.attackMult);
     this.effectiveCrit = base.critChance + this.statBonuses.critBonus;
-    this.speed = Math.floor(base.speed * (1 + this.statBonuses.speedMult + this.bootsSpeedBonus));
+    // devSpeedMult is the dev-menu "2X SPEED" cheat (runtime only, never saved).
+    this.speed = Math.floor(
+      base.speed * (1 + this.statBonuses.speedMult + this.bootsSpeedBonus) * (this.devSpeedMult || 1)
+    );
 
     // Scale current HP proportionally when max HP changes.
     const effectiveMaxHP = Math.floor(base.maxHP * (1 + this.statBonuses.hpMult));

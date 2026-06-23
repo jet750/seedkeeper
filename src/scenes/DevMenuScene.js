@@ -57,6 +57,8 @@ export default class DevMenuScene extends Phaser.Scene {
 
     this.menuOpen = false;
     this.uiObjects = [];
+    this._speedOn = false; // dev 2x-speed toggle state (Sprint 7)
+    this._noclipOn = false; // dev no-clip toggle state (Sprint 7)
 
     this.buildPanel();
     this.setMenuVisible(false);
@@ -200,6 +202,37 @@ export default class DevMenuScene extends Phaser.Scene {
     y += BTN_H + 4;
     this.makeButton(CONTENT_X, y, CONTENT_W, 'Max All Stats', () => {
       this.dispatch('dev:maxStats');
+      this.refreshDisplays();
+    });
+    y += BTN_H + 8;
+
+    // --- Cheats (Sprint 7) ---
+    y = this.sectionHeader('CHEATS', y);
+    this._speedBtn = this.makeButton(
+      CONTENT_X,
+      y,
+      HALF_W,
+      `2X SPEED [${this._speedOn ? 'ON' : 'OFF'}]`,
+      () => {
+        this._speedOn = !this._speedOn;
+        this.dispatch('dev:toggleSpeed', { on: this._speedOn });
+        this._speedBtn.text.setText(`2X SPEED [${this._speedOn ? 'ON' : 'OFF'}]`);
+      }
+    );
+    this._noclipBtn = this.makeButton(
+      CONTENT_X + HALF_W + 8,
+      y,
+      HALF_W,
+      `NO-CLIP [${this._noclipOn ? 'ON' : 'OFF'}]`,
+      () => {
+        this._noclipOn = !this._noclipOn;
+        this.dispatch('dev:toggleNoclip', { on: this._noclipOn });
+        this._noclipBtn.text.setText(`NO-CLIP [${this._noclipOn ? 'ON' : 'OFF'}]`);
+      }
+    );
+    y += BTN_H + 4;
+    this.makeButton(CONTENT_X, y, CONTENT_W, 'MAX CAPACITY', () => {
+      this.dispatch('dev:maxCapacity');
       this.refreshDisplays();
     });
     y += BTN_H + 8;

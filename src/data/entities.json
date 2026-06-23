@@ -95,6 +95,11 @@
         "strikeDamageMult": 1.75,
         "recoverMs": 700,
         "cooldownMs": 1800
+      },
+      "variants": {
+        "_note": "Sprint 7: two skeleton types from the same sheets. standard = smaller, white-tinted, levels 1-3, inner/mid; mega = current oversized, no tint, levels 3-5, outer perimeter, higher HP/damage. scaleMult multiplies the base 2x sprite scale; hp/damage mults stack on the level curve.",
+        "standard": { "scaleMult": 0.65, "tint": "0xeeeeee", "hpMult": 1.0, "damageMult": 1.0, "minLevel": 1, "maxLevel": 3 },
+        "mega":     { "scaleMult": 1.0,  "tint": null,       "hpMult": 1.8, "damageMult": 1.6, "minLevel": 3, "maxLevel": 5 }
       }
     },
     "leveling": {
