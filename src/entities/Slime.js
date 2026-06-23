@@ -12,7 +12,16 @@ import Seed from './Seed.js';
 import PlantBundle from './PlantBundle.js';
 import { getRandomSeedDrop, getRandomBundleDrop } from '../systems/lootTable.js';
 
-const STATE = { WANDER: 'WANDER', ANTICIPATE: 'ANTICIPATE', CHASE: 'CHASE' };
+// idle/chase → WIND_UP (squash tell, committed) → STRIKE (the leap) → RECOVER
+// (vulnerable). The wind-up is dodgeable: a dash clears the leap's path (Sprint 4).
+const STATE = {
+  WANDER: 'WANDER',
+  ANTICIPATE: 'ANTICIPATE',
+  CHASE: 'CHASE',
+  WIND_UP: 'WIND_UP',
+  STRIKE: 'STRIKE',
+  RECOVER: 'RECOVER'
+};
 const RETARGET_MIN_MS = 2000;
 const RETARGET_MAX_MS = 3000;
 
@@ -48,7 +57,10 @@ const GREEN_SLIME_DROPS = 1;
 const DARK_SLIME_DROPS = 2;
 
 export default class Slime extends Phaser.Physics.Arcade.Sprite {
-  constructor(scene, x, y, slimeType, gameData) {
+  // opts (Sprint 4) configures split children: { hpFactor, damageFactor,
+  // scaleFactor, canSplit:false, pooled:true, isSplitChild:true }. Plain slimes
+  // pass nothing and behave as before.
+  constructor(scene, x, y, slimeType, gameData, opts = {}) {
     const hasSheet = scene.textures.exists('slime_sheet');
     const placeholderKey =
       slimeType === 'dark_slime' ? 'px_dark_slime' : 'px_green_slime';
@@ -63,21 +75,40 @@ export default class Slime extends Phaser.Physics.Arcade.Sprite {
     scene.add.existing(this);
     scene.physics.add.existing(this);
 
+    // Split children draw smaller; the collider (BODY_RADIUS) scales with this so
+    // a smaller slime gets a smaller hitbox too. Stored so the telegraph tweens
+    // (squash, pulse) yoyo back to the correct baseline rather than full size.
+    this._baseScale = SPRITE_SCALE * (opts.scaleFactor || 1);
     // Visual draw scale for zoom visibility (set before the body below; the
     // collider radius derives from this.width, the unscaled source size).
-    this.setScale(SPRITE_SCALE);
+    this.setScale(this._baseScale);
 
     this.slimeType = slimeType;
 
+    // Split-child flags (Sprint 4): children don't split again, don't drop loot
+    // (the economy is untouched), and recycle through GameScene's split pool.
+    this.canSplit = opts.canSplit !== false;
+    this.isSplitChild = opts.isSplitChild === true;
+    this._pooled = opts.pooled === true;
+
     // --- Stats (from data) ---
     const stats = gameData.enemies[slimeType];
-    this.hp = stats.hp;
-    this.maxHP = stats.hp;
-    this.baseDamage = stats.damage;
+    const hpFactor = opts.hpFactor || 1;
+    const dmgFactor = opts.damageFactor || 1;
+    this.hp = Math.max(1, Math.round(stats.hp * hpFactor));
+    this.maxHP = this.hp;
+    this.baseDamage = Math.max(1, Math.round(stats.damage * dmgFactor));
     this.baseChaseSpeed = stats.chaseSpeed;
     this.wanderSpeed = stats.wanderSpeed;
     this.detectRange = stats.detectRange;
     this.loseRange = stats.loseRange;
+
+    // Lunge telegraph config (Sprint 4) — all timings from data, never hardcoded.
+    this.lunge = stats.lunge || null;
+    this._attackCdUntil = 0;
+    this._strikeTimer = 0;
+    this._recoverTimer = 0;
+    this._telegraphTween = null;
 
     // Mutable copies — the day timer expiry scales these up.
     this.currentDamage = this.baseDamage;
@@ -131,6 +162,30 @@ export default class Slime extends Phaser.Physics.Arcade.Sprite {
       return;
     }
 
+    const dtMs = dt * 1000;
+
+    // --- Committed lunge states run to completion; no chase/lose retargeting
+    // happens mid-tell, so the player can read and react to the wind-up. ---
+    if (this.state === STATE.WIND_UP) {
+      this.setVelocity(0, 0); // frozen — the squash tween is the tell
+      this.confineToForest();
+      return;
+    }
+    if (this.state === STATE.STRIKE) {
+      // Velocity was locked in at strike start; let the committed leap ride.
+      this._strikeTimer -= dtMs;
+      if (this._strikeTimer <= 0) this.enterRecover();
+      this.confineToForest();
+      return;
+    }
+    if (this.state === STATE.RECOVER) {
+      this.setVelocity(0, 0); // vulnerable — the punish window after a leap
+      this._recoverTimer -= dtMs;
+      if (this._recoverTimer <= 0) this.state = STATE.CHASE;
+      this.confineToForest();
+      return;
+    }
+
     const dist = Phaser.Math.Distance.Between(this.x, this.y, player.x, player.y);
 
     // --- Transitions ---
@@ -150,16 +205,84 @@ export default class Slime extends Phaser.Physics.Arcade.Sprite {
       // Frozen mid-tell — the pulse tween is doing the talking.
       this.setVelocity(0, 0);
     } else if (this.state === STATE.CHASE) {
-      const angle = Math.atan2(player.y - this.y, player.x - this.x);
-      this.setVelocity(
-        Math.cos(angle) * this.currentChaseSpeed,
-        Math.sin(angle) * this.currentChaseSpeed
-      );
+      // Commit to a lunge when in range and off cooldown; otherwise close in.
+      if (this.lunge && dist <= this.lunge.attackRange && this.scene.time.now >= this._attackCdUntil) {
+        this.startWindUp();
+      } else {
+        const angle = Math.atan2(player.y - this.y, player.x - this.x);
+        this.setVelocity(
+          Math.cos(angle) * this.currentChaseSpeed,
+          Math.sin(angle) * this.currentChaseSpeed
+        );
+      }
     } else {
       this.updateWander(dt);
     }
 
     this.confineToForest();
+  }
+
+  // --- Lunge telegraph (Sprint 4) -------------------------------------------
+
+  // Freeze and squash down (the readable tell), then spring at the player's
+  // locked-in position. A player who dashes clear during the squash is out of
+  // the leap's straight-line path, so the lunge whiffs.
+  startWindUp() {
+    this.state = STATE.WIND_UP;
+    this.setVelocity(0, 0);
+    if (this._telegraphTween) this._telegraphTween.stop();
+    this.setTint(0xffe08a); // warm warning flash — same grammar across enemies
+    this._telegraphTween = this.scene.tweens.add({
+      targets: this,
+      scaleY: this._baseScale * this.lunge.squashScaleY,
+      duration: this.lunge.windUpMs,
+      ease: 'Quad.easeIn',
+      onComplete: () => {
+        if (this.isDead || this.state !== STATE.WIND_UP) return;
+        this.startStrike();
+      }
+    });
+  }
+
+  startStrike() {
+    const player = this.scene.player;
+    const angle = Math.atan2(player.y - this.y, player.x - this.x); // locked here
+    this.state = STATE.STRIKE;
+    this._telegraphTween = null;
+    this.setScale(this._baseScale); // un-squash: the spring releases
+    this.restoreBaseTint();
+    this.setVelocity(
+      Math.cos(angle) * this.lunge.lungeSpeed,
+      Math.sin(angle) * this.lunge.lungeSpeed
+    );
+    this._strikeTimer = this.lunge.lungeDurationMs;
+  }
+
+  enterRecover() {
+    this.state = STATE.RECOVER;
+    this.setVelocity(0, 0);
+    this._recoverTimer = this.lunge.recoverMs;
+    this._attackCdUntil = this.scene.time.now + this.lunge.cooldownMs;
+  }
+
+  // A landed hit during the wind-up interrupts the coil — the slime can't follow
+  // through. A committed leap (STRIKE) still lands and the RECOVER punish window
+  // is preserved; only the pre-commit wind-up is cancellable.
+  interruptAttack() {
+    if (this.state !== STATE.WIND_UP) return;
+    if (this._telegraphTween) {
+      this._telegraphTween.stop();
+      this._telegraphTween = null;
+    }
+    this.setScale(this._baseScale);
+    this.restoreBaseTint();
+    this.state = STATE.CHASE;
+    if (this.lunge) this._attackCdUntil = this.scene.time.now + this.lunge.cooldownMs;
+  }
+
+  restoreBaseTint() {
+    if (this._baseTint !== null) this.setTint(this._baseTint);
+    else this.clearTint();
   }
 
   // WANDER movement with personality pauses. Greens stop occasionally; darks
@@ -199,8 +322,8 @@ export default class Slime extends Phaser.Physics.Arcade.Sprite {
     this.setVelocity(0, 0);
     this.scene.tweens.add({
       targets: this,
-      scaleX: SPRITE_SCALE * ANTICIPATE_PULSE_SCALE,
-      scaleY: SPRITE_SCALE * ANTICIPATE_PULSE_SCALE,
+      scaleX: this._baseScale * ANTICIPATE_PULSE_SCALE,
+      scaleY: this._baseScale * ANTICIPATE_PULSE_SCALE,
       duration: ANTICIPATE_PULSE_MS,
       yoyo: true,
       onComplete: () => {
@@ -271,6 +394,8 @@ export default class Slime extends Phaser.Physics.Arcade.Sprite {
 
   takeDamage(amount, sourcePosition) {
     if (this.isDead) return;
+    // Getting hit mid-wind-up interrupts the coil (no effect on STRIKE/RECOVER).
+    this.interruptAttack();
     this.hp -= amount;
 
     // Hit flash — white for a beat, then back to the slime's base look.
@@ -302,23 +427,74 @@ export default class Slime extends Phaser.Physics.Arcade.Sprite {
     this.isDead = true;
     this.body.enable = false;
     this.setVelocity(0, 0);
+    // Don't leave a frozen squash/tint on a dying slime.
+    if (this._telegraphTween) {
+      this._telegraphTween.stop();
+      this._telegraphTween = null;
+    }
 
     this.scene.tweens.add({
       targets: this,
       alpha: 0,
       duration: DEATH_FADE_MS,
-      onComplete: () => {
-        this.dropBundle();
-        this.dropSeeds();
-        EventBus.emit('enemy:died', {
-          type: this.slimeType,
-          position: { x: this.x, y: this.y }
-        });
-        const idx = this.scene.enemies.indexOf(this);
-        if (idx > -1) this.scene.enemies.splice(idx, 1);
-        this.destroy();
-      }
+      onComplete: () => this.onDeathComplete()
     });
+  }
+
+  onDeathComplete() {
+    // Dark slimes fracture into two smaller, pooled slimes at the death spot
+    // (Sprint 4). Split children carry canSplit=false so a chain can't snowball.
+    if (this.slimeType === 'dark_slime' && this.canSplit && this.scene.spawnDarkSlimeSplit) {
+      this.scene.spawnDarkSlimeSplit(this.x, this.y);
+    }
+    // Split children award no loot — they exist for pressure, not income, so the
+    // resource economy stays untouched (Sprint 4 hard rule).
+    if (!this.isSplitChild) {
+      this.dropBundle();
+      this.dropSeeds();
+    }
+    EventBus.emit('enemy:died', {
+      type: this.slimeType,
+      position: { x: this.x, y: this.y },
+      light: this.isSplitChild // suppress the heavy dark-slime death flash for children
+    });
+    const idx = this.scene.enemies.indexOf(this);
+    if (idx > -1) this.scene.enemies.splice(idx, 1);
+    // Pooled split children recycle through GameScene; everything else destroys.
+    if (this._pooled && this.scene.releaseSplitSlime) {
+      this.scene.releaseSplitSlime(this);
+    } else {
+      this.destroy();
+    }
+  }
+
+  // Bring a pooled split slime back to life at (x, y). Mirrors the per-instance
+  // state the constructor sets so a recycled slime behaves like a fresh one.
+  // Split stats (maxHP, baseDamage, _baseScale) persist from construction.
+  resetForReuse(x, y) {
+    this.setPosition(x, y);
+    this.isDead = false;
+    this.setActive(true);
+    this.setVisible(true);
+    this.setAlpha(1);
+    this.setScale(this._baseScale);
+    if (this.body) this.body.enable = true;
+    this.setVelocity(0, 0);
+    this.hp = this.maxHP;
+    this.currentDamage = this.baseDamage;
+    this.currentChaseSpeed = this.baseChaseSpeed;
+    this._knockbackUntil = 0;
+    this._attackCdUntil = 0;
+    this._strikeTimer = 0;
+    this._recoverTimer = 0;
+    if (this._telegraphTween) {
+      this._telegraphTween.stop();
+      this._telegraphTween = null;
+    }
+    this.state = STATE.WANDER;
+    this._isWanderPaused = false;
+    this.restoreBaseTint();
+    this.pickNewWanderDirection();
   }
 
   // Dark slimes have a chance to drop a pre-grown plant bundle (Sprint 7).

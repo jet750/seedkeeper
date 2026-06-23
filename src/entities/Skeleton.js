@@ -15,7 +15,10 @@ import Seed from './Seed.js';
 import PlantBundle from './PlantBundle.js';
 import { getRandomSeedDrop, getRandomBundleDrop } from '../systems/lootTable.js';
 
-const STATE = { PATROL: 'PATROL', CHASE: 'CHASE' };
+// patrol/chase → WIND_UP (red flash + rear-back, committed) → overhead strike →
+// RECOVER (long, vulnerable punish window). The wind-up is dodgeable with a dash
+// out of strike range (Sprint 4).
+const STATE = { PATROL: 'PATROL', CHASE: 'CHASE', WIND_UP: 'WIND_UP', RECOVER: 'RECOVER' };
 const WAYPOINT_REACHED = 12; // px — close enough to advance to the next waypoint
 const LOOK_RANGE = 200; // px — head turns toward the player within this range (Sprint 9)
 const HIT_FLASH_MS = 100;
@@ -64,6 +67,14 @@ export default class Skeleton extends Phaser.Physics.Arcade.Sprite {
     this.chaseSpeed = stats.chaseSpeed;
     this.detectRange = stats.detectRange;
     this.loseRange = stats.loseRange;
+
+    // Overhead-strike telegraph config (Sprint 4) — all timings from data.
+    this.overhead = stats.overhead || null;
+    this._baseScale = SPRITE_SCALE;
+    this._attackCdUntil = 0;
+    this._recoverTimer = 0;
+    this._telegraphTween = null;
+    this._strikeFacingLeft = false;
 
     // --- Combat state ---
     this.isDead = false;
@@ -118,6 +129,25 @@ export default class Skeleton extends Phaser.Physics.Arcade.Sprite {
       return;
     }
 
+    const dtMs = dt * 1000;
+
+    // --- Committed overhead states run to completion; no chase/lose retarget. ---
+    if (this.state === STATE.WIND_UP) {
+      this.setVelocity(0, 0); // rooted mid-rear-back; the tween + red tint are the tell
+      this.confineToForest();
+      return;
+    }
+    if (this.state === STATE.RECOVER) {
+      this.setVelocity(0, 0); // long vulnerable window after the slam
+      this._recoverTimer -= dtMs;
+      if (this._recoverTimer <= 0) {
+        this.state = STATE.CHASE;
+        if (this.useReal && this.anims) this.anims.resume();
+      }
+      this.confineToForest();
+      return;
+    }
+
     const dist = Phaser.Math.Distance.Between(this.x, this.y, player.x, player.y);
 
     // --- Transitions ---
@@ -139,12 +169,88 @@ export default class Skeleton extends Phaser.Physics.Arcade.Sprite {
 
     // --- Behaviour ---
     if (this.state === STATE.CHASE) {
-      this.moveToward(player.x, player.y, this.chaseSpeed);
+      // Wind up the overhead when in range and off cooldown; otherwise close in.
+      if (this.overhead && dist <= this.overhead.attackRange && this.scene.time.now >= this._attackCdUntil) {
+        this.startWindUp(player);
+      } else {
+        this.moveToward(player.x, player.y, this.chaseSpeed);
+      }
     } else {
       this.patrol();
     }
 
     this.confineToForest();
+  }
+
+  // --- Overhead strike telegraph (Sprint 4) ---------------------------------
+
+  // Rear back with a red flash + upward stretch (the tell), then slam. A player
+  // who dashes out of strike range (or behind the locked facing) before the slam
+  // takes no hit and gets a long punish window.
+  startWindUp(player) {
+    this.state = STATE.WIND_UP;
+    this.setVelocity(0, 0);
+    this._strikeFacingLeft = player.x < this.x;
+    this.setFlipX(this._strikeFacingLeft);
+    if (this.useReal && this.anims) this.anims.pause();
+    if (this._telegraphTween) this._telegraphTween.stop();
+    this.setTint(0xff3333); // red wind-up flash — shared telegraph grammar
+    this._telegraphTween = this.scene.tweens.add({
+      targets: this,
+      scaleY: this._baseScale * this.overhead.raiseScale,
+      duration: this.overhead.windUpMs,
+      ease: 'Quad.easeOut',
+      onComplete: () => {
+        if (this.isDead || this.state !== STATE.WIND_UP) return;
+        this.strike();
+      }
+    });
+  }
+
+  strike() {
+    this._telegraphTween = null;
+    this.setScale(this._baseScale); // slam down to neutral
+    this.clearTint();
+    this.resolveStrike();
+    this.enterRecover();
+  }
+
+  // Land the overhead if the player is still inside strikeRange and within the
+  // frontal arc of the locked facing — routed through the i-frame-aware damage path.
+  resolveStrike() {
+    const o = this.overhead;
+    const player = this.scene.player;
+    if (!player) return;
+    const dist = Phaser.Math.Distance.Between(this.x, this.y, player.x, player.y);
+    if (dist > o.strikeRange) return;
+    const facing = this._strikeFacingLeft ? Math.PI : 0;
+    const toPlayer = Phaser.Math.Angle.Between(this.x, this.y, player.x, player.y);
+    const half = Phaser.Math.DegToRad(o.strikeArcDeg / 2);
+    if (Math.abs(Phaser.Math.Angle.Wrap(toPlayer - facing)) > half) return;
+    const dmg = Math.max(1, Math.round(this.damage * o.strikeDamageMult));
+    EventBus.emit('player:damaged', { amount: dmg });
+  }
+
+  enterRecover() {
+    this.state = STATE.RECOVER;
+    this.setVelocity(0, 0);
+    this._recoverTimer = this.overhead.recoverMs;
+    this._attackCdUntil = this.scene.time.now + this.overhead.cooldownMs;
+  }
+
+  // A landed hit during the wind-up interrupts the overhead (RECOVER is left
+  // alone so the punish window survives).
+  interruptAttack() {
+    if (this.state !== STATE.WIND_UP) return;
+    if (this._telegraphTween) {
+      this._telegraphTween.stop();
+      this._telegraphTween = null;
+    }
+    this.setScale(this._baseScale);
+    this.clearTint();
+    if (this.useReal && this.anims) this.anims.resume();
+    this.state = STATE.CHASE;
+    this._attackCdUntil = this.scene.time.now + this.overhead.cooldownMs;
   }
 
   patrol() {
@@ -232,6 +338,8 @@ export default class Skeleton extends Phaser.Physics.Arcade.Sprite {
 
   takeDamage(amount, sourcePosition) {
     if (this.isDead) return;
+    // Getting hit mid-wind-up interrupts the overhead (no effect on RECOVER).
+    this.interruptAttack();
     this.hp -= amount;
 
     // Hit flash.
@@ -261,6 +369,14 @@ export default class Skeleton extends Phaser.Physics.Arcade.Sprite {
     this.isDead = true;
     this.body.enable = false;
     this.setVelocity(0, 0);
+    // Clear any in-flight overhead tell so a dying skeleton doesn't crumble while
+    // stuck mid-rear-back (raised scale / red tint).
+    if (this._telegraphTween) {
+      this._telegraphTween.stop();
+      this._telegraphTween = null;
+    }
+    this.setScale(this._baseScale);
+    this.clearTint();
 
     // Play the crumble-to-bones death animation while the sprite fades out.
     if (this.useReal && this.scene.textures.exists('skeleton_death')) {

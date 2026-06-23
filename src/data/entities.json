@@ -17,7 +17,17 @@
       "wanderSpeed": 40,
       "chaseSpeed": 90,
       "detectRange": 80,
-      "loseRange": 200
+      "loseRange": 200,
+      "respawnCooldownMs": 180000,
+      "lunge": {
+        "attackRange": 70,
+        "windUpMs": 300,
+        "squashScaleY": 0.6,
+        "lungeSpeed": 280,
+        "lungeDurationMs": 240,
+        "recoverMs": 450,
+        "cooldownMs": 1200
+      }
     },
     "dark_slime": {
       "hp": 35,
@@ -26,7 +36,23 @@
       "chaseSpeed": 70,
       "detectRange": 150,
       "loseRange": 300,
-      "bundleDropChance": 0.5
+      "bundleDropChance": 0.5,
+      "respawnCooldownMs": 180000,
+      "lunge": {
+        "attackRange": 80,
+        "windUpMs": 350,
+        "squashScaleY": 0.6,
+        "lungeSpeed": 250,
+        "lungeDurationMs": 260,
+        "recoverMs": 550,
+        "cooldownMs": 1500
+      },
+      "split": {
+        "count": 2,
+        "hpFactor": 0.5,
+        "damageFactor": 0.6,
+        "scaleFactor": 0.7
+      }
     },
     "skeleton": {
       "hp": 50,
@@ -35,7 +61,18 @@
       "chaseSpeed": 110,
       "detectRange": 120,
       "loseRange": 400,
-      "bundleDropChance": 0.7
+      "bundleDropChance": 0.7,
+      "respawnCooldownMs": 180000,
+      "overhead": {
+        "attackRange": 70,
+        "windUpMs": 500,
+        "raiseScale": 1.18,
+        "strikeRange": 90,
+        "strikeArcDeg": 140,
+        "strikeDamageMult": 1.75,
+        "recoverMs": 700,
+        "cooldownMs": 1800
+      }
     },
     "scaling": {
       "densityPerDay": 0.1,
@@ -44,7 +81,7 @@
       "greenSlimeBaseCount": 5,
       "greenSlimePerDay": 0.5,
       "greenSlimeMaxCount": 12,
-      "greenSlimeRespawnMs": 30000
+      "maxActiveSlimes": 16
     }
   },
   "daySystem": {

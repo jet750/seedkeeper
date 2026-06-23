@@ -914,6 +914,9 @@ export default class GameScene extends Phaser.Scene {
 
   spawnSlimes() {
     this.slimeGroup = this.physics.add.group();
+    // Reuse pool for dark-slime split children (Sprint 4) — mirrors the
+    // projectile pool so on-death splits never churn allocations.
+    this.splitSlimePool = [];
 
     // Green slimes roam the meadow + mid-forest (Sprint 10c revised) — placed via
     // the organic zone system so they never start in the water or deep forest.
@@ -953,6 +956,56 @@ export default class GameScene extends Phaser.Scene {
     this.slimeGroup.add(slime);
     this.enemies.push(slime);
     return slime;
+  }
+
+  // Dark slime fracture (Sprint 4): on death, spawn smaller pooled slimes at the
+  // death spot. Children are drawn from splitSlimePool (or built once and added),
+  // carry halved HP + reduced damage, never split again, and the total active
+  // slime count is capped so a chain can't snowball on mobile.
+  spawnDarkSlimeSplit(x, y) {
+    const cfg = this.gameData.enemies.dark_slime.split;
+    if (!cfg) return;
+    const cap = this.gameData.enemies.scaling.maxActiveSlimes || 16;
+    const scatter = 14;
+    const opts = {
+      canSplit: false,
+      pooled: true,
+      isSplitChild: true,
+      hpFactor: cfg.hpFactor,
+      damageFactor: cfg.damageFactor,
+      scaleFactor: cfg.scaleFactor
+    };
+    for (let i = 0; i < cfg.count; i++) {
+      const activeSlimes = this.enemies.filter(
+        (e) => e.slimeType === 'green_slime' || e.slimeType === 'dark_slime'
+      ).length;
+      if (activeSlimes >= cap) break; // cap reached — stop fracturing
+      const cx = x + (Math.random() - 0.5) * scatter * 2;
+      const cy = y + (Math.random() - 0.5) * scatter * 2;
+      let slime = this.splitSlimePool.pop();
+      if (slime) {
+        // Reused: it never left slimeGroup (mirrors the projectile pool), so just
+        // reactivate it in place.
+        slime._baseTint = DARK_SLIME_TINT;
+        slime.resetForReuse(cx, cy);
+      } else {
+        slime = new Slime(this, cx, cy, 'dark_slime', this.gameData, opts);
+        slime._baseTint = DARK_SLIME_TINT;
+        slime.setTint(DARK_SLIME_TINT);
+        this.slimeGroup.add(slime);
+      }
+      this.enemies.push(slime);
+    }
+  }
+
+  // Park a dead split slime for reuse — kept in slimeGroup but inactive (disabled
+  // body skips overlaps) and out of the active enemies array (already spliced out
+  // by the slime's death). Mirrors the projectile pool's toggle-don't-remove idiom.
+  releaseSplitSlime(slime) {
+    slime.setActive(false);
+    slime.setVisible(false);
+    if (slime.body) slime.body.enable = false;
+    this.splitSlimePool.push(slime);
   }
 
   // Normal calls (no args) place a skeleton at a random deep-forest spot. The
@@ -2674,17 +2727,20 @@ export default class GameScene extends Phaser.Scene {
     else this.shake('hands_hit');
   }
 
-  onEnemyDied({ type, position }) {
+  onEnemyDied({ type, position, light }) {
     this.runStats.enemiesDefeated++;
     if (this.runStats.killsByType[type] !== undefined) this.runStats.killsByType[type]++;
     // Per-type death flourish (Sprint 13) — particles emit from the enemy's spot.
-    if (type === 'dark_slime') {
+    // `light` (Sprint 4) marks a small split-child death: skip the heavy burst +
+    // screen flash so a multi-slime fight doesn't stack desaturate flashes.
+    if (type === 'dark_slime' && !light) {
       this.particleSystem.darkSlimeBurst(position.x, position.y);
       this.screenFlash(0x000000, 0.15, 300); // brief desaturate flash for the bigger kill
     } else if (type === 'skeleton') {
       this.particleSystem.skeletonBones(position.x, position.y);
       this.shake('skeleton_hit'); // a final rattle
     } else {
+      // Plain green slimes + light split-child deaths get the small splat.
       this.particleSystem.slimeSplat(position.x, position.y, ENEMY_DEATH_COLORS[type] || '#8AB87E');
     }
     this.scheduleGreenSlimeRespawn();
@@ -2692,10 +2748,12 @@ export default class GameScene extends Phaser.Scene {
 
   // Keep the forest populated. Green slimes only spawn once at world setup, so
   // without this they thin out and never return as the player clears them. After
-  // any enemy dies, top green slimes back up to the day-scaled target after a
-  // delay. Dark slimes and skeletons have their own day-based scaling.
+  // any enemy dies, top green slimes back up to the day-scaled target after the
+  // per-enemy respawn cooldown (Sprint 4: raised from 30s to 3 in-game minutes so
+  // a cleared area stays clear long enough to matter). Dark slimes and skeletons
+  // have their own day-based scaling.
   scheduleGreenSlimeRespawn() {
-    const respawnMs = this.gameData.enemies.scaling.greenSlimeRespawnMs;
+    const respawnMs = this.gameData.enemies.green_slime.respawnCooldownMs;
     this.time.delayedCall(respawnMs, () => {
       if (!this.enemies) return;
       const greens = this.enemies.filter((e) => e.slimeType === 'green_slime').length;
