@@ -20,17 +20,23 @@ single `GameScene.addCoins(amount)` / `spendCoins(amount)` path** — never writ
 
 | Event | Payload | Emitted by | Consumed by |
 |-------|---------|-----------|-------------|
-| `coins:changed` | `{ coins, delta }` | `GameScene.addCoins/spendCoins`, `syncHud` | `UIScene` (coin counter) |
+| `coins:changed` | `{ coins, delta }` | `GameScene.addCoins/spendCoins`, `syncHud` | `UIScene` (coin counter), `AchievementSystem` (first_coin / coin_purse — counts positive deltas only) |
 | `coins:spent` | `{ coins, amount }` | `GameScene.spendCoins` | (reserved — analytics / future sortie layer) |
 | `gear:purchased` | `{ slot, tierId, price }` | `GameScene.grantGearTier` (purchase + cheat) | (reserved — marketplace/UX) |
-| `gear:equipped` | `{ slot, tierId }` | `GameScene.grantGearTier` | `AchievementSystem` (armed / layered / full_kit) |
-| `capacity:purchased` | `{ tree, tier, price }` | `GameScene.purchaseCapacity` | `AchievementSystem` (satchel_bearer) |
+| `gear:equipped` | `{ slot, tierId }` | `GameScene.grantGearTier` | `AchievementSystem` (the_stick / armed / layered / slot_maxed / full_kit) |
+| `capacity:purchased` | `{ tree, tier, price }` | `GameScene.purchaseCapacity` | `AchievementSystem` (satchel_bearer / capacity_maxed) |
 
 `slot` ∈ `weapon | armor | boots | ranged`. `tree` ∈ `seedBag | gardenBeds | watering`.
 Catalog + prices live in `src/data/economy.json` (provisional, tunable).
 
 The Sprint 3 marketplace will also emit `plant:sold` (`{ plantType, qty, coins }`)
 on the SELL side; selling routes coins through the same `addCoins` path.
+`AchievementSystem` already listens for it (first_sale); the listener is inert
+until the marketplace SELL emitter merges to dev.
+
+Also consumed off the kill stream: `enemy:died` `{ type }` →
+`AchievementSystem` per-type tracks (first_blood / slime_culler / dark_first /
+darkwalker / bonecrusher / skeleton_crew / slayer).
 
 ---
 
