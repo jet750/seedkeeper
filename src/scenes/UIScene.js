@@ -52,8 +52,10 @@ export default class UIScene extends Phaser.Scene {
     this.zone = 'garden';
     this.dayNumber = data && data.dayNumber ? data.dayNumber : 1;
     this.remaining = entitiesData.daySystem.timerDuration;
+    this.raw = this.remaining; // Sprint 12 — possibly-negative overtime value for the HUD
     this.warningTime = entitiesData.daySystem.warningTime;
     this.urgentTime = entitiesData.daySystem.urgentTime;
+    this.passOutFloorMs = entitiesData.daySystem.passOutFloorMs || 0; // Sprint 12 overtime floor
     this._busHandlers = [];
     this._pulseTween = null;
     this._promptTween = null;
@@ -187,15 +189,30 @@ export default class UIScene extends Phaser.Scene {
       })
       .setOrigin(1, 0.5);
 
-    // TOP RIGHT (under timer) — mute indicator, shown only while muted.
+    // TOP RIGHT (under timer + overtime slot) — mute indicator, shown only while
+    // muted. Sits below the overtime countdown's reserved row so the two never clash.
     this.muteIndicator = this.add
-      .text(VIRTUAL_WIDTH - 40, 84, '🔇 MUTED', {
+      .text(VIRTUAL_WIDTH - 40, 112, '🔇 MUTED', {
         fontFamily: '"SproutLands", "Courier New", monospace',
         fontSize: '16px',
         color: '#9B9389'
       })
       .setOrigin(1, 0.5)
       .setVisible(false);
+
+    // TOP RIGHT (under timer) — overtime / pass-out countdown (Sprint 12). Hidden
+    // until the day timer runs past 0:00 into overtime, then shows the red, pulsing
+    // time-left before the pass-out floor. Sits just below the 0:00 timer readout.
+    this.overtimeText = this.add
+      .text(VIRTUAL_WIDTH - 40, 78, '', {
+        fontFamily: '"SproutLands", "Courier New", monospace',
+        fontSize: '22px',
+        fontStyle: 'bold',
+        color: COLOR_URGENT
+      })
+      .setOrigin(1, 0.5)
+      .setVisible(false);
+    this._overtimePulse = null;
 
     // TOP STATUS BAR (left of centre, right of the HP bar) — banked coin counter
     // (Sprint 2 dual economy). Relocated here in Sprint 3-polish so currency sits
@@ -454,6 +471,9 @@ export default class UIScene extends Phaser.Scene {
     });
     this.subscribe('day:timerTick', (d) => {
       this.remaining = d.remaining;
+      // raw is the (possibly negative) overtime value; older emits omit it, so fall
+      // back to remaining to stay backward compatible.
+      this.raw = d.raw !== undefined ? d.raw : d.remaining;
       this.refreshTimer();
     });
     this.subscribe('day:timerUrgent', () => this.startPulse());
@@ -1219,8 +1239,8 @@ export default class UIScene extends Phaser.Scene {
       if (o) o.y += safe.top;
     });
 
-    // Top-right cluster (timer + mute) clears a right notch and the status bar.
-    [this.timerText, this.muteIndicator].forEach((o) => {
+    // Top-right cluster (timer + mute + overtime) clears a right notch and status bar.
+    [this.timerText, this.muteIndicator, this.overtimeText].forEach((o) => {
       if (!o) return;
       o.x -= safe.right;
       o.y += safe.top;
@@ -1308,6 +1328,7 @@ export default class UIScene extends Phaser.Scene {
     this.timerText.setVisible(visible);
     if (!visible) {
       this.stopPulse();
+      this.hideOvertime();
       return;
     }
 
@@ -1322,6 +1343,42 @@ export default class UIScene extends Phaser.Scene {
     } else {
       this.timerText.setColor(COLOR_NORMAL);
       this.stopPulse();
+    }
+
+    // Overtime (Sprint 12): once the day runs past 0:00 the raw timer goes negative.
+    // Surface a red countdown of the time left before the pass-out floor — counts
+    // DOWN from the full overtime window (e.g. 5:00) to 0:00 as danger climbs.
+    if (this.raw < 0 && this.passOutFloorMs > 0) {
+      const timeToPassOut = Math.max(0, this.passOutFloorMs + this.raw);
+      this.overtimeText.setText(`⚠ PASS OUT IN ${formatTime(timeToPassOut)}`);
+      this.showOvertime();
+    } else {
+      this.hideOvertime();
+    }
+  }
+
+  // --- Overtime countdown (Sprint 12) ---------------------------------------
+
+  showOvertime() {
+    this.overtimeText.setVisible(true);
+    if (this._overtimePulse) return;
+    this._overtimePulse = this.tweens.add({
+      targets: this.overtimeText,
+      alpha: { from: 1, to: 0.35 },
+      duration: 450,
+      yoyo: true,
+      repeat: -1
+    });
+  }
+
+  hideOvertime() {
+    if (this._overtimePulse) {
+      this._overtimePulse.stop();
+      this._overtimePulse = null;
+    }
+    if (this.overtimeText) {
+      this.overtimeText.setAlpha(1);
+      this.overtimeText.setVisible(false);
     }
   }
 
@@ -1354,5 +1411,6 @@ export default class UIScene extends Phaser.Scene {
     this._busHandlers.forEach(([event, handler]) => EventBus.off(event, handler));
     this._busHandlers = [];
     this.stopPulse();
+    this.hideOvertime();
   }
 }

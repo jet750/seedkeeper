@@ -1092,7 +1092,9 @@ export default class GameScene extends Phaser.Scene {
 
     // Green slimes ring the homestead close in (Sprint 13) so a new player meets a
     // few weak (Lv1-2) slimes right at the meadow edge instead of an empty near map.
-    const initialGreens = 5;
+    // Count is data-driven (Sprint 12: scaled up for the massive world) and matches
+    // getTargetGreenSlimeCount() so the respawn loop tops back up to the same target.
+    const initialGreens = this.gameData.enemies.scaling.greenSlimeBaseCount || 5;
     for (let i = 0; i < initialGreens; i++) {
       const pos = this.randomGreenSlimePosition();
       this.spawnSlime('green_slime', pos.x, pos.y);
@@ -1531,35 +1533,70 @@ export default class GameScene extends Phaser.Scene {
   }
 
   spawnSeeds() {
-    // Seeds sit in their organic biome (Sprint 10c revised). Meadow pockets are
-    // easy entrance seeds; mid-forest is moderate risk; the best seeds live deep in
-    // the forest pockets, reachable only across the bridges. Sprint 10: one seed per
-    // surviving plant (10 growable + the 2 sell-only melons, so every plant is
-    // obtainable for the demo win). NOTE: these coordinates predate the Sprint 9
-    // world re-center and cluster north of the garden — flagged for visual review.
-    const placements = [
-      // MEADOW POCKETS — easy reach (speed / defense / harvest, 1-2 day grow).
-      ['carrots', 700, 1050],
-      ['sunflower', 1500, 1100],
-      ['wheat', 250, 1480],
-      // MID FOREST — moderate risk (attack / crit / max-HP / dash trees, 2-day grow).
-      ['tomato', 600, 1400],
-      ['pumpkin', 1400, 1450],
-      ['cucumber', 2950, 1460],
-      ['beanstalk', 1200, 1900],
-      // DEEP FOREST POCKETS — high risk, best seeds (ranged / magic / regen, 3-day grow).
-      ['blue_flower', 450, 2050], // left pocket (magic)
-      ['red_berry', 1650, 2150], // center pocket (regen)
-      ['pineapple', 2750, 2000], // right pocket (ranged)
-      // SELL-ONLY melons (deep forest) — high coin value, plantable for the demo win.
-      ['watermelon', 2100, 1950],
-      ['blue_melon', 2500, 1350]
-    ];
-    placements.forEach(([type, x, y]) => {
-      const pos = this.clearOfRiver(x, y);
+    // One seed per plant (10 growable + the 2 sell-only melons, so every plant is
+    // obtainable for the demo win). Sprint 12: the old hardcoded coordinates predated
+    // the Sprint 9 world re-center and clustered north-west of the now-centred garden,
+    // leaving most of the massive world seedless. Seeds now fan out around the garden
+    // centre (3200,3200) at tier-appropriate distances — meadow seeds ring close,
+    // mid-forest seeds sit moderately out, deep-forest/sell seeds spawn far — using the
+    // same radial-band rejection logic as enemy spawns (clear of the garden interior,
+    // the river, and the world edge). Distance per tier comes from the plant's
+    // entities.json `foundNear`, so the catalog drives placement, not magic coords.
+    const BANDS = {
+      meadow: { min: 700, max: 1300 }, // easy reach — speed / defense / harvest
+      mid_forest: { min: 1400, max: 2200 }, // moderate — attack / crit / hp / dash
+      deep_forest: { min: 2300, max: 2950 } // best + sell-only — ranged / magic / regen / melons
+    };
+
+    // Group plants by tier, then round-robin interleave so the even angular fan mixes
+    // near and far seeds around the garden instead of bunching a tier on one side.
+    const groups = { meadow: [], mid_forest: [], deep_forest: [] };
+    Object.keys(this.gameData.plants).forEach((k) => {
+      const tier = (this.gameData.plants[k] && this.gameData.plants[k].foundNear) || 'mid_forest';
+      (groups[tier] || groups.mid_forest).push(k);
+    });
+    const order = [];
+    const lists = [groups.meadow, groups.mid_forest, groups.deep_forest];
+    let added = true;
+    while (added) {
+      added = false;
+      for (const list of lists) {
+        if (list.length) {
+          order.push(list.shift());
+          added = true;
+        }
+      }
+    }
+
+    const n = order.length;
+    order.forEach((type, i) => {
+      const plant = this.gameData.plants[type];
+      const band = BANDS[(plant && plant.foundNear)] || BANDS.mid_forest;
+      const angle = (i / n) * Math.PI * 2; // even fan around the garden centre
+      const pos = this.seedPositionAtAngle(angle, band.min, band.max);
       // eslint-disable-next-line no-new
       new Seed(this, pos.x, pos.y, type, this.gameData);
     });
+  }
+
+  // Place a wild seed near a target angle within a radius band around the garden
+  // centre (Sprint 12), rejecting the garden interior, the river and the world edge.
+  // Jitters the angle a little so an even fan still looks organic; falls back to any
+  // valid point in the band so a seed is never dropped.
+  seedPositionAtAngle(angle, minR, maxR) {
+    const margin = ENEMY_SPAWN_MARGIN;
+    for (let attempt = 0; attempt < 24; attempt++) {
+      const a = angle + (Math.random() - 0.5) * 0.5; // ±~14° jitter
+      const r = Phaser.Math.Between(minR, maxR);
+      const x = ENEMY_HOME.x + Math.cos(a) * r;
+      const y = ENEMY_HOME.y + Math.sin(a) * r;
+      if (x < margin || x > WORLD_WIDTH - margin) continue;
+      if (y < margin || y > WORLD_HEIGHT - margin) continue;
+      if (this.isInGarden(x, y)) continue; // never inside the safe garden
+      if (this.worldZoneSystem.isNearRiver(x, y)) continue; // never on water
+      return { x, y };
+    }
+    return this.getSpawnPositionInBand(minR, maxR); // any valid band point
   }
 
   // Nudge a point off the water so a seed never strands mid-river. Returns the
@@ -2822,7 +2859,12 @@ export default class GameScene extends Phaser.Scene {
     }
 
     if (dayNumber >= scaling.startDay_skeleton) {
-      if (!this.enemies.some((e) => e instanceof Skeleton)) this.spawnSkeleton();
+      // Sprint 12: top skeletons up to a small data-driven baseline (was a single
+      // skeleton across the whole massive deep-forest band — far too sparse). Still
+      // the heaviest enemy, so the baseline stays modest for mobile.
+      const target = Math.ceil((scaling.skeletonBaseline || 1) * mult);
+      const have = this.enemies.filter((e) => e instanceof Skeleton).length;
+      for (let i = 0; i < target - have; i++) this.spawnSkeleton();
     }
   }
 

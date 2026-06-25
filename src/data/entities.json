@@ -27,10 +27,11 @@
       "levelTint": ["0xffffff", "0xeaffd0", "0xfff0b0", "0xffcf90", "0xff9f70"],
       "lungeCountByLevel": [1, 1, 1, 2, 2],
       "lunge": {
-        "attackRange": 70,
+        "_scaleNote": "Sprint 12: attackRange + lungeSpeed halved (70→35, 280→140) for the 1x sprite. Telegraph timings (windUp/squash/duration/recover/cooldown) intact — only the distances changed. Travel = lungeSpeed*duration ≈ 34px, matched to the 35px trigger so a lvl-1 green commits only when genuinely close.",
+        "attackRange": 35,
         "windUpMs": 300,
         "squashScaleY": 0.6,
-        "lungeSpeed": 280,
+        "lungeSpeed": 140,
         "lungeDurationMs": 240,
         "recoverMs": 450,
         "cooldownMs": 1200
@@ -53,10 +54,11 @@
       "levelTint": ["0x9a5de0", "0x8833cc", "0x7a28bd", "0x6a1ea8", "0x591593"],
       "lungeCountByLevel": [1, 1, 1, 1, 2],
       "lunge": {
-        "attackRange": 80,
+        "_scaleNote": "Sprint 12: attackRange + lungeSpeed halved (80→40, 250→125) for the 1x sprite. Telegraph timings intact — only the distances changed.",
+        "attackRange": 40,
         "windUpMs": 350,
         "squashScaleY": 0.6,
-        "lungeSpeed": 250,
+        "lungeSpeed": 125,
         "lungeDurationMs": 260,
         "recoverMs": 550,
         "cooldownMs": 1500
@@ -111,12 +113,14 @@
       "dangerColors": { "safe": "#6FCF6F", "risky": "#F2C94C", "dangerous": "#EB5757" }
     },
     "scaling": {
+      "_densityNote": "Sprint 12: counts + split cap scaled up for the 6400x6400 massive world (~4x the old 3200² area) — the radial bands were so sparse the world read as empty. SPAWN_BAND distance logic is unchanged (greens ring the garden, danger scales out); only populations and the cap grew. maxActiveSlimes is raised but bounded for mobile (split children come from an object pool and AI runs on an every-Nth-frame throttle). All tunable.",
       "startDay_darkSlime": 3,
       "startDay_skeleton": 5,
-      "darkSlimeBaseline": 3,
-      "greenSlimeBaseCount": 5,
-      "greenSlimeMaxCount": 12,
-      "maxActiveSlimes": 16
+      "darkSlimeBaseline": 8,
+      "skeletonBaseline": 3,
+      "greenSlimeBaseCount": 16,
+      "greenSlimeMaxCount": 24,
+      "maxActiveSlimes": 40
     }
   },
   "daySystem": {
@@ -124,7 +128,9 @@
     "warningTime": 30000,
     "urgentTime": 10000,
     "postTimerSpeedMult": 1.5,
-    "postTimerDamageMult": 1.5
+    "postTimerDamageMult": 1.5,
+    "_overtimeNote": "Sprint 12: after 0:00 the day runs into overtime (negative) down to passOutFloorMs below zero — a 'get home before you pass out' window. The HUD shows a red countdown of the time left to the floor. The actual pass-out/KO consequence at the floor is NOT implemented here (ships with the sortie sprint); for now the timer simply clamps at the floor.",
+    "passOutFloorMs": 300000
   },
   "_plantsNote": "Sprint 10 reconciliation: catalog stripped to a clean 12 — 10 growable (one plant per stat tree) + 2 sell-only (watermelon, blue_melon; statTree null, no upgrades entry). blue_flower is the single magic-tree plant (renamed from the old blue_flower_2; the old environmental blue_flower is no longer a game entity). Retired keys (purple_carrot, white_carrots, cauliflower, purple_cauliflower, red_lettuce, corn, eggplant, bok_choy, green_melon + reserved cabbage/parsnip/etc.) are intentionally NOT wired. isTall plants use 16x32 frames and root lower to the soil.",
   "plants": {
