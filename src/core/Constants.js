@@ -36,6 +36,38 @@ export const GARDEN_RIGHT  = GARDEN_X + GARDEN_WIDTH;
 export const GARDEN_TOP    = GARDEN_Y;
 export const GARDEN_BOTTOM = GARDEN_Y + GARDEN_HEIGHT;
 
+// --- Sprint 11: camera zoom + garden scale reconciliation -----------------
+// Pure visual/feel knobs (no gameplay impact). The player/enemy sprite scale was
+// halved (2 -> 1) in Sprint 10 to fit the massive 6400x6400 Tiled world; these
+// constants bring the camera and the garden props/layout back into proportion
+// with the now-1x sprite. All three are meant to be dialed in playtest.
+
+// Single uniform world-camera zoom, used everywhere (garden + world — no per-
+// context zoom, confirmed by the designer). The camera sat at 2.5 when the sprite
+// was 2x; halving the sprite made it read tiny, so the camera zooms further in to
+// compensate (the world stays massive, just viewed closer). The HUD, minimap,
+// joystick and action buttons live on UIScene (scrollFactor 0, separate camera)
+// and are NOT affected by this. Higher = closer in.
+export const CAMERA_ZOOM = 4.0;
+
+// Garden prop render scale. The well, workshop/work_station, signpost, sleep bed,
+// market stall, field-notes book and the garden beds were all authored at the old
+// 2x sprite scale, so they now dwarf the 1x sprite. This multiplier scales their
+// on-screen size down to match (1.0 = original authored size; 0.5 = halved).
+export const GARDEN_PROP_SCALE = 0.5;
+
+// Garden LAYOUT spacing. The bed grid / well / structure positions were spaced for
+// the big props; every garden element is pulled toward the garden centre by this
+// factor so the homestead stays a compact, walkable square at the new prop scale
+// (1.0 = original Sprint 10 spacing; lower = tighter). The well sits at the bed-
+// grid centre, so uniform scaling about the centre keeps it centred in the beds.
+export const GARDEN_LAYOUT_SCALE = 0.6;
+
+// Anchor for the layout scaling — the garden (fence) centre, which is also the
+// authored player_start. Garden elements scale their offset from this point.
+export const GARDEN_CENTER_X = GARDEN_X + GARDEN_WIDTH / 2;  // 3200
+export const GARDEN_CENTER_Y = GARDEN_Y + GARDEN_HEIGHT / 2; // 3200
+
 // --- Geographic zone bands (Sprint 10c — SUPERSEDED) ---
 // The straight-line biome bands below were replaced by the organic, influence-
 // point layout in src/systems/WorldZoneSystem.js (Sprint 10c revised). Nothing

@@ -7,9 +7,13 @@
 
 import Phaser from 'phaser';
 import EventBus from '../core/EventBus.js';
+import { GARDEN_PROP_SCALE } from '../core/Constants.js';
 
 const STATE = { EMPTY: 'EMPTY', PLANTED: 'PLANTED', GROWING: 'GROWING', READY: 'READY' };
-const BED_SIZE = 56;
+// Sprint 11: the bed footprint + crop sprite were authored at the old 2x sprite
+// scale; GARDEN_PROP_SCALE brings them down to sit proportional to the 1x sprite
+// (kept in sync with the well/workshop/structure scaling in GameScene).
+const BED_SIZE = 56 * GARDEN_PROP_SCALE;
 const SOIL_DRY = 0x5a4632;
 const SOIL_WET = 0x3f3022;
 
@@ -32,7 +36,7 @@ const PLANT_SPRITE_FRAMES = 7; // columns 0..6 within a plant's strip
 // (PLANT_SPRITE_FRAMES - 1 = 6) rendered grown plants as a blank frame. Frame 5 is
 // safe for every plant (corn's col-5 art reads fine too).
 const PLANT_READY_FRAME = 5;
-const PLANT_SPRITE_SCALE = 2.4; // 16px source → ~38px, sits on a 56px bed
+const PLANT_SPRITE_SCALE = 2.4 * GARDEN_PROP_SCALE; // 16px source, scaled to sit on the (Sprint 11) smaller bed
 const PLANT_SPRITE_ORIGIN_Y = 0.78; // standard crops root near the soil, not centre
 const PLANT_SPRITE_ORIGIN_Y_TALL = 0.85; // tall (16x32) crops root lower onto the soil
 

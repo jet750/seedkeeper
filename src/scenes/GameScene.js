@@ -29,6 +29,11 @@ import {
   TILE_SIZE,
   USE_TILED_WORLD,
   TILED_WORLD_KEY,
+  CAMERA_ZOOM,
+  GARDEN_PROP_SCALE,
+  GARDEN_LAYOUT_SCALE,
+  GARDEN_CENTER_X,
+  GARDEN_CENTER_Y,
   isDevModeActive
 } from '../core/Constants.js';
 import WorldZoneSystem, { RIVER_WIDTH, CREEK_WIDTH } from '../systems/WorldZoneSystem.js';
@@ -290,9 +295,11 @@ export default class GameScene extends Phaser.Scene {
     // --- Camera ---
     this.cameras.main.setBounds(0, 0, WORLD_WIDTH, WORLD_HEIGHT);
     this.cameras.main.startFollow(this.player, true, 0.1, 0.1);
-    // Closer view on the player (Sprint 10c fix) — was 2.0; 2.5 still leaves
-    // enough lead time to react to enemies approaching at the camera edge.
-    this.cameras.main.setZoom(2.5);
+    // Single uniform zoom (Sprint 11). The sprite scale was halved (2 -> 1) for the
+    // massive world, so the camera zooms further in (CAMERA_ZOOM, was a hard-coded
+    // 2.5) to bring the sprite back to a comfortable on-screen size. UI lives on the
+    // separate UIScene camera, so it is unaffected by this world-camera zoom.
+    this.cameras.main.setZoom(CAMERA_ZOOM);
     // Menu → game transition: reveal the world with a smooth fade-in (Sprint 12).
     this.cameras.main.fadeIn(700, 0, 0, 0);
 
@@ -827,7 +834,7 @@ export default class GameScene extends Phaser.Scene {
   addBedSoil(bed) {
     if (!this.textures.exists('soil_tiles')) return;
     this.add
-      .tileSprite(bed.x, bed.y, 76, 76, 'soil_tiles', this.GROUND_FILL_FRAME())
+      .tileSprite(bed.x, bed.y, 76 * GARDEN_PROP_SCALE, 76 * GARDEN_PROP_SCALE, 'soil_tiles', this.GROUND_FILL_FRAME())
       .setOrigin(0.5, 0.5)
       .setDepth(1);
   }
@@ -1727,6 +1734,20 @@ export default class GameScene extends Phaser.Scene {
     return m ? { x: m.x, y: m.y } : { x: fallbackX, y: fallbackY };
   }
 
+  // Pull a garden position toward the garden centre by GARDEN_LAYOUT_SCALE (Sprint
+  // 11). The garden props/layout were authored at the old 2x sprite scale; with the
+  // sprite now 1x the props shrink (GARDEN_PROP_SCALE), so the spacing tightens to
+  // match and the homestead stays a compact, walkable square. Scaling uniformly
+  // about the centre preserves every relative arrangement — notably the well, which
+  // sits at the bed-grid centre, stays centred. Applied to both marker-snapped and
+  // fallback positions so the live (Tiled) and procedural layouts both tighten.
+  gardenScaled(x, y) {
+    return {
+      x: GARDEN_CENTER_X + (x - GARDEN_CENTER_X) * GARDEN_LAYOUT_SCALE,
+      y: GARDEN_CENTER_Y + (y - GARDEN_CENTER_Y) * GARDEN_LAYOUT_SCALE
+    };
+  }
+
   spawnGardenBeds() {
     this.beds = [];
     const savedBeds = (this.saveData && this.saveData.gardenBeds) || [];
@@ -1745,10 +1766,10 @@ export default class GameScene extends Phaser.Scene {
   // world, and any bed beyond the 8 authored markers, wraps every BEDS_PER_ROW).
   bedPosition(i) {
     const marker = this.gardenMarkers && this.gardenMarkers['garden_bed_' + i];
-    if (marker) return { x: marker.x, y: marker.y };
+    if (marker) return this.gardenScaled(marker.x, marker.y);
     const col = i % BEDS_PER_ROW;
     const row = Math.floor(i / BEDS_PER_ROW);
-    return { x: BED_BASE_X + col * BED_COL_GAP, y: BED_BASE_Y + row * BED_ROW_GAP };
+    return this.gardenScaled(BED_BASE_X + col * BED_COL_GAP, BED_BASE_Y + row * BED_ROW_GAP);
   }
 
   addGardenBed() {
@@ -1769,13 +1790,15 @@ export default class GameScene extends Phaser.Scene {
     // Garden-interior Y coords are GARDEN_TOP-relative so they followed the
     // Sprint 9 re-centre (the +280 / +660 offsets reproduce the old y=480 / y=860).
     const WELL_Y = GARDEN_TOP + 280; // was 480
-    // Snap to the authored `well` marker when the Tiled map is loaded (Sprint 10).
-    const wellPos = this.markerXY('well', 2880, WELL_Y);
+    // Snap to the authored `well` marker when the Tiled map is loaded (Sprint 10),
+    // then tighten toward the garden centre (Sprint 11).
+    const wellRaw = this.markerXY('well', 2880, WELL_Y);
+    const wellPos = this.gardenScaled(wellRaw.x, wellRaw.y);
     if (this.textures.exists('obj_well')) {
-      this.well = this.add.image(wellPos.x, wellPos.y, 'obj_well').setScale(2).setDepth(2);
+      this.well = this.add.image(wellPos.x, wellPos.y, 'obj_well').setScale(2 * GARDEN_PROP_SCALE).setDepth(2);
     } else {
       this.well = this.add
-        .rectangle(wellPos.x, wellPos.y, 50, 50, 0x3b6ea5)
+        .rectangle(wellPos.x, wellPos.y, 50 * GARDEN_PROP_SCALE, 50 * GARDEN_PROP_SCALE, 0x3b6ea5)
         .setStrokeStyle(3, 0x244a6e)
         .setDepth(2);
     }
@@ -1785,20 +1808,21 @@ export default class GameScene extends Phaser.Scene {
     // Basic_Furniture sheet when present; the crop region is a best fit and can be
     // nudged (x/y/w/h below) if it lands off the bed.
     const SLEEP_Y = GARDEN_TOP + 280; // was 480
+    const sleepPos = this.gardenScaled(3520, SLEEP_Y); // Sprint 11 — tightened
     if (this.textures.exists('furniture_sheet')) {
       const furnTex = this.textures.get('furniture_sheet');
       if (!furnTex.has('bed')) furnTex.add('bed', 0, 0, 48, 64, 48);
       this.sleepObject = this.add
-        .image(3520, SLEEP_Y, 'furniture_sheet', 'bed')
-        .setDisplaySize(96, 72)
+        .image(sleepPos.x, sleepPos.y, 'furniture_sheet', 'bed')
+        .setDisplaySize(96 * GARDEN_PROP_SCALE, 72 * GARDEN_PROP_SCALE)
         .setDepth(2);
     } else {
       this.sleepObject = this.add
-        .rectangle(3520, SLEEP_Y, 72, 48, 0x8a5a3a)
+        .rectangle(sleepPos.x, sleepPos.y, 72 * GARDEN_PROP_SCALE, 48 * GARDEN_PROP_SCALE, 0x8a5a3a)
         .setStrokeStyle(3, 0x5a3a22)
         .setDepth(2);
     }
-    this.addStructureLabel(3520, SLEEP_Y, 3520, SLEEP_Y - 42, 'SLEEP  [F]', '#EDD49A');
+    this.addStructureLabel(sleepPos.x, sleepPos.y, sleepPos.x, sleepPos.y - 42, 'SLEEP  [F]', '#EDD49A');
 
     // Workshop station — open the upgrade overlay. Prefers the workbench art
     // (Sprint 3-polish), then the chest sheet (48x48, open frames), then a
@@ -1807,22 +1831,23 @@ export default class GameScene extends Phaser.Scene {
     // handle every interaction path already uses, whichever art is shown.
     // Snap to the authored `work_station` marker when loaded (Sprint 10); chestPos
     // is the single handle every later reference uses (label + upgrade burst).
-    this.chestPos = this.markerXY('work_station', CHEST_X, CHEST_Y);
+    const chestRaw = this.markerXY('work_station', CHEST_X, CHEST_Y);
+    this.chestPos = this.gardenScaled(chestRaw.x, chestRaw.y); // Sprint 11 — tightened
     this._stationIsWorkbench = this.textures.exists('work_station');
     this._chestIsSprite = !this._stationIsWorkbench && this.textures.exists('obj_chest');
     if (this._stationIsWorkbench) {
       this.chest = this.add
         .image(this.chestPos.x, this.chestPos.y, 'work_station')
-        .setScale(WORKBENCH_SCALE)
+        .setScale(WORKBENCH_SCALE * GARDEN_PROP_SCALE)
         .setDepth(2);
     } else if (this._chestIsSprite) {
       this.chest = this.add
         .sprite(this.chestPos.x, this.chestPos.y, 'obj_chest', CHEST_CLOSED_FRAME)
-        .setScale(1.5)
+        .setScale(1.5 * GARDEN_PROP_SCALE)
         .setDepth(2);
     } else {
       this.chest = this.add
-        .rectangle(this.chestPos.x, this.chestPos.y, 64, 48, 0x6e4a22)
+        .rectangle(this.chestPos.x, this.chestPos.y, 64 * GARDEN_PROP_SCALE, 48 * GARDEN_PROP_SCALE, 0x6e4a22)
         .setStrokeStyle(3, 0xd4a83f)
         .setDepth(2);
     }
@@ -1832,49 +1857,52 @@ export default class GameScene extends Phaser.Scene {
     // outside its interaction radius so the two never overlap.
     const SIGN_X = 3120;
     const SIGN_Y = GARDEN_TOP + 660; // was 860
+    const signPos = this.gardenScaled(SIGN_X, SIGN_Y); // Sprint 11 — tightened
     if (this.textures.exists('signs')) {
       // Sprout Lands sign board (frame 0), scaled up from its 16px source.
-      this.signpost = this.add.sprite(SIGN_X, SIGN_Y, 'signs', 0).setScale(3).setDepth(2);
+      this.signpost = this.add.sprite(signPos.x, signPos.y, 'signs', 0).setScale(3 * GARDEN_PROP_SCALE).setDepth(2);
     } else {
-      this.add.rectangle(SIGN_X, SIGN_Y + 14, 8, 40, 0x6e4a22).setDepth(2); // post
+      this.add.rectangle(signPos.x, signPos.y + 14 * GARDEN_PROP_SCALE, 8 * GARDEN_PROP_SCALE, 40 * GARDEN_PROP_SCALE, 0x6e4a22).setDepth(2); // post
       this.signpost = this.add
-        .rectangle(SIGN_X, SIGN_Y - 8, 48, 30, 0x8a6a3a)
+        .rectangle(signPos.x, signPos.y - 8 * GARDEN_PROP_SCALE, 48 * GARDEN_PROP_SCALE, 30 * GARDEN_PROP_SCALE, 0x8a6a3a)
         .setStrokeStyle(2, 0x5a3a22)
         .setDepth(2);
     }
-    this.addStructureLabel(SIGN_X, SIGN_Y, SIGN_X, SIGN_Y - 36, 'LOG  [F]', '#EDD49A');
+    this.addStructureLabel(signPos.x, signPos.y, signPos.x, signPos.y - 36, 'LOG  [F]', '#EDD49A');
 
     // Field Notes book (Sprint 11) — opens the Seed Dictionary. Distinct blue
     // book on a stand, set apart from the signpost and the bed grid.
     const BOOK_X = 3000;
     const BOOK_Y = GARDEN_TOP + 660; // was 860
-    this.add.rectangle(BOOK_X, BOOK_Y + 14, 8, 36, 0x6e4a22).setDepth(2); // stand
+    const bookPos = this.gardenScaled(BOOK_X, BOOK_Y); // Sprint 11 — tightened
+    this.add.rectangle(bookPos.x, bookPos.y + 14 * GARDEN_PROP_SCALE, 8 * GARDEN_PROP_SCALE, 36 * GARDEN_PROP_SCALE, 0x6e4a22).setDepth(2); // stand
     this.book = this.add
-      .rectangle(BOOK_X, BOOK_Y - 8, 30, 22, 0x395a7a)
+      .rectangle(bookPos.x, bookPos.y - 8 * GARDEN_PROP_SCALE, 30 * GARDEN_PROP_SCALE, 22 * GARDEN_PROP_SCALE, 0x395a7a)
       .setStrokeStyle(2, 0xabc4de)
       .setDepth(2);
-    this.addStructureLabel(BOOK_X, BOOK_Y, BOOK_X, BOOK_Y - 34, 'FIELD NOTES  [F]', '#ABC4DE');
+    this.addStructureLabel(bookPos.x, bookPos.y, bookPos.x, bookPos.y - 34, 'FIELD NOTES  [F]', '#ABC4DE');
 
     // Market stall (Sprint 3) — opens the marketplace (sell plants / buy gear +
     // capacity). Placeholder ember-toned stall until a real shop sprite lands;
     // placement is the MARKET_X/MARKET_Y config point.
-    this.add.rectangle(MARKET_X, MARKET_Y + 16, 64, 10, 0x6e4a22).setDepth(2); // counter base
+    const marketPos = this.gardenScaled(MARKET_X, MARKET_Y); // Sprint 11 — tightened
+    this.add.rectangle(marketPos.x, marketPos.y + 16 * GARDEN_PROP_SCALE, 64 * GARDEN_PROP_SCALE, 10 * GARDEN_PROP_SCALE, 0x6e4a22).setDepth(2); // counter base
     this.market = this.add
-      .rectangle(MARKET_X, MARKET_Y - 8, 60, 40, 0xc96b42)
+      .rectangle(marketPos.x, marketPos.y - 8 * GARDEN_PROP_SCALE, 60 * GARDEN_PROP_SCALE, 40 * GARDEN_PROP_SCALE, 0xc96b42)
       .setStrokeStyle(3, 0xe5b69a)
       .setDepth(2);
     this.add
-      .rectangle(MARKET_X, MARKET_Y - 30, 72, 12, 0x8a3a22)
+      .rectangle(marketPos.x, marketPos.y - 30 * GARDEN_PROP_SCALE, 72 * GARDEN_PROP_SCALE, 12 * GARDEN_PROP_SCALE, 0x8a3a22)
       .setStrokeStyle(2, 0x5a2a18)
       .setDepth(2); // awning
-    this.addStructureLabel(MARKET_X, MARKET_Y, MARKET_X, MARKET_Y - 44, 'MARKET  [F]', '#E5B69A');
+    this.addStructureLabel(marketPos.x, marketPos.y, marketPos.x, marketPos.y - 44, 'MARKET  [F]', '#E5B69A');
 
     // Solid garden props get a small static collider so the player routes around
     // them (Sprint 10c). Interaction stays distance-based, so this never blocks
     // the [F] prompt — only the body of the object is impassable.
-    this.addPropCollision(this.signpost, 10, 20);
-    this.addPropCollision(this.book, 24, 16);
-    this.addPropCollision(this.market, 56, 24);
+    this.addPropCollision(this.signpost, 10 * GARDEN_PROP_SCALE, 20 * GARDEN_PROP_SCALE);
+    this.addPropCollision(this.book, 24 * GARDEN_PROP_SCALE, 16 * GARDEN_PROP_SCALE);
+    this.addPropCollision(this.market, 56 * GARDEN_PROP_SCALE, 24 * GARDEN_PROP_SCALE);
   }
 
   // Give a static prop a narrow collider and route the player around it.
@@ -3090,8 +3118,8 @@ export default class GameScene extends Phaser.Scene {
     if (this._stationIsWorkbench) {
       this.tweens.add({
         targets: this.chest,
-        scaleX: WORKBENCH_SCALE * 1.12,
-        scaleY: WORKBENCH_SCALE * 1.12,
+        scaleX: WORKBENCH_SCALE * GARDEN_PROP_SCALE * 1.12,
+        scaleY: WORKBENCH_SCALE * GARDEN_PROP_SCALE * 1.12,
         duration: 110,
         yoyo: true,
         ease: 'Quad.easeOut',
@@ -3101,8 +3129,8 @@ export default class GameScene extends Phaser.Scene {
       this.chest.setFrame(CHEST_OPEN_FRAME);
       this.tweens.add({
         targets: this.chest,
-        scaleX: 1.65,
-        scaleY: 1.65,
+        scaleX: 1.65 * GARDEN_PROP_SCALE,
+        scaleY: 1.65 * GARDEN_PROP_SCALE,
         duration: 110,
         yoyo: true,
         ease: 'Quad.easeOut',
@@ -3165,9 +3193,9 @@ export default class GameScene extends Phaser.Scene {
     // Settle the station back to rest: workbench/chest reset their scale/frame, the
     // placeholder reverses its squash tween.
     if (this._stationIsWorkbench) {
-      this.chest.setScale(WORKBENCH_SCALE); // safety — the open pop's yoyo already restored it
+      this.chest.setScale(WORKBENCH_SCALE * GARDEN_PROP_SCALE); // safety — the open pop's yoyo already restored it
     } else if (this._chestIsSprite) {
-      this.chest.setScale(1.5);
+      this.chest.setScale(1.5 * GARDEN_PROP_SCALE);
       this.chest.setFrame(CHEST_CLOSED_FRAME);
     } else {
       this.tweens.add({ targets: this.chest, scaleY: 1, duration: 150, ease: 'Quad.easeOut' });
