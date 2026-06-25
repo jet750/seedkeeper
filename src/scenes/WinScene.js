@@ -15,8 +15,8 @@ import { VIRTUAL_WIDTH, VIRTUAL_HEIGHT } from '../core/Constants.js';
 import entitiesData from '../data/entities.json';
 import { ACHIEVEMENT_COUNT } from '../data/achievements.js';
 
-// v3 (Sprint 6/3d): derive from the catalog (was hardcoded 6 retired keys).
-// NOTE: 21 plant icons may overflow the win-screen rows — layout pass flagged.
+// v4 (Sprint 10): derive from the reconciled 12-plant catalog. 12 icons fit a
+// single centered row (gap 110 → ~1210px wide < 1600), so no layout change needed.
 const PLANT_ORDER = Object.keys(entitiesData.plants);
 
 // Rarest → commonest, for the run-summary "Rarest Find" line: longer-growing

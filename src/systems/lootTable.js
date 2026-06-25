@@ -4,16 +4,20 @@
 // Skeleton). Common early crops are weighted high and rare magic crops are low, so
 // killing enemies is a viable but unreliable way to stock seeds — guaranteed drops
 // (the skeleton's red_berry) are layered on top by the caller, not here.
-// v3 (Sprint 6/3d): keys repointed to the expanded plant catalog.
+// v4 (Sprint 10): keys repointed to the reconciled 10-growable catalog (retired
+// corn/cauliflower dropped; blue_flower_2 → blue_flower).
 
 const SEED_DROP_WEIGHTS = {
   carrots: 30,
-  cauliflower: 25,
+  sunflower: 22,
+  wheat: 20,
   tomato: 15,
-  corn: 12,
-  pumpkin: 10,
+  pumpkin: 12,
+  cucumber: 10,
+  beanstalk: 8,
   pineapple: 5,
-  red_berry: 3
+  red_berry: 3,
+  blue_flower: 2
 };
 
 // Plant-bundle drop table (Sprint 7). Bundles are pre-grown plants that go
@@ -21,12 +25,12 @@ const SEED_DROP_WEIGHTS = {
 // crops (the magic tree) and away from the cheap early crops.
 const BUNDLE_DROP_WEIGHTS = {
   tomato: 20,
-  corn: 20,
-  pumpkin: 15,
+  pumpkin: 18,
   wheat: 15,
-  blue_flower_2: 15,
-  pineapple: 10,
-  red_berry: 5
+  beanstalk: 12,
+  pineapple: 12,
+  blue_flower: 12,
+  red_berry: 6
 };
 
 // Generic weighted pick over a { key: weight } map.

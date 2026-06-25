@@ -138,7 +138,6 @@
     { "key": "parsnip", "path": "assets/images/plants/parsnip.png", "frameWidth": 16, "frameHeight": 16 },
     { "key": "red_lettuce", "path": "assets/images/plants/red_lettuce.png", "frameWidth": 16, "frameHeight": 16 },
     { "key": "purple_beets", "path": "assets/images/plants/purple_beets.png", "frameWidth": 16, "frameHeight": 16 },
-    { "key": "blue_flower_2", "path": "assets/images/plants/blue_flower_2.png", "frameWidth": 16, "frameHeight": 16 },
     { "key": "cucumber", "path": "assets/images/plants/cucumber.png", "frameWidth": 16, "frameHeight": 16 },
     { "key": "sunflower", "path": "assets/images/plants/sunflower.png", "frameWidth": 16, "frameHeight": 32 },
     { "key": "sweet_potatoes", "path": "assets/images/plants/sweet_potatoes.png", "frameWidth": 16, "frameHeight": 16 },

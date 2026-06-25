@@ -98,6 +98,29 @@ const PLAYER_POWER = { statWeight: 1, gearWeight: 2 };
 // level). Garden centre — the LDtk world will instead set per-zone levels.
 const ENEMY_HOME = { x: GARDEN_X + GARDEN_WIDTH / 2, y: GARDEN_Y + GARDEN_HEIGHT / 2 };
 
+// Enemy spawn distance bands (px from ENEMY_HOME). Sprint 13: spawns are now placed
+// by ring-distance from the homestead, not by the stale WorldZoneSystem influence
+// points (which were authored for the old top-garden map and never moved when the
+// garden was re-centred — they clustered every "meadow"/"mid_forest" zone ~2000px
+// away, so even green slimes spawned at Lv4 in the deep map). Distance IS the level
+// driver (see computeEnemyLevel: ~720px ≈ one level vs distanceForMaxLevel 3600), so
+// these bands set both WHERE and HOW STRONG: gentle enemies ring the home close in,
+// dangerous ones spawn far out. Bands kept inside the world half-extent (~3120px on
+// axis) so the annulus sampler finds valid points without crowding the corners.
+//
+// Sprint 10 spawn-zone audit: the Tiled map's `markers` object layer has NO authored
+// enemy-spawn / drop-zone / spawn-region objects (only homestead markers + a few
+// `payload` points: lake×2, deadend×3, encounter×1 — none are spawn regions). So the
+// procedural radial bands below REMAIN the spawn system (re-mapped to the centred
+// world above). When authored spawn zones are added in Tiled later (an object layer
+// with names like spawn_/zone_/enemy_ carrying a `level`), wire spawning to sample
+// those regions and keep these bands as the flag-gated fallback.
+const SPAWN_BAND = {
+  greenSlime: { min: 600, max: 1300 }, // near — light forest / meadow edge, ~Lv1-2
+  darkSlime: { min: 1500, max: 2800 }, // mid → deep forest, ~Lv3-4
+  skeleton: { min: 2200, max: 3000 } //   deep forest, ~Lv4-5 (→ mega variant)
+};
+
 // --- Upgrades, save & projectiles (Sprint 4) ---
 // Equip slots filled by the coin economy (economy.json gear catalog). v2 moved
 // gear off the plant trees, so there is no longer a plant→slot mapping.
@@ -113,13 +136,9 @@ const CAPACITY_TIER_FIELD = {
 // harvest/grant paths guard missing keys with `|| 0`, but seeding the full set
 // keeps plantBank/plantsGrownEver shapes stable for the bank HUD and win checks.
 const DEFAULT_BANK = {
-  carrots: 0, purple_carrot: 0, white_carrots: 0,
-  cauliflower: 0, purple_cauliflower: 0, red_lettuce: 0,
-  corn: 0, sunflower: 0, wheat: 0,
-  tomato: 0, eggplant: 0, beanstalk: 0,
-  pumpkin: 0, cucumber: 0, bok_choy: 0,
-  blue_flower_2: 0, red_berry: 0, pineapple: 0,
-  watermelon: 0, blue_melon: 0, green_melon: 0
+  tomato: 0, sunflower: 0, pumpkin: 0, carrots: 0, beanstalk: 0,
+  wheat: 0, pineapple: 0, blue_flower: 0, cucumber: 0, red_berry: 0,
+  watermelon: 0, blue_melon: 0
 };
 const PROJECTILE_POOL_SIZE = 10;
 // Garden bed grid layout (row-wraps as garden-bed tiers add beds). Anchored to the
@@ -254,6 +273,10 @@ export default class GameScene extends Phaser.Scene {
 
     this.ensurePlaceholderTextures();
     this.buildWorld();
+    // Read the Tiled `markers` object layer so the functional garden can snap its
+    // interior objects to the authored positions (Sprint 10 de-dup). Must run after
+    // buildWorld() sets this.tiledMap and before spawnGardenBeds/Structures.
+    this.readGardenMarkers();
     this.setupBounds();
 
     // --- Player ---
@@ -619,10 +642,22 @@ export default class GameScene extends Phaser.Scene {
     }
     if (!tilesets.length) return false; // nothing to draw — use the procedural world
 
-    // Back-to-front backdrop. All depths < 0 so every gameplay object sits on top.
+    // Back-to-front backdrop. Most layers are < 0 so gameplay objects sit on top.
+    // props_trees is the EXCEPTION (Sprint 10 tree depth): it renders ABOVE the
+    // player/enemies (TREE_CANOPY_DEPTH) so the player passes BEHIND tree canopies
+    // instead of always drawing flat in front of them. Caveat — the trees are a
+    // single BAKED tile layer (20k+ tiles), so a true per-tile y-sort (player in
+    // front of a tree's base but behind its canopy) would require extracting every
+    // tree to a sortable sprite, which is out of scope. This whole-layer lift is the
+    // documented approximation: the player reads as behind trees (incl. the base
+    // when standing directly south of a trunk — collision keeps that rare). The
+    // canopy depth sits below floating labels (seed/bundle tags 20, indicators 30)
+    // so those stay readable. Flagged for visual review.
+    const TREE_CANOPY_DEPTH = 12; // above player (10) + attack arc (11), below labels (20)
     const LAYER_DEPTH = {
       ground: -20, water: -19, paths_main: -18, paths_spur: -17, bridges: -16,
-      props_ground: -15, fences: -14, structures: -13, props_water: -12, props_trees: -11
+      props_ground: -15, fences: -14, structures: -13, props_water: -12,
+      props_trees: TREE_CANOPY_DEPTH
     };
     this.tiledLayers = {};
     for (const ld of map.layers) {
@@ -1048,11 +1083,11 @@ export default class GameScene extends Phaser.Scene {
     // projectile pool so on-death splits never churn allocations.
     this.splitSlimePool = [];
 
-    // Green slimes roam the meadow + mid-forest (Sprint 10c revised) — placed via
-    // the organic zone system so they never start in the water or deep forest.
+    // Green slimes ring the homestead close in (Sprint 13) so a new player meets a
+    // few weak (Lv1-2) slimes right at the meadow edge instead of an empty near map.
     const initialGreens = 5;
     for (let i = 0; i < initialGreens; i++) {
-      const pos = this.getSpawnPositionInZone(['meadow', 'mid_forest']);
+      const pos = this.randomGreenSlimePosition();
       this.spawnSlime('green_slime', pos.x, pos.y);
     }
 
@@ -1144,15 +1179,15 @@ export default class GameScene extends Phaser.Scene {
   spawnSkeleton(devX, devY) {
     const margin = ENEMY_SPAWN_MARGIN;
     const devSpawn = devX !== undefined && devY !== undefined;
-    // Normal skeletons spawn inside a deep-forest pocket (Sprint 10c revised);
-    // the dev menu drops one at an explicit position.
+    // Normal skeletons spawn far out in the deep-forest band (Sprint 13) so they
+    // land at Lv4-5 (→ mega variant); the dev menu drops one at an explicit position.
     let baseX;
     let baseY;
     if (devSpawn) {
       baseX = devX;
       baseY = devY;
     } else {
-      const pos = this.getSpawnPositionInZone(['deep_forest']);
+      const pos = this.getSpawnPositionInBand(SPAWN_BAND.skeleton.min, SPAWN_BAND.skeleton.max);
       baseX = pos.x;
       baseY = pos.y;
     }
@@ -1204,29 +1239,42 @@ export default class GameScene extends Phaser.Scene {
     );
   }
 
-  // Green slimes roam the meadow + mid-forest (Sprint 10c revised).
+  // Green slimes are the gentle early enemy: they ring the homestead close in, so a
+  // new player meets weak (Lv1-2) slimes at the meadow edge / light forest (Sprint 13).
   randomGreenSlimePosition() {
-    return this.getSpawnPositionInZone(['meadow', 'mid_forest']);
+    return this.getSpawnPositionInBand(SPAWN_BAND.greenSlime.min, SPAWN_BAND.greenSlime.max);
   }
 
-  // Dark slimes roam the mid + deep forest — the dangerous lower map (Sprint 10c).
+  // Dark slimes are the mid-to-deep danger — spawned farther out so they read as
+  // stronger (Lv3-4) via the distance-from-home level gradient (Sprint 13).
   randomDarkSlimePosition() {
-    return this.getSpawnPositionInZone(['mid_forest', 'deep_forest']);
+    return this.getSpawnPositionInBand(SPAWN_BAND.darkSlime.min, SPAWN_BAND.darkSlime.max);
   }
 
-  // Reject-sample a forest point until it lands in one of `zoneNames` and clear of
-  // the river (Sprint 10c revised). Falls back to a safe mid-map point if no valid
-  // spot turns up, so spawning never returns undefined.
-  getSpawnPositionInZone(zoneNames) {
+  // Reject-sample a forest point in an annulus [minR, maxR] around the homestead,
+  // clear of the garden, the river and the world edge (Sprint 13). Distance is the
+  // level driver (computeEnemyLevel), so the band a caller picks sets the spawn's
+  // strength as well as its position — gentle near home, dangerous far out. Replaces
+  // the old zone-name sampler whose influence points no longer track the centred
+  // garden. Falls back to a near-ring point below the home so spawning never returns
+  // undefined.
+  getSpawnPositionInBand(minR, maxR) {
     const margin = ENEMY_SPAWN_MARGIN;
     for (let attempt = 0; attempt < 60; attempt++) {
-      const x = Phaser.Math.Between(margin, WORLD_WIDTH - margin);
-      const y = Phaser.Math.Between(GARDEN_ZONE_HEIGHT + margin, WORLD_HEIGHT - margin);
+      const r = Phaser.Math.Between(minR, maxR);
+      const a = Math.random() * Math.PI * 2;
+      const x = ENEMY_HOME.x + Math.cos(a) * r;
+      const y = ENEMY_HOME.y + Math.sin(a) * r;
+      if (x < margin || x > WORLD_WIDTH - margin) continue;
+      if (y < margin || y > WORLD_HEIGHT - margin) continue;
+      if (this.isInGarden(x, y)) continue; // never inside the safe centred garden
       if (this.worldZoneSystem.isNearRiver(x, y)) continue;
-      if (this.isInGarden(x, y)) continue; // never inside the safe centred garden (Sprint 9)
-      if (zoneNames.includes(this.worldZoneSystem.getZoneAt(x, y))) return { x, y };
+      return { x, y };
     }
-    return { x: WORLD_WIDTH / 2, y: GARDEN_ZONE_HEIGHT + 400 };
+    return {
+      x: Phaser.Math.Clamp(ENEMY_HOME.x, margin, WORLD_WIDTH - margin),
+      y: Phaser.Math.Clamp(ENEMY_HOME.y + minR, margin, WORLD_HEIGHT - margin)
+    };
   }
 
   // --- Zone boundary (Sprint 7) ---------------------------------------------
@@ -1477,29 +1525,28 @@ export default class GameScene extends Phaser.Scene {
 
   spawnSeeds() {
     // Seeds sit in their organic biome (Sprint 10c revised). Meadow pockets are
-    // easy entrance seeds; mid-forest is moderate risk; the best seeds (glowshroom)
-    // live deep in the three forest pockets, reachable only across the bridges.
+    // easy entrance seeds; mid-forest is moderate risk; the best seeds live deep in
+    // the forest pockets, reachable only across the bridges. Sprint 10: one seed per
+    // surviving plant (10 growable + the 2 sell-only melons, so every plant is
+    // obtainable for the demo win). NOTE: these coordinates predate the Sprint 9
+    // world re-center and cluster north of the garden — flagged for visual review.
     const placements = [
-      // MEADOW POCKETS — easy reach (speed + defense trees, 1-day grow).
+      // MEADOW POCKETS — easy reach (speed / defense / harvest, 1-2 day grow).
       ['carrots', 700, 1050],
-      ['cauliflower', 2500, 950],
       ['sunflower', 1500, 1100],
-      ['white_carrots', 400, 1280],
-      ['red_lettuce', 2750, 1350],
-      // MID FOREST — moderate risk (attack / crit / harvest trees, 2-day grow).
-      ['tomato', 600, 1400],
-      ['corn', 2000, 1380],
-      ['pumpkin', 1400, 1450],
       ['wheat', 250, 1480],
+      // MID FOREST — moderate risk (attack / crit / max-HP / dash trees, 2-day grow).
+      ['tomato', 600, 1400],
+      ['pumpkin', 1400, 1450],
       ['cucumber', 2950, 1460],
-      ['eggplant', 1100, 1350],
-      ['bok_choy', 2200, 1400],
-      // DEEP FOREST POCKETS — high risk, best seeds (magic tree, 3-day grow).
-      ['blue_flower_2', 450, 2050], // left pocket
-      ['red_berry', 1650, 2150], // center pocket
-      ['pineapple', 2750, 2000], // right pocket
       ['beanstalk', 1200, 1900],
-      ['eggplant', 2100, 1950]
+      // DEEP FOREST POCKETS — high risk, best seeds (ranged / magic / regen, 3-day grow).
+      ['blue_flower', 450, 2050], // left pocket (magic)
+      ['red_berry', 1650, 2150], // center pocket (regen)
+      ['pineapple', 2750, 2000], // right pocket (ranged)
+      // SELL-ONLY melons (deep forest) — high coin value, plantable for the demo win.
+      ['watermelon', 2100, 1950],
+      ['blue_melon', 2500, 1350]
     ];
     placements.forEach(([type, x, y]) => {
       const pos = this.clearOfRiver(x, y);
@@ -1658,6 +1705,28 @@ export default class GameScene extends Phaser.Scene {
 
   // --- Garden beds & structures ---------------------------------------------
 
+  // Parse the Tiled `markers` object layer into a name→{x,y} dict (Sprint 10).
+  // The authored map marks where the homestead's beds, well, workshop, gates and
+  // player-start belong; the functional garden snaps to these so the code-driven
+  // layout matches the hand-built world. Empty on the procedural fallback (no map),
+  // so every consumer falls back to its original GARDEN_*-relative constant.
+  readGardenMarkers() {
+    this.gardenMarkers = {};
+    if (!this.tiledMap || typeof this.tiledMap.getObjectLayer !== 'function') return;
+    const layer = this.tiledMap.getObjectLayer('markers');
+    if (!layer || !layer.objects) return;
+    for (const o of layer.objects) {
+      if (o && o.name) this.gardenMarkers[o.name] = { x: o.x, y: o.y };
+    }
+  }
+
+  // Authored marker position by name, or the supplied fallback when the marker (or
+  // the whole map) is absent.
+  markerXY(name, fallbackX, fallbackY) {
+    const m = this.gardenMarkers && this.gardenMarkers[name];
+    return m ? { x: m.x, y: m.y } : { x: fallbackX, y: fallbackY };
+  }
+
   spawnGardenBeds() {
     this.beds = [];
     const savedBeds = (this.saveData && this.saveData.gardenBeds) || [];
@@ -1671,9 +1740,12 @@ export default class GameScene extends Phaser.Scene {
     }
   }
 
-  // Beds fill a row left-to-right, wrapping to a new row every BEDS_PER_ROW.
-  // Index 0–3 reproduce the original Sprint 2 positions exactly.
+  // Bed positions snap to the authored `garden_bed_<i>` markers when the Tiled map
+  // is loaded (Sprint 10); otherwise they fall back to the grid (the procedural
+  // world, and any bed beyond the 8 authored markers, wraps every BEDS_PER_ROW).
   bedPosition(i) {
+    const marker = this.gardenMarkers && this.gardenMarkers['garden_bed_' + i];
+    if (marker) return { x: marker.x, y: marker.y };
     const col = i % BEDS_PER_ROW;
     const row = Math.floor(i / BEDS_PER_ROW);
     return { x: BED_BASE_X + col * BED_COL_GAP, y: BED_BASE_Y + row * BED_ROW_GAP };
@@ -1697,15 +1769,17 @@ export default class GameScene extends Phaser.Scene {
     // Garden-interior Y coords are GARDEN_TOP-relative so they followed the
     // Sprint 9 re-centre (the +280 / +660 offsets reproduce the old y=480 / y=860).
     const WELL_Y = GARDEN_TOP + 280; // was 480
+    // Snap to the authored `well` marker when the Tiled map is loaded (Sprint 10).
+    const wellPos = this.markerXY('well', 2880, WELL_Y);
     if (this.textures.exists('obj_well')) {
-      this.well = this.add.image(2880, WELL_Y, 'obj_well').setScale(2).setDepth(2);
+      this.well = this.add.image(wellPos.x, wellPos.y, 'obj_well').setScale(2).setDepth(2);
     } else {
       this.well = this.add
-        .rectangle(2880, WELL_Y, 50, 50, 0x3b6ea5)
+        .rectangle(wellPos.x, wellPos.y, 50, 50, 0x3b6ea5)
         .setStrokeStyle(3, 0x244a6e)
         .setDepth(2);
     }
-    this.addStructureLabel(2880, WELL_Y, 2880, WELL_Y - 40, 'WELL', '#ABC4DE');
+    this.addStructureLabel(wellPos.x, wellPos.y, wellPos.x, wellPos.y - 40, 'WELL', '#ABC4DE');
 
     // Sleep bed — advance the day. Uses a bed slice from the Sprout Lands
     // Basic_Furniture sheet when present; the crop region is a best fit and can be
@@ -1731,25 +1805,28 @@ export default class GameScene extends Phaser.Scene {
     // placeholder rect. The open animation is per-visual: the workbench/chest pop,
     // the placeholder does the Sprint 9 scaleY squash. `this.chest` stays the
     // handle every interaction path already uses, whichever art is shown.
+    // Snap to the authored `work_station` marker when loaded (Sprint 10); chestPos
+    // is the single handle every later reference uses (label + upgrade burst).
+    this.chestPos = this.markerXY('work_station', CHEST_X, CHEST_Y);
     this._stationIsWorkbench = this.textures.exists('work_station');
     this._chestIsSprite = !this._stationIsWorkbench && this.textures.exists('obj_chest');
     if (this._stationIsWorkbench) {
       this.chest = this.add
-        .image(CHEST_X, CHEST_Y, 'work_station')
+        .image(this.chestPos.x, this.chestPos.y, 'work_station')
         .setScale(WORKBENCH_SCALE)
         .setDepth(2);
     } else if (this._chestIsSprite) {
       this.chest = this.add
-        .sprite(CHEST_X, CHEST_Y, 'obj_chest', CHEST_CLOSED_FRAME)
+        .sprite(this.chestPos.x, this.chestPos.y, 'obj_chest', CHEST_CLOSED_FRAME)
         .setScale(1.5)
         .setDepth(2);
     } else {
       this.chest = this.add
-        .rectangle(CHEST_X, CHEST_Y, 64, 48, 0x6e4a22)
+        .rectangle(this.chestPos.x, this.chestPos.y, 64, 48, 0x6e4a22)
         .setStrokeStyle(3, 0xd4a83f)
         .setDepth(2);
     }
-    this.addStructureLabel(CHEST_X, CHEST_Y, CHEST_X, CHEST_Y - 38, 'WORKSHOP  [F]', '#EDD49A');
+    this.addStructureLabel(this.chestPos.x, this.chestPos.y, this.chestPos.x, this.chestPos.y - 38, 'WORKSHOP  [F]', '#EDD49A');
 
     // Signpost — open the achievement log. Placed near the chest but well
     // outside its interaction radius so the two never overlap.
@@ -1985,11 +2062,10 @@ export default class GameScene extends Phaser.Scene {
     // hint near each seed; the mushrooms/flowers/stones sheet has no crop art, so
     // these are approximate — unmapped plants simply get no scatter). Flagged.
     const FRAME_BY_PLANT = {
-      tomato: 0, red_berry: 0, red_lettuce: 0, pumpkin: 0, // red/orange → red mushroom
-      eggplant: 4, // purple → purple mushroom
-      sunflower: 38, corn: 38, pineapple: 38, wheat: 38, // yellow/gold → sunflower
-      beanstalk: 24, cucumber: 24, bok_choy: 24, cauliflower: 24, // green → bush tuft
-      blue_flower_2: 52 // blue → blue flower
+      tomato: 0, red_berry: 0, pumpkin: 0, // red/orange → red mushroom
+      sunflower: 38, pineapple: 38, wheat: 38, // yellow/gold → sunflower
+      beanstalk: 24, cucumber: 24, watermelon: 24, // green → bush tuft
+      blue_flower: 52, blue_melon: 52 // blue → blue flower
     };
     const ROCK_FRAMES = [13, 14, 15];
 
@@ -2435,7 +2511,7 @@ export default class GameScene extends Phaser.Scene {
     const y = GARDEN_ZONE_HEIGHT + 600 + (hash % (WORLD_HEIGHT - GARDEN_ZONE_HEIGHT - 800));
     // High-value crops for the daily gift (v3 Sprint 6/3d): the magic tree plus a
     // sell-only melon, weighted toward the magic crops.
-    const rarePlants = ['blue_flower_2', 'red_berry', 'pineapple', 'blue_flower_2', 'watermelon'];
+    const rarePlants = ['blue_flower', 'red_berry', 'pineapple', 'blue_melon', 'watermelon'];
     const plantType = rarePlants[hash % rarePlants.length];
 
     const seed = new Seed(this, x, y, plantType, this.gameData);
@@ -2828,7 +2904,7 @@ export default class GameScene extends Phaser.Scene {
     this.autoSave();
     this.recomputePlayerPower(); // stat tier changed → refresh enemy danger colors
     const plant = d && this.gameData.plants[d.plantType];
-    this.particleSystem.upgradeBurst({ x: CHEST_X, y: CHEST_Y }, plant ? plant.color : '#EDD49A');
+    this.particleSystem.upgradeBurst(this.chestPos || { x: CHEST_X, y: CHEST_Y }, plant ? plant.color : '#EDD49A');
   }
 
   // Demo win: grow at least one of every plant type. Fires once, then persists
@@ -3406,7 +3482,7 @@ export default class GameScene extends Phaser.Scene {
 
   getHarvestRange() {
     // Base pickup radius widened by the sunflower Harvest Range stat.
-    return SEED_COLLECT_RANGE * (1 + this.player.statBonuses.harvestRange);
+    return SEED_COLLECT_RANGE * (1 + this.player.statBonuses.harvestBonus);
   }
 
   // --- Developer cheats (Sprint 4.5 dev tools) ------------------------------

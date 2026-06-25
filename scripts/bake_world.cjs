@@ -15,7 +15,8 @@
  * so the world still renders fully. The lightweight `markers` object layer
  * (garden beds, well, work station, gates, player_start) is kept for placement.
  *
- * Input : assets/tilemaps/world_v1_massive.tmj   (Tiled JSON export)
+ * Input : assets/tilemaps/world_v1_massive.json  (preferred — the Sprint 10 Tiled
+ *         re-export) or …massive.tmj (legacy export name), whichever exists.
  * Output: assets/tilemaps/world_v1.json          (minified, Phaser-ready)
  *
  * Re-run after re-exporting the map from Tiled:  node scripts/bake_world.cjs
@@ -24,7 +25,11 @@ const fs = require('fs');
 const path = require('path');
 
 const TILEMAP_DIR = path.join(__dirname, '..', 'assets', 'tilemaps');
-const SRC = path.join(TILEMAP_DIR, 'world_v1_massive.tmj');
+// Tiled can export as .json or .tmj (identical format). The Sprint 10 prerequisite
+// re-exports to world_v1_massive.json, so prefer that; fall back to the legacy .tmj.
+const SRC_JSON = path.join(TILEMAP_DIR, 'world_v1_massive.json');
+const SRC_TMJ = path.join(TILEMAP_DIR, 'world_v1_massive.tmj');
+const SRC = fs.existsSync(SRC_JSON) ? SRC_JSON : SRC_TMJ;
 const OUT = path.join(TILEMAP_DIR, 'world_v1.json');
 
 function attr(xml, re) {

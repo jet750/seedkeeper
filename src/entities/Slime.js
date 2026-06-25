@@ -31,11 +31,12 @@ const RETARGET_MAX_MS = 3000;
 const ANTICIPATE_PULSE_MS = 75;
 const ANTICIPATE_PULSE_SCALE = 1.3;
 
-// Drawn at 2x for zoom visibility. Visual only — the physics body is set up
+// Drawn at 1x (Sprint 13: halved from 2x to match the player and read correctly
+// against the hand-built world). Visual only — the physics body is set up
 // separately below. The anticipation pulse multiplies this so the tell still
-// reads as a grow, not a shrink, against the larger baseline.
-const SPRITE_SCALE = 2;
-// Fixed collider radius (source px), pinned so the 2x sprite scale doesn't double
+// reads as a grow, not a shrink, against the baseline.
+const SPRITE_SCALE = 1;
+// Fixed collider radius (source px), pinned so the sprite scale doesn't inflate
 // the hitbox. Effective in-world radius is halfWidth (= BODY_RADIUS * scaleX).
 const BODY_RADIUS = 6;
 

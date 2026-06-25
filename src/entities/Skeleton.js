@@ -29,10 +29,11 @@ const DAMAGE_TEXT_OFFSET = 24;
 const DEATH_FADE_MS = 400;
 const DROP_SCATTER = 30;
 
-// Drawn at 2x for zoom visibility. Visual only — the physics body is set up
+// Drawn at 1x (Sprint 13: halved from 2x to match the player and read correctly
+// against the hand-built world). Visual only — the physics body is set up
 // separately below.
-const SPRITE_SCALE = 2;
-// Fixed collider radius (source px), pinned so the 2x sprite scale doesn't double
+const SPRITE_SCALE = 1;
+// Fixed collider radius (source px), pinned so the sprite scale doesn't inflate
 // the hitbox. Effective in-world radius is halfWidth (= BODY_RADIUS * scaleX).
 const BODY_RADIUS = 8;
 
@@ -73,9 +74,9 @@ export default class Skeleton extends Phaser.Physics.Arcade.Sprite {
     const dmgMult = curve ? curve.damage[i] : 1;
     const spdMult = curve ? curve.speed[i] : 1;
 
-    // Visual draw scale for zoom visibility + a per-level size step (set before
-    // the body below; the collider radius derives from this.width, unscaled). The
-    // real 64x64 frames carry transparent padding, so 2x reads as a tanky enemy.
+    // Visual draw scale + a per-level size step (set before the body below; the
+    // collider radius derives from this.width, unscaled). The real 64x64 frames
+    // carry transparent padding, so the art reads smaller than the frame box.
     const sizeStep = cfg ? cfg.sizeStepPerLevel * (this.level - 1) : 0;
     this._baseScale = SPRITE_SCALE * (1 + sizeStep) * (v.scaleMult || 1);
     this.setScale(this._baseScale);

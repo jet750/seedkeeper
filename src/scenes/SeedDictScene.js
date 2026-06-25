@@ -11,20 +11,23 @@ import EventBus from '../core/EventBus.js';
 import { VIRTUAL_WIDTH, VIRTUAL_HEIGHT } from '../core/Constants.js';
 import entitiesData from '../data/entities.json';
 
-// v3 (Sprint 6/3d): derive from the catalog so the dictionary matches the current
-// plants (was a hardcoded 6 retired keys). NOTE: 21 plants overflow the current
-// grid — a scroll/paging pass is a flagged follow-up.
+// v4 (Sprint 10): derive from the reconciled 12-plant catalog. 12 entries fit a
+// 3-column grid (4 rows) within the 900px overlay — no scroll needed.
 const PLANT_ORDER = Object.keys(entitiesData.plants);
 
 // What each plant's resource feeds in the workshop (player-facing summary), derived
 // from the plant's stat tree. Sell-only crops have no upgrade — they fund coins.
 const STAT_LABEL = {
   attackMult: 'Attack power',
-  hpMult: 'Max HP',
+  damageReduction: 'Defense',
+  hpMax: 'Max HP',
   speedMult: 'Move speed',
-  timerBonus: 'Day timer',
-  critBonus: 'Crit chance',
-  harvestRange: 'Harvest range'
+  critChance: 'Crit chance',
+  harvestBonus: 'Harvest range',
+  rangedDamage: 'Ranged damage',
+  spellPower: 'Spell power',
+  dashBonus: 'Dash',
+  healthRegen: 'Health regen'
 };
 function plantUse(pt) {
   const up = entitiesData.upgrades[pt];
@@ -80,13 +83,15 @@ export default class SeedDictScene extends Phaser.Scene {
   }
 
   layout() {
-    const cols = 2;
-    const marginX = 48;
-    const gap = 24;
-    const top = 120;
+    // Sprint 10: 3 columns × 4 rows keeps all 12 plant cards inside the 900px
+    // overlay (was 2 columns, which overflowed at 21 and still at 12).
+    const cols = 3;
+    const marginX = 40;
+    const gap = 20;
+    const top = 112;
     const cardW = (VIRTUAL_WIDTH - marginX * 2 - gap * (cols - 1)) / cols;
-    const cardH = 210;
-    const rowGap = 18;
+    const cardH = 182;
+    const rowGap = 10;
 
     PLANT_ORDER.forEach((pt, i) => {
       const col = i % cols;
@@ -152,11 +157,11 @@ export default class SeedDictScene extends Phaser.Scene {
       `Grown ever: ${this.grown[pt] || 0}`
     ];
     this.add
-      .text(x + 24, y + 92, lines.join('\n'), {
+      .text(x + 24, y + 86, lines.join('\n'), {
         fontFamily: '"SproutLands", "Courier New", monospace',
-        fontSize: '16px',
+        fontSize: '15px',
         color: '#D1CCC6',
-        lineSpacing: 8
+        lineSpacing: 6
       })
       .setDepth(102);
   }

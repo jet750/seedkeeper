@@ -222,36 +222,36 @@ export default class MarketplaceScene extends Phaser.Scene {
   buildSell() {
     this.track(
       this.add
-        .text(80, 150, SELL_NUDGE, {
+        .text(80, 132, SELL_NUDGE, {
           fontFamily: FONT,
-          fontSize: '17px',
+          fontSize: '14px',
           color: '#E5B69A',
-          lineSpacing: 4
+          lineSpacing: 3
         })
         .setDepth(101)
     );
 
-    let y = 248;
-    // v3 (Sprint 6/3d): sell every growable plant from the catalog (was a
-    // hardcoded 6 retired keys). NOTE: 21 rows overflow this panel — a scroll/
-    // paging pass is a flagged follow-up.
+    // Sprint 10: the reconciled 12-plant catalog fits a single compact column
+    // (was 21 rows that overran the panel). Denser rows keep every plant + both
+    // Sell buttons inside the 900px overlay above the Close button.
+    let y = 190;
     Object.keys(this.gameData.plants).forEach((pt) => {
       const plant = this.gameData.plants[pt];
       const have = this.gameScene.plantBank[pt] || 0;
       const unit = this.gameScene.sellPrice(pt);
 
-      this.track(this.add.rectangle(80, y, 1440, 64, COLOR_PANEL).setOrigin(0, 0).setStrokeStyle(2, 0x4d4843).setDepth(100));
-      this.track(this.add.circle(120, y + 32, 14, hexToNum(plant.color)).setDepth(101));
+      this.track(this.add.rectangle(80, y, 1440, 46, COLOR_PANEL).setOrigin(0, 0).setStrokeStyle(2, 0x4d4843).setDepth(100));
+      this.track(this.add.circle(116, y + 23, 13, hexToNum(plant.color)).setDepth(101));
       this.track(
         this.add
-          .text(150, y + 16, plant.name, { fontFamily: FONT, fontSize: '20px', fontStyle: 'bold', color: '#F5EFE6' })
+          .text(144, y + 6, plant.name, { fontFamily: FONT, fontSize: '18px', fontStyle: 'bold', color: '#F5EFE6' })
           .setDepth(101)
       );
       this.track(
         this.add
-          .text(150, y + 40, `owned × ${have}   ·   ${unit}🪙 each (${plant.growthDays}-day)`, {
+          .text(144, y + 27, `owned × ${have}   ·   ${unit}🪙 each (${plant.growthDays}-day)`, {
             fontFamily: FONT,
-            fontSize: '14px',
+            fontSize: '13px',
             color: '#9B9389'
           })
           .setDepth(101)
@@ -259,14 +259,14 @@ export default class MarketplaceScene extends Phaser.Scene {
 
       const can = have > 0;
       this.track(
-        this.makeButton(1180, y + 32, 150, 36, 'Sell 1', can ? COLOR_AFFORD : COLOR_DISABLED, can, () =>
+        this.makeButton(1190, y + 23, 140, 32, 'Sell 1', can ? COLOR_AFFORD : COLOR_DISABLED, can, () =>
           this.doSell(pt, 1), can ? '#141210' : '#7a746c')
       );
       this.track(
-        this.makeButton(1360, y + 32, 170, 36, `Sell All (${have})`, can ? COLOR_AFFORD : COLOR_DISABLED, can, () =>
+        this.makeButton(1370, y + 23, 160, 32, `Sell All (${have})`, can ? COLOR_AFFORD : COLOR_DISABLED, can, () =>
           this.doSell(pt, have), can ? '#141210' : '#7a746c')
       );
-      y += 76;
+      y += 54;
     });
   }
 

@@ -20,7 +20,7 @@ export const ACHIEVEMENTS = [
   { id: 'the_stick',       tier: 1, icon: '🪵', name: 'A Sturdy Stick',      flavor: "It ends a slime. For now, that's enough.",     hidden: false },
 
   // TIER 2 — Finding Your Footing
-  { id: 'mycologist',      tier: 2, icon: '🍄', name: 'Mycologist',         flavor: 'It grows where light does not reach.',         hidden: false },
+  { id: 'mycologist',      tier: 2, icon: '🍅', name: 'First Tomato',       flavor: 'A blade and a harvest both begin in the same soil.', hidden: false },
   { id: 'blue_thumb',      tier: 2, icon: '💧', name: 'Blue Thumb',         flavor: 'Patience measured in petals.',                 hidden: false },
   { id: 'harvest_begins',  tier: 2, icon: '🌾', name: 'The Harvest Begins', flavor: 'Ten of each. The forest stirs at last.', hidden: false },
   { id: 'armed',           tier: 2, icon: '🗡️', name: 'Armed',              flavor: 'A proper blade changes the conversation.',     hidden: false },

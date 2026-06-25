@@ -1,11 +1,14 @@
 // UpgradeScene.js
 //
 // The Seedkeeper Workshop — a full-screen overlay launched on top of GameScene
-// (which keeps rendering frozen behind it). v2: shows all six plant STAT trees
-// only (gear + capacity moved to the coin economy / marketplace). Spends plant
-// resources and asks GameScene to apply effects + auto-save via purchaseUpgrade().
-// Reads live state from GameScene (plantBank, upgradeLevels, gameData); never
-// mutates it directly.
+// (which keeps rendering frozen behind it). v2: shows plant STAT trees only (gear
+// + capacity moved to the coin economy / marketplace). Spends plant resources and
+// asks GameScene to apply effects + auto-save via purchaseUpgrade(). Reads live
+// state from GameScene (plantBank, upgradeLevels, gameData); never mutates directly.
+//
+// Sprint 10: the reconciled catalog has 10 stat trees (one plant each) — too many
+// for one screen, so the trees are split across 2 pages of 5 with ◀ ▶ arrows and
+// page dots. Page-scoped objects are tracked and torn down on every page switch.
 
 import Phaser from 'phaser';
 import EventBus from '../core/EventBus.js';
@@ -13,10 +16,10 @@ import MobileDetect from '../core/MobileDetect.js';
 import { VIRTUAL_WIDTH, VIRTUAL_HEIGHT } from '../core/Constants.js';
 import entitiesData from '../data/entities.json';
 
-// v3 (Sprint 6/3d): one panel per stat-tree plant, derived from the upgrades
-// catalog (was a hardcoded 6 retired keys). NOTE: 18 panels overflow the current
-// 2-column grid — a scroll/paging pass on the workshop UI is a flagged follow-up.
+// One stat tree per plant, derived from the upgrades catalog (10 entries → 2 pages).
 const PLANT_ORDER = Object.keys(entitiesData.upgrades);
+const PAGE_SIZE = 5;
+const PAGE_COUNT = Math.ceil(PLANT_ORDER.length / PAGE_SIZE);
 
 const PANEL_W = 700;
 const PANEL_H = 190;
@@ -31,6 +34,8 @@ const COLOR_CONFIRM_YES = 0x3a7d44;
 const COLOR_CONFIRM_NO = 0x8a3a3a;
 const COLOR_PANEL = 0x221e1b;
 const COLOR_CLOSE = 0x36322e;
+const COLOR_ARROW = 0x2d2926;
+const COLOR_ARROW_DISABLED = 0x201d1a;
 
 function hexToNum(hex) {
   return parseInt(hex.replace('#', ''), 16);
@@ -45,10 +50,12 @@ export default class UpgradeScene extends Phaser.Scene {
     this.gameScene = this.scene.get('GameScene');
     this.gameData = this.gameScene.gameData;
 
+    this.page = 0;
     this._pending = null; // { plantType, track } awaiting confirm
     this.panelRefs = {};
     this.actionObjs = {}; // key `${plantType}_${track}` -> [gameobjects]
     this.summaryRefs = {};
+    this._pageObjs = []; // every object that belongs to the current page (destroyed on switch)
 
     // Dim, click-swallowing backdrop.
     this.add
@@ -75,14 +82,7 @@ export default class UpgradeScene extends Phaser.Scene {
       })
       .setDepth(101);
 
-    this.buildResourceSummary();
-
-    PLANT_ORDER.forEach((pt, i) => {
-      const col = i % 2;
-      const row = Math.floor(i / 2);
-      this.buildPanel(pt, GRID_X + col * COL_STRIDE, GRID_Y + row * ROW_STRIDE);
-    });
-
+    // Close button (static across pages).
     this.makeButton(
       VIRTUAL_WIDTH / 2,
       VIRTUAL_HEIGHT - 42,
@@ -95,22 +95,26 @@ export default class UpgradeScene extends Phaser.Scene {
       '#F5EFE6'
     );
 
-    PLANT_ORDER.forEach((pt) => this.refreshPanel(pt));
-    this.refreshSummary();
+    // Paging chrome — prev/next arrows flanking the close button, plus page dots.
+    this.buildPagingChrome();
+
+    this.buildPage();
 
     this.input.keyboard.on('keydown-ESC', () => this.close());
+    this.input.keyboard.on('keydown-LEFT', () => this.switchPage(this.page - 1));
+    this.input.keyboard.on('keydown-RIGHT', () => this.switchPage(this.page + 1));
 
     // Keep displays live if the bank changes (it does on each purchase).
     this._onBank = () => {
       this.refreshSummary();
-      PLANT_ORDER.forEach((pt) => this.refreshPanel(pt));
+      this.pagePlants().forEach((pt) => this.refreshPanel(pt));
     };
     EventBus.on('bank:updated', this._onBank);
     this.events.once('shutdown', () => EventBus.off('bank:updated', this._onBank));
 
-    // Mobile: the BUY/Close buttons already take touch (they use pointerup), but
-    // there's no Esc key — add a swipe-down gesture to dismiss, plus a hint. The
-    // horizontal guard keeps it from firing on a sideways drag across buttons.
+    // Mobile: the BUY/Close buttons already take touch (pointerup), but there's no
+    // Esc key — add a swipe-down gesture to dismiss, plus a hint. The horizontal
+    // guard keeps it from firing on a sideways drag across buttons.
     if (MobileDetect.isMobile()) {
       let startY = 0;
       let startX = 0;
@@ -122,23 +126,97 @@ export default class UpgradeScene extends Phaser.Scene {
         if (p.y - startY > 120 && Math.abs(p.x - startX) < 90) this.close();
       });
       this.add
-        .text(VIRTUAL_WIDTH / 2, VIRTUAL_HEIGHT - 76, 'swipe down to close', {
+        .text(VIRTUAL_WIDTH / 2, VIRTUAL_HEIGHT - 76, 'swipe to change page · swipe down to close', {
           fontFamily: '"SproutLands", "Courier New", monospace',
           fontSize: '14px',
           color: '#9B9389'
         })
         .setOrigin(0.5)
         .setDepth(101);
+      // Horizontal swipe pages between the two screens of trees.
+      this.input.on('pointerup', (p) => {
+        const dx = p.x - startX;
+        if (Math.abs(dx) > 120 && Math.abs(p.y - startY) < 90) {
+          this.switchPage(this.page + (dx < 0 ? 1 : -1));
+        }
+      });
     }
   }
 
-  // --- Header resource summary ---------------------------------------------
+  // --- Paging ---------------------------------------------------------------
 
-  buildResourceSummary() {
-    PLANT_ORDER.forEach((pt, i) => {
+  pagePlants() {
+    return PLANT_ORDER.slice(this.page * PAGE_SIZE, this.page * PAGE_SIZE + PAGE_SIZE);
+  }
+
+  buildPagingChrome() {
+    const cy = VIRTUAL_HEIGHT - 42;
+    this._prevArrow = this.makeButton(VIRTUAL_WIDTH / 2 - 200, cy, 56, 42, '◀', COLOR_ARROW, true, () =>
+      this.switchPage(this.page - 1), '#F5EFE6'
+    );
+    this._nextArrow = this.makeButton(VIRTUAL_WIDTH / 2 + 200, cy, 56, 42, '▶', COLOR_ARROW, true, () =>
+      this.switchPage(this.page + 1), '#F5EFE6'
+    );
+
+    // Page dots, centred above the close button.
+    this._dots = [];
+    const dotGap = 26;
+    const startX = VIRTUAL_WIDTH / 2 - (dotGap * (PAGE_COUNT - 1)) / 2;
+    for (let i = 0; i < PAGE_COUNT; i++) {
+      this._dots.push(this.add.circle(startX + i * dotGap, VIRTUAL_HEIGHT - 92, 7, 0x4d4843).setDepth(101));
+    }
+  }
+
+  switchPage(next) {
+    const clamped = Phaser.Math.Clamp(next, 0, PAGE_COUNT - 1);
+    if (clamped === this.page) return;
+    this.page = clamped;
+    this._pending = null;
+    this.buildPage();
+  }
+
+  buildPage() {
+    // Tear down the previous page's objects.
+    this._pageObjs.forEach((o) => o.destroy());
+    this._pageObjs = [];
+    this.panelRefs = {};
+    this.summaryRefs = {};
+    this.actionObjs = {};
+
+    const plants = this.pagePlants();
+    this.buildResourceSummary(plants);
+    plants.forEach((pt, i) => {
+      const col = i % 2;
+      const row = Math.floor(i / 2);
+      this.buildPanel(pt, GRID_X + col * COL_STRIDE, GRID_Y + row * ROW_STRIDE);
+    });
+    plants.forEach((pt) => this.refreshPanel(pt));
+    this.refreshSummary();
+
+    // Arrow availability + dot highlight.
+    this.setArrowEnabled(this._prevArrow, this.page > 0);
+    this.setArrowEnabled(this._nextArrow, this.page < PAGE_COUNT - 1);
+    this._dots.forEach((d, i) => d.setFillStyle(i === this.page ? 0xeac34f : 0x4d4843));
+  }
+
+  setArrowEnabled([bg], enabled) {
+    bg.setAlpha(enabled ? 1 : 0.4);
+    if (this.textures.exists('ui_btn_square')) bg.setTint(enabled ? COLOR_ARROW : COLOR_ARROW_DISABLED);
+    else bg.setFillStyle(enabled ? COLOR_ARROW : COLOR_ARROW_DISABLED);
+  }
+
+  track(objs) {
+    (Array.isArray(objs) ? objs : [objs]).forEach((o) => this._pageObjs.push(o));
+    return objs;
+  }
+
+  // --- Header resource summary (current page's plants) ----------------------
+
+  buildResourceSummary(plants) {
+    plants.forEach((pt, i) => {
       const x = 660 + i * 156;
       const color = hexToNum(this.gameData.plants[pt].color);
-      this.add.circle(x, 56, 11, color).setDepth(101);
+      this.track(this.add.circle(x, 56, 11, color).setDepth(101));
       this.summaryRefs[pt] = this.add
         .text(x + 18, 56, '0', {
           fontFamily: '"SproutLands", "Courier New", monospace',
@@ -147,12 +225,13 @@ export default class UpgradeScene extends Phaser.Scene {
         })
         .setOrigin(0, 0.5)
         .setDepth(101);
+      this.track(this.summaryRefs[pt]);
     });
   }
 
   refreshSummary() {
-    PLANT_ORDER.forEach((pt) => {
-      this.summaryRefs[pt].setText(`${this.bank(pt)}`);
+    this.pagePlants().forEach((pt) => {
+      if (this.summaryRefs[pt]) this.summaryRefs[pt].setText(`${this.bank(pt)}`);
     });
   }
 
@@ -161,22 +240,26 @@ export default class UpgradeScene extends Phaser.Scene {
   buildPanel(pt, px, py) {
     const plant = this.gameData.plants[pt];
 
-    this.add
-      .rectangle(px, py, PANEL_W, PANEL_H, COLOR_PANEL)
-      .setOrigin(0, 0)
-      .setStrokeStyle(2, 0x4d4843)
-      .setDepth(100);
+    this.track(
+      this.add
+        .rectangle(px, py, PANEL_W, PANEL_H, COLOR_PANEL)
+        .setOrigin(0, 0)
+        .setStrokeStyle(2, 0x4d4843)
+        .setDepth(100)
+    );
 
-    this.add.circle(px + 34, py + 34, 16, hexToNum(plant.color)).setDepth(101);
+    this.track(this.add.circle(px + 34, py + 34, 16, hexToNum(plant.color)).setDepth(101));
 
-    this.add
-      .text(px + 62, py + 22, plant.name, {
-        fontFamily: '"SproutLands", "Courier New", monospace',
-        fontSize: '22px',
-        fontStyle: 'bold',
-        color: '#F5EFE6'
-      })
-      .setDepth(101);
+    this.track(
+      this.add
+        .text(px + 62, py + 22, plant.name, {
+          fontFamily: '"SproutLands", "Courier New", monospace',
+          fontSize: '22px',
+          fontStyle: 'bold',
+          color: '#F5EFE6'
+        })
+        .setDepth(101)
+    );
 
     const resourceText = this.add
       .text(px + PANEL_W - 20, py + 24, '', {
@@ -186,6 +269,7 @@ export default class UpgradeScene extends Phaser.Scene {
       })
       .setOrigin(1, 0)
       .setDepth(101);
+    this.track(resourceText);
 
     const statLabel = this.add
       .text(px + 24, py + 78, '', {
@@ -195,12 +279,14 @@ export default class UpgradeScene extends Phaser.Scene {
         lineSpacing: 4
       })
       .setDepth(101);
+    this.track(statLabel);
 
     this.panelRefs[pt] = { px, py, resourceText, statLabel };
   }
 
   refreshPanel(pt) {
     const ref = this.panelRefs[pt];
+    if (!ref) return;
     ref.resourceText.setText(`× ${this.bank(pt)}`);
     ref.statLabel.setText(this.statLabelText(pt));
     this.rebuildAction(pt, 'stat');
@@ -216,7 +302,7 @@ export default class UpgradeScene extends Phaser.Scene {
   statEffectText(pt) {
     const s = this.gameData.upgrades[pt].stat;
     const b = s.perLevelBonus;
-    if (s.statKey === 'timerBonus') return `+${b / 1000}s per day`;
+    if (s.statKey === 'healthRegen') return `+${b} HP/sec`;
     return `+${Math.round(b * 100)}% ${s.name}`;
   }
 
@@ -230,6 +316,7 @@ export default class UpgradeScene extends Phaser.Scene {
     this.actionObjs[key] = [];
 
     const ref = this.panelRefs[pt];
+    if (!ref) return;
     const rowY = ref.py + 92;
     const rightX = ref.px + PANEL_W - 20;
 
@@ -259,6 +346,7 @@ export default class UpgradeScene extends Phaser.Scene {
         '#FFFFFF'
       );
       this.actionObjs[key] = [...yes, ...no];
+      this.track(this.actionObjs[key]);
       return;
     }
 
@@ -274,6 +362,7 @@ export default class UpgradeScene extends Phaser.Scene {
         .setOrigin(1, 0.5)
         .setDepth(102);
       this.actionObjs[key] = [t];
+      this.track(t);
       return;
     }
 
@@ -291,6 +380,7 @@ export default class UpgradeScene extends Phaser.Scene {
       () => this.onBuyClicked(pt, track),
       affordable ? '#141210' : '#7a746c'
     );
+    this.track(this.actionObjs[key]);
   }
 
   // --- Purchase flow --------------------------------------------------------
@@ -298,7 +388,7 @@ export default class UpgradeScene extends Phaser.Scene {
   onBuyClicked(pt, track) {
     this._pending = { plantType: pt, track };
     // Cancel any other pending confirm so only one is active at a time.
-    PLANT_ORDER.forEach((p) => this.rebuildAction(p, 'stat'));
+    this.pagePlants().forEach((p) => this.rebuildAction(p, 'stat'));
   }
 
   onConfirm(pt, track) {
@@ -307,7 +397,7 @@ export default class UpgradeScene extends Phaser.Scene {
     // purchase emits bank:updated → _onBank refreshes everything; refresh now too
     // so the change is instant even if the event order ever shifts.
     this.refreshSummary();
-    PLANT_ORDER.forEach((p) => this.refreshPanel(p));
+    this.pagePlants().forEach((p) => this.refreshPanel(p));
   }
 
   onCancel(pt, track) {

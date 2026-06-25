@@ -184,11 +184,11 @@ export default class AchievementSystem {
   }
 
   handleHarvest(plantType) {
-    // v3 (Sprint 6/3d): retired keys repointed to valid catalog plants so these
-    // stay earnable. NOTE: 'mycologist' (🍄 mushroom flavor) now triggers on a
-    // deep-forest magic crop — its name/icon/flavor should be revisited (flagged).
-    if (plantType === 'pineapple') this.unlock('mycologist');
-    if (plantType === 'blue_flower_2') this.unlock('blue_thumb');
+    // v4 (Sprint 10): repointed to the reconciled 12-plant catalog. The old
+    // 'mycologist' (🍄, was red_mushroom) is now the First Tomato milestone (see
+    // achievements.js); 'blue_thumb' tracks the magic blue_flower (renamed key).
+    if (plantType === 'tomato') this.unlock('mycologist');
+    if (plantType === 'blue_flower') this.unlock('blue_thumb');
     const grown = this.scene.plantsGrownEver || {};
     const all = Object.keys(this.scene.gameData.plants).every(
       (pt) => (grown[pt] || 0) >= HARVEST_BEGINS_PER_PLANT

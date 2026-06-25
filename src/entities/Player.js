@@ -19,14 +19,14 @@ const IDLE_BOB_MS = 600;
 const STEP_INTERVAL_BASE_MS = 320; // footstep cadence at base speed
 const STEP_VOLUME = 0.3;
 
-// Drawn at 2x so the Seedkeeper reads clearly at the current camera zoom.
-// Visual scale only — the physics body is configured independently below. The
-// idle squash + stopIdle reset use this as their baseline so the 2x holds.
-const SPRITE_SCALE = 2;
-// Fixed collider radius (source px). Pinned to a constant so the 2x sprite scale
-// doesn't inflate the hitbox: Phaser's effective collision radius is halfWidth
-// (= BODY_RADIUS * scaleX), so this lands ~16px in-world — close to the original
-// pre-zoom collider on the 48px frame.
+// Drawn at 1x (Sprint 13: halved from 2x — the doubled sprite read oversized
+// against the hand-built world's trees and props). Visual scale only; the physics
+// body is configured independently below. The idle squash + stopIdle reset use
+// this as their baseline so the scale holds.
+const SPRITE_SCALE = 1;
+// Fixed collider radius (source px). Pinned to a constant; Phaser's effective
+// collision radius is halfWidth (= BODY_RADIUS * scaleX), so at the 1x scale this
+// lands ~8px in-world — a snug footprint that threads tight forest tree gaps.
 const BODY_RADIUS = 8;
 
 // --- Melee attack (Sprint 3) ---
@@ -47,6 +47,15 @@ const DIRECTION_ANGLES = {
 // an input. Tuned short so it assists timing without auto-firing stale presses.
 const ATTACK_BUFFER_MS = 120;
 const DASH_BUFFER_MS = 100;
+
+// --- Stat-tree effects (Sprint 10) ---
+// Provisional caps/tunables for the reconciled stat trees. The per-level
+// coefficients live in entities.json (upgrades[*].stat.perLevelBonus); these
+// bound the runtime effect so a maxed tree never trivialises the game.
+const DAMAGE_REDUCTION_CAP = 0.3; // defense tree caps incoming-damage reduction at 30%
+const REGEN_PAUSE_MS = 3000; // passive HP regen pauses this long after taking a hit
+const DASH_BONUS_CD_CAP = 0.5; // dash tree shaves at most 50% off the dash cooldown
+const DASH_BONUS_DIST_CAP = 0.25; // …and adds at most 25% dash distance
 
 // --- Ranged / dash (Sprint 4) ---
 const RANGED_COOLDOWN_MS = 400; // min time between shots
@@ -99,15 +108,22 @@ export default class Player extends Phaser.Physics.Arcade.Sprite {
     this.dashBuffer = false;
     this.dashBufferTimer = 0;
 
-    // --- Upgrades & gear (Sprint 4) ---
+    // --- Upgrades & gear (Sprint 4; reconciled Sprint 10) ---
     // Stat multipliers/bonuses recomputed from scratch on each upgrade (no drift).
+    // One plant feeds each key (entities.json upgrades). timerBonus is legacy — no
+    // tree feeds it now, but it stays 0 so DaySystem.setTimerBonus(0) is a no-op.
     this.statBonuses = {
-      attackMult: 0,
-      hpMult: 0,
-      speedMult: 0,
-      timerBonus: 0,
-      critBonus: 0,
-      harvestRange: 0
+      attackMult: 0, // tomato — melee damage
+      damageReduction: 0, // sunflower — % incoming damage reduced (capped)
+      hpMax: 0, // pumpkin — max-HP %
+      speedMult: 0, // carrots — move speed %
+      critChance: 0, // beanstalk — added crit chance
+      harvestBonus: 0, // wheat — seed-collect range %
+      rangedDamage: 0, // pineapple — projectile damage %
+      spellPower: 0, // blue_flower — wired now, spells land later
+      dashBonus: 0, // cucumber — dash cooldown↓ / distance↑
+      healthRegen: 0, // red_berry — passive HP/sec
+      timerBonus: 0 // legacy (no tree feeds this)
     };
     this.equippedGear = { weapon: null, armor: null, boots: null, ranged: null, wateringCan: 'basic' };
 
@@ -142,6 +158,13 @@ export default class Player extends Phaser.Physics.Arcade.Sprite {
     this.waterCapacity = 1;
     this.waterCharges = 0;
 
+    // --- Passive regen (Sprint 10; red_berry healthRegen tree) ---
+    // Fractional HP accumulates each frame at statBonuses.healthRegen HP/sec and
+    // heals in whole-HP steps; a hit sets _regenPauseRemaining so regen stalls
+    // briefly after taking damage.
+    this._regenAccum = 0;
+    this._regenPauseRemaining = 0;
+
     // --- Idle + footsteps (Sprint 9 game feel) ---
     this.idleTimer = 0;
     this.isIdling = false;
@@ -158,16 +181,17 @@ export default class Player extends Phaser.Physics.Arcade.Sprite {
     this._invEndEvent = null;
     this._flashOn = false;
 
-    // --- Physics body: fixed-radius circular collider, centred in the sprite ---
-    // Re-asserted to BODY_RADIUS (not width*ratio) so the 2x sprite scale doesn't
-    // double the hitbox. updateBounds() leaves `radius` alone, so the offset below
-    // (width/2 - radius) keeps the circle centred on the 48px frame at any scale.
+    // --- Physics body: fixed-radius circular collider pinned to the feet ---
+    // Radius is BODY_RADIUS (not width*ratio) so the sprite scale doesn't inflate
+    // the hitbox. Horizontally centred; vertically dropped to ~72% down the frame
+    // so the collider hugs the feet (lower third), not the full sprite bounds —
+    // the head/canopy can overlap a tree while the feet thread the gap below it.
     this.setCollideWorldBounds(true);
     const radius = BODY_RADIUS;
     this.body.setCircle(
       radius,
       this.width / 2 - radius,
-      this.height / 2 - radius
+      this.height * 0.72 - radius
     );
     this.setDepth(10);
 
@@ -272,6 +296,9 @@ export default class Player extends Phaser.Physics.Arcade.Sprite {
     if (this.dashCooldownRemaining > 0) {
       this.dashCooldownRemaining = Math.max(0, this.dashCooldownRemaining - dtMs);
     }
+
+    // Passive HP regen (red_berry healthRegen tree), paused briefly after a hit.
+    this.tickRegen(dtMs);
 
     // Attack with input buffering (Sprint 12): if the cooldown is still running
     // the press is held briefly and fired the instant it clears.
@@ -480,14 +507,14 @@ export default class Player extends Phaser.Physics.Arcade.Sprite {
   recalculateStats() {
     const base = this.gameData.player;
     this.effectiveAttack = base.attackDamage * (1 + this.statBonuses.attackMult);
-    this.effectiveCrit = base.critChance + this.statBonuses.critBonus;
+    this.effectiveCrit = base.critChance + this.statBonuses.critChance;
     // devSpeedMult is the dev-menu "2X SPEED" cheat (runtime only, never saved).
     this.speed = Math.floor(
       base.speed * (1 + this.statBonuses.speedMult + this.bootsSpeedBonus) * (this.devSpeedMult || 1)
     );
 
-    // Scale current HP proportionally when max HP changes.
-    const effectiveMaxHP = Math.floor(base.maxHP * (1 + this.statBonuses.hpMult));
+    // Scale current HP proportionally when max HP changes (pumpkin hpMax tree).
+    const effectiveMaxHP = Math.floor(base.maxHP * (1 + this.statBonuses.hpMax));
     const hpRatio = this.maxHP > 0 ? this.currentHP / this.maxHP : 1;
     this.maxHP = effectiveMaxHP;
     this.currentHP = Math.max(1, Math.floor(this.maxHP * hpRatio));
@@ -597,12 +624,17 @@ export default class Player extends Phaser.Physics.Arcade.Sprite {
     this.rangedCooldownRemaining = RANGED_COOLDOWN_MS;
     EventBus.emit('ranged:fired', { ammo: this.rangedAmmo, max: this.rangedAmmoMax });
 
+    // Ranged-damage stat tree (Sprint 10, pineapple) scales projectile damage.
+    const projDamage = Math.round(
+      this.rangedData.projDamage * (1 + (this.statBonuses.rangedDamage || 0))
+    );
+
     // GameScene owns the pooled projectiles and the enemy-overlap wiring.
     EventBus.emit('projectile:spawn', {
       x: this.x,
       y: this.y,
       facing: this.facing,
-      damage: this.rangedData.projDamage,
+      damage: projDamage,
       range: this.rangedData.projRange,
       speed: this.rangedData.projSpeed
     });
@@ -628,9 +660,15 @@ export default class Player extends Phaser.Physics.Arcade.Sprite {
   dash() {
     const d = this.dashData;
     const dir = this.lastMoveDir;
-    this.setVelocity(dir.x * d.dashSpeed, dir.y * d.dashSpeed);
+    // Dash stat tree (Sprint 10, cucumber → dashBonus): more distance, shorter
+    // cooldown per level (both capped). Dash itself is still gated behind boots
+    // gear; the stat only sweetens it once dash is unlocked.
+    const bonus = this.statBonuses.dashBonus || 0;
+    const distMult = 1 + Math.min(DASH_BONUS_DIST_CAP, bonus * 0.5);
+    const cdMult = 1 - Math.min(DASH_BONUS_CD_CAP, bonus);
+    this.setVelocity(dir.x * d.dashSpeed * distMult, dir.y * d.dashSpeed * distMult);
     this.isDashing = true;
-    this.dashCooldownRemaining = d.dashCooldown;
+    this.dashCooldownRemaining = d.dashCooldown * cdMult;
     EventBus.emit('player:dashed', {});
 
     this.scene.time.delayedCall(d.dashDuration, () => {
@@ -693,9 +731,17 @@ export default class Player extends Phaser.Physics.Arcade.Sprite {
     const amount = data.amount || 0;
     if (amount <= 0) return;
 
-    // Armor reduces incoming damage (Sprint 4); at least 1 always lands.
-    const reduced = this.armorReduction > 0
-      ? Math.max(1, Math.floor(amount * (1 - this.armorReduction)))
+    // Any hit stalls passive regen briefly (red_berry healthRegen tree).
+    this._regenPauseRemaining = REGEN_PAUSE_MS;
+
+    // Incoming damage is reduced by gear armor (Sprint 4) and the defense stat
+    // tree (Sprint 10, sunflower → damageReduction, capped). The two stack
+    // multiplicatively so combined reduction can approach but never reach 100%;
+    // at least 1 damage always lands.
+    const statDR = Math.min(DAMAGE_REDUCTION_CAP, this.statBonuses.damageReduction || 0);
+    const totalReduction = 1 - (1 - this.armorReduction) * (1 - statDR);
+    const reduced = totalReduction > 0
+      ? Math.max(1, Math.floor(amount * (1 - totalReduction)))
       : amount;
 
     this.currentHP = Math.max(0, this.currentHP - reduced);
@@ -710,6 +756,27 @@ export default class Player extends Phaser.Physics.Arcade.Sprite {
       return;
     }
     this.startInvincibility();
+  }
+
+  // Passive regen tick (Sprint 10). Accumulates fractional HP at the current
+  // healthRegen rate (HP/sec) and heals in whole-HP steps; stalls while
+  // _regenPauseRemaining is counting down after a recent hit.
+  tickRegen(dtMs) {
+    if (this._regenPauseRemaining > 0) {
+      this._regenPauseRemaining = Math.max(0, this._regenPauseRemaining - dtMs);
+      return;
+    }
+    const rate = this.statBonuses.healthRegen || 0; // HP per second
+    if (rate <= 0 || this.isDead || this.currentHP >= this.maxHP) {
+      this._regenAccum = 0;
+      return;
+    }
+    this._regenAccum += rate * (dtMs / 1000);
+    if (this._regenAccum >= 1) {
+      const whole = Math.floor(this._regenAccum);
+      this._regenAccum -= whole;
+      this.heal(whole);
+    }
   }
 
   heal(amount) {
