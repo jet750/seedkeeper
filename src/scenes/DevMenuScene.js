@@ -16,21 +16,13 @@ import Phaser from 'phaser';
 import EventBus from '../core/EventBus.js';
 import { VIRTUAL_WIDTH, isDevModeActive } from '../core/Constants.js';
 
-// One representative crop per stat tree (Sprint 10: reconciled catalog). Keeps the
-// 2-col grant grid at 6 (3 rows) while covering a spread of trees — beanstalk and
-// tomato are tall crops, useful for eyeballing tall-plant rendering. (The grant grid
-// reserves exactly 3 rows below, so keep this at 6 entries.)
-const PLANT_ORDER = [
-  'carrots', // speed
-  'sunflower', // defense (tall)
-  'beanstalk', // crit (tall)
-  'tomato', // attack (tall)
-  'wheat', // harvest
-  'blue_flower' // magic
-];
+// Sprint 14: the grant grid now lists EVERY current plant (derived at build time
+// from gameData.plants — the reconciled 12: 10 growable + the 2 sell-only melons),
+// so retired plants drop off automatically and new ones appear without edits here.
+// The grid is 2 columns; its row count is computed from the plant count.
 
 const PANEL_W = 388;
-const PANEL_H = 700;
+const PANEL_H = 770; // Sprint 14: taller to fit the full 12-plant grant grid (6 rows)
 const PANEL_X = VIRTUAL_WIDTH - PANEL_W - 8; // 1204
 const PANEL_TOP = 6;
 const PAD = 12;
@@ -126,7 +118,10 @@ export default class DevMenuScene extends Phaser.Scene {
       this.dispatch('dev:fillBank')
     );
     y += BTN_H + 4;
-    PLANT_ORDER.forEach((pt, i) => {
+    // Every current plant (the reconciled 12), 2-col grid. Derived from the data so
+    // retired plants never appear and added plants show up without touching this file.
+    const plantKeys = Object.keys(this.gameData.plants);
+    plantKeys.forEach((pt, i) => {
       const col = i % 2;
       const row = Math.floor(i / 2);
       const bx = CONTENT_X + col * (HALF_W + 8);
@@ -140,7 +135,7 @@ export default class DevMenuScene extends Phaser.Scene {
         { textColor: this.gameData.plants[pt].color }
       );
     });
-    y += 3 * (BTN_H + 4) + 8;
+    y += Math.ceil(plantKeys.length / 2) * (BTN_H + 4) + 8;
 
     // --- Day ---
     y = this.sectionHeader('DAY CONTROL', y);
@@ -201,7 +196,7 @@ export default class DevMenuScene extends Phaser.Scene {
       this.refreshDisplays();
     });
     y += BTN_H + 4;
-    this.makeButton(CONTENT_X, y, CONTENT_W, 'Max All Stats', () => {
+    this.makeButton(CONTENT_X, y, CONTENT_W, 'Max All Stats (10 trees)', () => {
       this.dispatch('dev:maxStats');
       this.refreshDisplays();
     });
@@ -232,7 +227,7 @@ export default class DevMenuScene extends Phaser.Scene {
       }
     );
     y += BTN_H + 4;
-    this.makeButton(CONTENT_X, y, CONTENT_W, 'MAX CAPACITY', () => {
+    this.makeButton(CONTENT_X, y, CONTENT_W, 'MAX ALL CAPACITY', () => {
       this.dispatch('dev:maxCapacity');
       this.refreshDisplays();
     });

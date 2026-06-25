@@ -55,6 +55,17 @@ const CHIP_H = 52;
 const CHIP_GAP = 12;
 const CHIP_START_X = 296;
 
+// SELL-tab paging (Sprint 14). The 12-plant list was a single cramped column that
+// ran right up to the Close button and read poorly on mobile. It now splits across
+// pages of 6 with the same ◀ ▶ arrows / dots / swipe paging as the workshop, which
+// frees the vertical room to make each row taller and its text larger.
+const SELL_PAGE_SIZE = 6;
+const SELL_ROW_START_Y = 200; // first row top, below the nudge copy
+const SELL_ROW_STRIDE = 94; // row-to-row vertical step
+const SELL_ROW_H = 74; // panel height per plant row
+const COLOR_ARROW = 0x2d2926;
+const COLOR_ARROW_DISABLED = 0x201d1a;
+
 const SELL_NUDGE =
   'Selling plants is the fastest way to earn coins — but these same plants level your\n' +
   'skill trees. Spend wisely; don’t starve your growth to fill your purse.';
@@ -74,6 +85,7 @@ export default class MarketplaceScene extends Phaser.Scene {
     this.economy = this.gameScene.economyData;
 
     this.tab = 'sell';
+    this.sellPage = 0; // Sprint 14 — SELL list is paged; BUY is single-screen
     this.contentObjs = []; // rebuilt on every refresh
     this.tabButtons = {};
 
@@ -126,6 +138,13 @@ export default class MarketplaceScene extends Phaser.Scene {
     this.buildContent();
 
     this.input.keyboard.on('keydown-ESC', () => this.close());
+    // ◀ ▶ keys page the SELL list (ignored on the single-screen BUY tab).
+    this.input.keyboard.on('keydown-LEFT', () => {
+      if (this.tab === 'sell') this.switchSellPage(this.sellPage - 1);
+    });
+    this.input.keyboard.on('keydown-RIGHT', () => {
+      if (this.tab === 'sell') this.switchSellPage(this.sellPage + 1);
+    });
 
     // Live refresh when coins or the bank change (any purchase/sale emits these).
     this._refresh = () => this.buildContent();
@@ -147,8 +166,17 @@ export default class MarketplaceScene extends Phaser.Scene {
       this.input.on('pointerup', (p) => {
         if (p.y - startY > 120 && Math.abs(p.x - startX) < 90) this.close();
       });
+      // Horizontal swipe pages the SELL list (mirrors the workshop). The vertical
+      // guard keeps it from firing on the swipe-down-to-close gesture.
+      this.input.on('pointerup', (p) => {
+        if (this.tab !== 'sell') return;
+        const dx = p.x - startX;
+        if (Math.abs(dx) > 120 && Math.abs(p.y - startY) < 90) {
+          this.switchSellPage(this.sellPage + (dx < 0 ? 1 : -1));
+        }
+      });
       this.add
-        .text(VIRTUAL_WIDTH / 2, VIRTUAL_HEIGHT - 74, 'swipe down to close', {
+        .text(VIRTUAL_WIDTH / 2, VIRTUAL_HEIGHT - 74, 'swipe ◀ ▶ to change page · swipe down to close', {
           fontFamily: FONT,
           fontSize: '14px',
           color: '#9B9389'
@@ -231,27 +259,32 @@ export default class MarketplaceScene extends Phaser.Scene {
         .setDepth(101)
     );
 
-    // Sprint 10: the reconciled 12-plant catalog fits a single compact column
-    // (was 21 rows that overran the panel). Denser rows keep every plant + both
-    // Sell buttons inside the 900px overlay above the Close button.
-    let y = 190;
-    Object.keys(this.gameData.plants).forEach((pt) => {
+    // Sprint 14: the 12-plant catalog is paged 6 per screen (was one cramped column
+    // that ran to the Close button). With half the rows per page, each row is taller
+    // and its text larger — legible at the game's camera zoom on mobile. The paging
+    // chrome is built last and torn down with the rest of the sell content on switch.
+    const plants = this.pageSellPlants();
+    plants.forEach((pt, i) => {
       const plant = this.gameData.plants[pt];
       const have = this.gameScene.plantBank[pt] || 0;
       const unit = this.gameScene.sellPrice(pt);
+      const y = SELL_ROW_START_Y + i * SELL_ROW_STRIDE;
+      const cy = y + SELL_ROW_H / 2;
 
-      this.track(this.add.rectangle(80, y, 1440, 46, COLOR_PANEL).setOrigin(0, 0).setStrokeStyle(2, 0x4d4843).setDepth(100));
-      this.track(this.add.circle(116, y + 23, 13, hexToNum(plant.color)).setDepth(101));
+      this.track(
+        this.add.rectangle(80, y, 1440, SELL_ROW_H, COLOR_PANEL).setOrigin(0, 0).setStrokeStyle(2, 0x4d4843).setDepth(100)
+      );
+      this.track(this.add.circle(124, cy, 16, hexToNum(plant.color)).setDepth(101));
       this.track(
         this.add
-          .text(144, y + 6, plant.name, { fontFamily: FONT, fontSize: '18px', fontStyle: 'bold', color: '#F5EFE6' })
+          .text(162, y + 14, plant.name, { fontFamily: FONT, fontSize: '24px', fontStyle: 'bold', color: '#F5EFE6' })
           .setDepth(101)
       );
       this.track(
         this.add
-          .text(144, y + 27, `owned × ${have}   ·   ${unit}🪙 each (${plant.growthDays}-day)`, {
+          .text(162, y + 46, `owned × ${have}   ·   ${unit}🪙 each (${plant.growthDays}-day)`, {
             fontFamily: FONT,
-            fontSize: '13px',
+            fontSize: '16px',
             color: '#9B9389'
           })
           .setDepth(101)
@@ -259,15 +292,61 @@ export default class MarketplaceScene extends Phaser.Scene {
 
       const can = have > 0;
       this.track(
-        this.makeButton(1190, y + 23, 140, 32, 'Sell 1', can ? COLOR_AFFORD : COLOR_DISABLED, can, () =>
+        this.makeButton(1170, cy, 160, 44, 'Sell 1', can ? COLOR_AFFORD : COLOR_DISABLED, can, () =>
           this.doSell(pt, 1), can ? '#141210' : '#7a746c')
       );
       this.track(
-        this.makeButton(1370, y + 23, 160, 32, `Sell All (${have})`, can ? COLOR_AFFORD : COLOR_DISABLED, can, () =>
+        this.makeButton(1380, cy, 180, 44, `Sell All (${have})`, can ? COLOR_AFFORD : COLOR_DISABLED, can, () =>
           this.doSell(pt, have), can ? '#141210' : '#7a746c')
       );
-      y += 54;
     });
+
+    this.buildSellPagingChrome();
+  }
+
+  // Plants shown on the current SELL page (6 per page).
+  pageSellPlants() {
+    const keys = Object.keys(this.gameData.plants);
+    return keys.slice(this.sellPage * SELL_PAGE_SIZE, this.sellPage * SELL_PAGE_SIZE + SELL_PAGE_SIZE);
+  }
+
+  sellPageCount() {
+    return Math.max(1, Math.ceil(Object.keys(this.gameData.plants).length / SELL_PAGE_SIZE));
+  }
+
+  switchSellPage(next) {
+    const clamped = Phaser.Math.Clamp(next, 0, this.sellPageCount() - 1);
+    if (clamped === this.sellPage) return;
+    this.sellPage = clamped;
+    this.buildContent();
+  }
+
+  // ◀ ▶ arrows flanking Close + page dots — mirrors the workshop. Tracked in
+  // contentObjs so it tears down on a tab switch (BUY is single-screen, no chrome).
+  buildSellPagingChrome() {
+    const count = this.sellPageCount();
+    if (count <= 1) return;
+    const cy = VIRTUAL_HEIGHT - 40;
+    const prevOn = this.sellPage > 0;
+    this.track(
+      this.makeButton(VIRTUAL_WIDTH / 2 - 200, cy, 56, 44, '◀', prevOn ? COLOR_ARROW : COLOR_ARROW_DISABLED, prevOn, () =>
+        this.switchSellPage(this.sellPage - 1), '#F5EFE6')
+    );
+    const nextOn = this.sellPage < count - 1;
+    this.track(
+      this.makeButton(VIRTUAL_WIDTH / 2 + 200, cy, 56, 44, '▶', nextOn ? COLOR_ARROW : COLOR_ARROW_DISABLED, nextOn, () =>
+        this.switchSellPage(this.sellPage + 1), '#F5EFE6')
+    );
+
+    const dotGap = 26;
+    const startX = VIRTUAL_WIDTH / 2 - (dotGap * (count - 1)) / 2;
+    for (let i = 0; i < count; i++) {
+      this.track(
+        this.add
+          .circle(startX + i * dotGap, VIRTUAL_HEIGHT - 90, 7, i === this.sellPage ? 0xeac34f : 0x4d4843)
+          .setDepth(101)
+      );
+    }
   }
 
   doSell(pt, qty) {

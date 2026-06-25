@@ -7,8 +7,9 @@
 // state from GameScene (plantBank, upgradeLevels, gameData); never mutates directly.
 //
 // Sprint 10: the reconciled catalog has 10 stat trees (one plant each) — too many
-// for one screen, so the trees are split across 2 pages of 5 with ◀ ▶ arrows and
-// page dots. Page-scoped objects are tracked and torn down on every page switch.
+// for one screen, so the trees are split across 2 pages with ◀ ▶ arrows and page
+// dots. Sprint 14: page split is 6 + 4 (page 1 reads as a full 3-row grid, page 2
+// as overflow) rather than 5 + 5. Page-scoped objects are torn down on each switch.
 
 import Phaser from 'phaser';
 import EventBus from '../core/EventBus.js';
@@ -17,8 +18,10 @@ import { VIRTUAL_WIDTH, VIRTUAL_HEIGHT } from '../core/Constants.js';
 import entitiesData from '../data/entities.json';
 
 // One stat tree per plant, derived from the upgrades catalog (10 entries → 2 pages).
+// PAGE_SIZE 6 yields a 6 + 4 split (page 1 a full 3×2 grid, page 2 the 4-tree
+// overflow) instead of two half-empty 5-tree pages (Sprint 14).
 const PLANT_ORDER = Object.keys(entitiesData.upgrades);
-const PAGE_SIZE = 5;
+const PAGE_SIZE = 6;
 const PAGE_COUNT = Math.ceil(PLANT_ORDER.length / PAGE_SIZE);
 
 const PANEL_W = 700;
