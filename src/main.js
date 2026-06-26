@@ -4,6 +4,7 @@
 // scene flow: Boot → Menu → Game (+ parallel UI).
 
 import Phaser from 'phaser';
+import { inject } from '@vercel/analytics';
 import sproutFontUrl from '/assets/fonts/sproutlands-font.ttf?url';
 import sproutFontSmallUrl from '/assets/fonts/sproutlands-font-small.ttf?url';
 import { VIRTUAL_WIDTH, VIRTUAL_HEIGHT } from './core/Constants.js';
@@ -21,6 +22,11 @@ import PauseScene from './scenes/PauseScene.js';
 import SettingsScene from './scenes/SettingsScene.js';
 import CreditsScene from './scenes/CreditsScene.js';
 import DevMenuScene from './scenes/DevMenuScene.js';
+
+// Vercel Web Analytics (vanilla JS — not the React/Next component form). Injects the
+// pageview beacon once at boot; mode tracks the Vite build so dev traffic stays out of
+// production stats.
+inject({ mode: import.meta.env.PROD ? 'production' : 'development' });
 
 // Detected once at boot. Drives the touch control layer (instantiated only in
 // UIScene), the 3-pointer input budget (joystick + two action buttons), and the
