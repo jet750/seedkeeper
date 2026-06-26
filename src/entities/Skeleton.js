@@ -509,6 +509,28 @@ export default class Skeleton extends Phaser.Physics.Arcade.Sprite {
       );
     });
   }
+
+  // --- Region spawning (Sprint 15) ------------------------------------------
+
+  // True while engaged with the player — any non-patrol state. The region system
+  // reads this to keep a chasing skeleton alive across region boundaries until it
+  // loses the player and resumes patrol.
+  isAggro() {
+    return this.state !== STATE.PATROL;
+  }
+
+  // Silently leave the simulation (region despawn): no loot, no death FX. Kills any
+  // running attack/telegraph tween, tears down the level marker, and destroys the
+  // sprite (auto-removed from its physics group).
+  despawn() {
+    this.isDead = true; // stop update() from steering during teardown
+    this.scene.tweens.killTweensOf(this);
+    if (this.levelMarker) {
+      this.levelMarker.destroy();
+      this.levelMarker = null;
+    }
+    this.destroy();
+  }
 }
 
 // Bone-colored 16x16 placeholder, mirroring the slime placeholders. Generated

@@ -678,4 +678,27 @@ export default class Slime extends Phaser.Physics.Arcade.Sprite {
     this.currentChaseSpeed = this.baseChaseSpeed;
     this.currentDamage = this.baseDamage;
   }
+
+  // --- Region spawning (Sprint 15) ------------------------------------------
+
+  // True while engaged with the player — any non-wander state. The region system
+  // reads this to keep a chasing slime alive across region boundaries (it won't be
+  // despawned until it loses the player and drops back to WANDER).
+  isAggro() {
+    return this.state !== STATE.WANDER;
+  }
+
+  // Silently leave the simulation (region despawn): no loot, no death FX. Stops any
+  // running telegraph tween and tears down the level marker, then destroys the
+  // sprite (which auto-removes it from its physics group).
+  despawn() {
+    this.isDead = true; // stop update() from steering during teardown
+    this.scene.tweens.killTweensOf(this);
+    this._telegraphTween = null;
+    if (this.levelMarker) {
+      this.levelMarker.destroy();
+      this.levelMarker = null;
+    }
+    this.destroy();
+  }
 }

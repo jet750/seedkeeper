@@ -47,6 +47,7 @@ import WorldDetail from '../entities/WorldDetail.js';
 import Projectile from '../entities/Projectile.js';
 import DaySystem from '../systems/DaySystem.js';
 import CombatSystem from '../systems/CombatSystem.js';
+import RegionSpawnSystem from '../systems/RegionSpawnSystem.js';
 import ParticleSystem from '../systems/ParticleSystem.js';
 import AudioSystem from '../systems/AudioSystem.js';
 import AchievementSystem from '../systems/AchievementSystem.js';
@@ -65,7 +66,6 @@ const SWAP_TIMEOUT_DIST = 80; // px — walking this far from a seed cancels the
 
 // --- Combat & enemy spawning (Sprint 3) ---
 // (Dark slime tint moved to data-driven per-level tints in Sprint 5.)
-const MAX_DARK_SLIMES = 4;
 const ENEMY_SPAWN_MARGIN = 80; // keep spawns off the world edges
 const SKELETON_PATROL_SPREAD = 220; // px between a skeleton's patrol waypoints
 const DEATH_DROP_SCATTER = 40; // spread of seeds dropped on player death
@@ -369,6 +369,12 @@ export default class GameScene extends Phaser.Scene {
       null,
       this
     );
+
+    // --- Region-based spawning (Sprint 15) — fills cells around the player on the
+    // fly (and despawns them as the player leaves), replacing the old bulk garden-
+    // ring population. Needs both enemy groups; its first update() seeds the area
+    // around the player's start.
+    this.regionSpawn = new RegionSpawnSystem(this);
 
     // --- Combat systems ---
     this.combatSystem = new CombatSystem(this);
@@ -1247,24 +1253,10 @@ export default class GameScene extends Phaser.Scene {
     // Reuse pool for dark-slime split children (Sprint 4) — mirrors the
     // projectile pool so on-death splits never churn allocations.
     this.splitSlimePool = [];
-
-    // Green slimes ring the homestead close in (Sprint 13) so a new player meets a
-    // few weak (Lv1-2) slimes right at the meadow edge instead of an empty near map.
-    // Count is data-driven (Sprint 12: scaled up for the massive world) and matches
-    // getTargetGreenSlimeCount() so the respawn loop tops back up to the same target.
-    const initialGreens = this.gameData.enemies.scaling.greenSlimeBaseCount || 5;
-    for (let i = 0; i < initialGreens; i++) {
-      const pos = this.randomGreenSlimePosition();
-      this.spawnSlime('green_slime', pos.x, pos.y);
-    }
-
-    // New Game+ seeds the forest with extra green slimes from day 1 so the run
-    // is visibly denser even before day-based scaling kicks in.
-    if (this.newGamePlus) {
-      const mult = this.gameData.newGamePlus.enemyDensityMult || 1;
-      const extra = Math.round(initialGreens * (mult - 1));
-      for (let i = 0; i < extra; i++) this.spawnSlime('green_slime');
-    }
+    // Sprint 15: the world is no longer bulk-populated here. RegionSpawnSystem
+    // fills the cells around the player (on its first update and as they wander),
+    // so the deep map feels alive without simulating it all. The group + split
+    // pool still need to exist before any slime spawns, so they're set up here.
   }
 
   // Spawn a single slime, optionally at a given position (random forest spot
@@ -1461,6 +1453,49 @@ export default class GameScene extends Phaser.Scene {
       return !!(tile && tile.index !== -1);
     }
     return this.worldZoneSystem.isNearRiver(x, y);
+  }
+
+  // --- Region spawning hooks (Sprint 15) ------------------------------------
+
+  // Spawn one enemy of `type` at (x, y) for the region system. Routes to the
+  // existing per-type spawners so the distance-based level gradient and group/
+  // overlap wiring stay identical; returns the enemy so the caller can tag it
+  // region-managed.
+  spawnRegionEnemy(type, x, y) {
+    if (type === 'skeleton') return this.spawnSkeleton(x, y);
+    return this.spawnSlime(type, x, y);
+  }
+
+  // Silently remove an enemy from the world (region despawn): no loot, no death FX
+  // — it just leaves the simulation. Splice from the active array first so the
+  // update loop won't touch it, then let the entity tear down its marker + tweens.
+  despawnEnemy(enemy) {
+    if (!enemy) return;
+    const idx = this.enemies.indexOf(enemy);
+    if (idx > -1) this.enemies.splice(idx, 1);
+    if (typeof enemy.despawn === 'function') enemy.despawn();
+    else enemy.destroy();
+  }
+
+  // True when (x, y) is within `px` of a road/path tile — used to thin spawns near
+  // roads (Sprint 15). Samples the Tiled path layers (main + spur + bridges) at the
+  // point and on a small ring. Roaming/chasing are unaffected — this only weights
+  // spawn frequency. No path layers (procedural world) → always false (no-op).
+  isNearRoad(x, y, px) {
+    if (!this.tiledLayers) return false;
+    const layers = [];
+    if (this.tiledLayers.paths_main) layers.push(this.tiledLayers.paths_main);
+    if (this.tiledLayers.paths_spur) layers.push(this.tiledLayers.paths_spur);
+    if (this.tiledLayers.bridges) layers.push(this.tiledLayers.bridges);
+    if (!layers.length) return false;
+    const offsets = [[0, 0], [px, 0], [-px, 0], [0, px], [0, -px]];
+    for (const [ox, oy] of offsets) {
+      for (const layer of layers) {
+        const t = layer.getTileAtWorldXY(x + ox, y + oy);
+        if (t && t.index !== -1) return true;
+      }
+    }
+    return false;
   }
 
   // --- Zone boundary (Sprint 7) ---------------------------------------------
@@ -3029,29 +3064,15 @@ export default class GameScene extends Phaser.Scene {
     }
   }
 
-  // Spawn cadence only (Sprint 5): day gates which enemy TYPES are present and
-  // tops them up to a fixed baseline population. Per-enemy difficulty is driven
-  // solely by level (see computeEnemyLevel, which folds in a day bump) — there is
-  // no day-based stat or count ramp, so only one scaling system is active.
+  // Day rollover for enemies (Sprint 15): region spawning replaced the old global
+  // per-day top-up, so this now just refreshes the region population — despawning
+  // the current non-aggro managed enemies and clearing cell tracking so the next
+  // update repopulates around the player with the new day's eligibility (darks day
+  // 3+, skeletons day 5+) and levels (the day bump in computeEnemyLevel). The churn
+  // is off-screen (rollover runs during the sleep fade / death respawn). dayNumber
+  // is unused now but kept so the existing call sites don't change.
   handleEnemyScaling(dayNumber) {
-    const scaling = this.gameData.enemies.scaling;
-    // New Game+ scales the baseline population (and split cap) proportionally.
-    const mult = this.newGamePlus ? this.gameData.newGamePlus.enemyDensityMult || 1 : 1;
-
-    if (dayNumber >= scaling.startDay_darkSlime) {
-      const target = Math.ceil((scaling.darkSlimeBaseline || MAX_DARK_SLIMES) * mult);
-      const have = this.enemies.filter((e) => e.slimeType === 'dark_slime').length;
-      for (let i = 0; i < target - have; i++) this.spawnSlime('dark_slime');
-    }
-
-    if (dayNumber >= scaling.startDay_skeleton) {
-      // Sprint 12: top skeletons up to a small data-driven baseline (was a single
-      // skeleton across the whole massive deep-forest band — far too sparse). Still
-      // the heaviest enemy, so the baseline stays modest for mobile.
-      const target = Math.ceil((scaling.skeletonBaseline || 1) * mult);
-      const have = this.enemies.filter((e) => e instanceof Skeleton).length;
-      for (let i = 0; i < target - have; i++) this.spawnSkeleton();
-    }
+    if (this.regionSpawn) this.regionSpawn.refreshForNewDay();
   }
 
   // --- Enemy level + player-power read (Sprint 5) ----------------------------
@@ -3297,30 +3318,9 @@ export default class GameScene extends Phaser.Scene {
       // Plain green slimes + light split-child deaths get the small splat.
       this.particleSystem.slimeSplat(position.x, position.y, ENEMY_DEATH_COLORS[type] || '#8AB87E');
     }
-    this.scheduleGreenSlimeRespawn();
-  }
-
-  // Keep the forest populated. Green slimes only spawn once at world setup, so
-  // without this they thin out and never return as the player clears them. After
-  // any enemy dies, top green slimes back up to the day-scaled target after the
-  // per-enemy respawn cooldown (Sprint 4: raised from 30s to 3 in-game minutes so
-  // a cleared area stays clear long enough to matter). Dark slimes and skeletons
-  // have their own day-based scaling.
-  scheduleGreenSlimeRespawn() {
-    const respawnMs = this.gameData.enemies.green_slime.respawnCooldownMs;
-    this.time.delayedCall(respawnMs, () => {
-      if (!this.enemies) return;
-      const greens = this.enemies.filter((e) => e.slimeType === 'green_slime').length;
-      if (greens < this.getTargetGreenSlimeCount()) this.spawnSlime('green_slime');
-    });
-  }
-
-  // Base green-slime count plus a slow per-day ramp, capped, so deeper runs stay
-  // dense without overwhelming early days.
-  // Fixed baseline green population (Sprint 5): difficulty comes from per-enemy
-  // level, not from spawning more green slimes as days pass.
-  getTargetGreenSlimeCount() {
-    return this.gameData.enemies.scaling.greenSlimeBaseCount;
+    // Sprint 15: no global green-slime respawn loop — RegionSpawnSystem maintains
+    // population per region (a cleared cell refills when the player leaves and
+    // returns, and the whole active area refreshes each new day).
   }
 
   // --- Upgrade economy (Sprint 4) -------------------------------------------
@@ -3909,6 +3909,10 @@ export default class GameScene extends Phaser.Scene {
     } else {
       this.enemies.forEach((e) => e.update(dt, this.player));
     }
+    // Region spawning (Sprint 15) — populate cells around the player, despawn the
+    // ones they've left. Runs after the enemy update so any despawn this frame
+    // can't race the loop above (which iterated a snapshot of this.enemies).
+    if (this.regionSpawn) this.regionSpawn.update(dt);
     this.daySystem.update(delta);
     this.combatSystem.update(delta); // combo lapse timer (Sprint 13)
     this.updateSeeds();

@@ -159,7 +159,7 @@
       "dangerColors": { "safe": "#6FCF6F", "risky": "#F2C94C", "dangerous": "#EB5757" }
     },
     "scaling": {
-      "_densityNote": "Sprint 12: counts + split cap scaled up for the 6400x6400 massive world (~4x the old 3200² area) — the radial bands were so sparse the world read as empty. SPAWN_BAND distance logic is unchanged (greens ring the garden, danger scales out); only populations and the cap grew. maxActiveSlimes is raised but bounded for mobile (split children come from an object pool and AI runs on an every-Nth-frame throttle). All tunable.",
+      "_densityNote": "Sprint 12: counts + split cap scaled up for the 6400x6400 massive world (~4x the old 3200² area) — the radial bands were so sparse the world read as empty. SPAWN_BAND distance logic is unchanged (greens ring the garden, danger scales out); only populations and the cap grew. maxActiveSlimes is raised but bounded for mobile (split children come from an object pool and AI runs on an every-Nth-frame throttle). All tunable. Sprint 15: the world is no longer bulk-populated around the garden — region spawning (regionSpawn below) fills cells around the PLAYER. The day-gate fields (startDay_*) and split cap (maxActiveSlimes) still apply; the baseline COUNT fields are superseded by regionSpawn density and are now unused.",
       "startDay_darkSlime": 3,
       "startDay_skeleton": 5,
       "darkSlimeBaseline": 8,
@@ -167,6 +167,23 @@
       "greenSlimeBaseCount": 16,
       "greenSlimeMaxCount": 24,
       "maxActiveSlimes": 40
+    },
+    "regionSpawn": {
+      "_note": "Sprint 15 region-based spawning. APPROACH = grid of cells (not a rolling radius): the 6400² world is diced into cellSize² cells; only cells within activeRadiusCells of the player's cell are populated, and enemies whose cell drifts past despawnRadiusCells from the player are returned/destroyed (hysteresis: despawn radius > active radius, so cells don't flicker and despawn happens off-screen). The camera shows only ~400x225 world px (zoom 4), so cells are kept small and dense near the player rather than spread thin across the whole map. Each active cell targets baseCellDensity enemies; candidate positions near a road/path are mostly rejected (road.keepChance) so roads stay quieter but never enemy-free. Type eligibility is gated by distance-from-garden (darks past darkMinDist, skeletons past skeletonMinDist) AND day (darks day startDay_darkSlime+, skeletons day startDay_skeleton+); LEVEL still comes from the distance-from-garden gradient (computeEnemyLevel), so the radial SPAWN_BAND leveling is preserved — only WHERE/WHEN spawning happens changed. maxActiveEnemies caps the total across all loaded cells (counts split children too). Aggroed enemies are NEVER despawned mid-chase (cross-boundary chase persistence). ALL values are playtest knobs — density, cap and cellSize are the primary feel/perf dials.",
+      "cellSize": 560,
+      "activeRadiusCells": 1,
+      "despawnRadiusCells": 2,
+      "maxActiveEnemies": 50,
+      "baseCellDensity": 5,
+      "darkMinDist": 1400,
+      "skeletonMinDist": 2200,
+      "typeWeights": { "green_slime": 6, "dark_slime": 4, "skeleton": 2 },
+      "sweepIntervalMs": 1000,
+      "road": {
+        "_roadNote": "Spawn-frequency only — chasing/roaming across roads is unaffected (task 3). A candidate spawn within proximityPx of a paths_main/paths_spur/bridges tile is kept only with keepChance, otherwise re-sampled, so roads read quieter and the deep brush denser.",
+        "proximityPx": 90,
+        "keepChance": 0.4
+      }
     }
   },
   "daySystem": {
