@@ -27,6 +27,15 @@ const COLOR_WARNING = '#ffaa00';
 const COLOR_URGENT = '#ff3333';
 const HP_BAR_MAX_WIDTH = 240;
 const HP_BAR_HEIGHT = 22;
+
+// HP bar fill colour by current-health fraction (Task 3). Green when healthy,
+// yellow when wounded, red when critical. Thresholds are inclusive lower bounds:
+// ratio >= HIGH → green, >= LOW (but < HIGH) → yellow, else red. Tunable.
+const HP_THRESHOLD_HIGH = 0.66; // ≥66% health → green
+const HP_THRESHOLD_LOW = 0.33; // 33–66% → yellow; <33% → red
+const HP_COLOR_HIGH = 0x6abe30; // green
+const HP_COLOR_MID = 0xeac34f; // yellow/gold
+const HP_COLOR_LOW = 0xff3333; // red (the bar's original colour)
 const UI_SLOT_FRAME = 4; // frame index into ui_slot_frame.png (3x3 of 48px slots)
 
 // Weather id → frame in the small Sprout Lands weather sheet (32px, top row is a
@@ -1313,6 +1322,12 @@ export default class UIScene extends Phaser.Scene {
   refreshHP() {
     const ratio = Phaser.Math.Clamp(this.hp / this.maxHP, 0, 1);
     this.hpFill.width = HP_BAR_MAX_WIDTH * ratio;
+    // Colour the fill by health band: green (healthy) → yellow (wounded) → red.
+    const color =
+      ratio >= HP_THRESHOLD_HIGH ? HP_COLOR_HIGH
+      : ratio >= HP_THRESHOLD_LOW ? HP_COLOR_MID
+      : HP_COLOR_LOW;
+    this.hpFill.setFillStyle(color);
     this.hpText.setText(`HP: ${Math.round(this.hp)} / ${this.maxHP}`);
   }
 

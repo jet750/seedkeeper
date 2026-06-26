@@ -50,6 +50,15 @@ export const GARDEN_BOTTOM = GARDEN_Y + GARDEN_HEIGHT;
 // and are NOT affected by this. Higher = closer in.
 export const CAMERA_ZOOM = 4.0;
 
+// Camera-follow smoothing (Sprint pre-control). Lerp applied on BOTH axes in
+// startFollow so the camera eases toward the player instead of hard-locking. Paired
+// with per-camera roundPixels=false: at CAMERA_ZOOM=4 a hard integer-snapped follow
+// made diagonal movement shimmer (world tiles crossed their pixel-rounding threshold
+// on different frames as both axes advanced sub-pixel). Fractional scroll + this lerp
+// removes the shimmer; pixelArt:true still gives crisp NEAREST sprite filtering.
+// Higher = snappier/tighter follow, lower = floatier. Tunable in playtest.
+export const CAMERA_LERP = 0.1;
+
 // Garden prop render scale. The well, workshop/work_station, signpost, sleep bed,
 // market stall, field-notes book and the garden beds were all authored at the old
 // 2x sprite scale, so they now dwarf the 1x sprite. This multiplier scales their

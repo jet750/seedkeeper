@@ -30,6 +30,7 @@ import {
   USE_TILED_WORLD,
   TILED_WORLD_KEY,
   CAMERA_ZOOM,
+  CAMERA_LERP,
   GARDEN_PROP_SCALE,
   GARDEN_LAYOUT_SCALE,
   GARDEN_CENTER_X,
@@ -97,6 +98,29 @@ const TREE_TRUNK_DEPTH = -2;  // above all backdrop layers (<= -12), below all g
 // vertically — some trunk tiles sit directly above another tree, which a geometric
 // test would misclassify as canopy.
 const TREE_TRUNK_LIDS = [12, 13, 14, 69, 70, 71];
+
+// Collision split among the trunk LIDs above. The MASSIVE tree's bottom row
+// (69,70,71) is pure trunk/roots at ground level — NO canopy bakes into those tiles —
+// so full-tile collision reads correctly (the "confirmed perfect" reference). The
+// SMALL (12) and MEDIUM (13,14) trees, by contrast, bake LEAVES into the TOP HALF of
+// their single ground-contact tile and the trunk into the BOTTOM HALF (verified pixel-
+// by-pixel against trees_stumps_bushes.png: leaves y0–5, trunk y6–13). Making that
+// whole tile solid is the "over-collide" bug — the player bonks the lower canopy
+// (an invisible wall in front of leaves) and the gaps between trees seal up. So the
+// massive tree keeps tilemap collision while small/medium trees get a custom body
+// covering only the bottom-half trunk strip (the leaf band stays walk-through).
+const TREE_TRUNK_LIDS_MASSIVE = [69, 70, 71];
+// Per-LID trunk collision box, in source px relative to the tile's top-left cell
+// corner. {cx,cy} = box CENTRE offset within the 16px cell, {w,h} = box size. cy≈11
+// drops the box into the bottom half so it never overlaps the leaf band (y0–5); w<16
+// leaves squeeze room at the edges (matching the procedural trunk's "narrower than the
+// visual" rule). Medium tiles 13/14 push the box to the trunk side (right of 13, left
+// of 14) so the two halves meet flush across the shared trunk centre.
+const TREE_TRUNK_BODY = {
+  12: { cx: 8, cy: 11, w: 10, h: 10 }, // small — trunk centred in its tile
+  13: { cx: 12, cy: 11, w: 8, h: 10 }, // medium left tile — trunk hugs the right edge
+  14: { cx: 4, cy: 11, w: 8, h: 10 } // medium right tile — trunk hugs the left edge
+};
 
 // Screenshake profiles (Sprint 13) — different impacts feel different. duration
 // in ms, intensity as a fraction of viewport. Selected via shake(profileName).
@@ -197,7 +221,12 @@ const CHEST_Y = GARDEN_TOP + 660; // was 860
 // Market stall (Sprint 3) — opens the marketplace on F-interact. Single config
 // point: move this when the world layout changes; nothing else hardcodes its tile.
 const MARKET_X = 3340;
-const MARKET_Y = GARDEN_TOP + 420; // was 620
+// In-line with the workshop row. The workshop snaps to the authored `work_station`
+// marker (y=3304 in world_v1), so the stall matches that y (GARDEN_TOP+504 == 3304)
+// rather than the legacy CHEST_Y constant — both pass through gardenScaled(), so equal
+// authored y == equal rendered row. MARKET_X stays left of the workshop's marker x
+// (3464) so the two read as one aligned row instead of overlapping. (was +420, +620)
+const MARKET_Y = GARDEN_TOP + 504;
 // obj_chest.png is a 48x48 sheet: row 0 is a closed→open progression.
 const CHEST_CLOSED_FRAME = 0;
 const CHEST_OPEN_FRAME = 4;
@@ -328,7 +357,15 @@ export default class GameScene extends Phaser.Scene {
 
     // --- Camera ---
     this.cameras.main.setBounds(0, 0, WORLD_WIDTH, WORLD_HEIGHT);
-    this.cameras.main.startFollow(this.player, true, 0.1, 0.1);
+    // roundPixels=false (was true): at CAMERA_ZOOM=4 a hard integer-snapped follow
+    // shimmered on diagonal movement — the lerp produces a fractional target scroll
+    // each frame and Phaser's per-object pixel rounding (driven solely by
+    // camera.roundPixels in 3.90's MultiPipeline) snapped world tiles to the screen
+    // grid, with both diagonal axes crossing their rounding threshold on different
+    // frames. Letting the camera scroll be fractional removes the shimmer; pixelArt
+    // (NEAREST filtering) still keeps sprites crisp. Lerp stays at CAMERA_LERP.
+    this.cameras.main.startFollow(this.player, false, CAMERA_LERP, CAMERA_LERP);
+    this.cameras.main.setRoundPixels(false);
     // Single uniform zoom (Sprint 11). The sprite scale was halved (2 -> 1) for the
     // massive world, so the camera zooms further in (CAMERA_ZOOM, was a hard-coded
     // 2.5) to bring the sprite back to a comfortable on-screen size. UI lives on the
@@ -774,6 +811,10 @@ export default class GameScene extends Phaser.Scene {
     if (!treeTs) return; // tree tileset absent — leave the layer untouched (no walls)
     const trunkIndices = TREE_TRUNK_LIDS.map((lid) => treeTs.firstgid + lid);
     const trunkSet = new Set(trunkIndices);
+    // Only the MASSIVE tree's pure-trunk bottom row keeps whole-tile (tilemap)
+    // collision. Small/medium stumps collide via narrow bottom-half bodies built
+    // below, so the leaf band baked into their ground tile stays walk-through.
+    const massiveIndices = TREE_TRUNK_LIDS_MASSIVE.map((lid) => treeTs.firstgid + lid);
 
     let trunk = null;
     try {
@@ -793,14 +834,17 @@ export default class GameScene extends Phaser.Scene {
         trunk.putTileAt(t.index, t.x, t.y);
         canopy.removeTileAt(t.x, t.y); // canopy keeps only walk-through tiles
       }
-      trunk.setCollisionByExclusion([-1]); // every tile in this band is a stump
+      // Massive bottom row only — small/medium get custom bodies (built next).
+      trunk.setCollision(massiveIndices);
       this.tiledLayers.props_trees_trunk = trunk;
       this.tiledSolidLayers.push(trunk);
+      this.buildSmallTreeTrunkBodies(trunk, treeTs);
     } else {
-      // No depth-split possible: make ONLY the stump tiles solid in place so the
-      // canopy is still walk-through (the stump just renders at canopy depth).
-      canopy.setCollision(trunkIndices);
+      // No depth-split possible: make ONLY the massive stumps solid in place (canopy
+      // stays walk-through) and still give small/medium trees their narrow bodies.
+      canopy.setCollision(massiveIndices);
       this.tiledSolidLayers.push(canopy);
+      this.buildSmallTreeTrunkBodies(canopy, treeTs);
     }
 
     // Dev sanity check: the canopy band must have ZERO colliding tiles in the
@@ -815,6 +859,31 @@ export default class GameScene extends Phaser.Scene {
         (trunk ? ' (want 0 — canopy walk-through)' : ' (stumps remain in canopy layer)')
       );
     }
+  }
+
+  // Build the narrow trunk colliders for the SMALL (lid 12) and MEDIUM (lid 13,14)
+  // trees. Their single ground-contact tile bakes leaves into its top half and the
+  // trunk into the bottom half, so a whole-tile collider over-collides on the canopy.
+  // Instead, drop one invisible static body per stump tile, sized + offset per LID
+  // (see TREE_TRUNK_BODY) to hug the bottom-half trunk strip and leave the leaf band
+  // walk-through — mirroring the procedural path's "physics trunk narrower than the
+  // visual" rule and matching the massive tree's ground-only collision. `layer` is
+  // whichever layer holds the stump tiles (the trunk band, or the canopy in the
+  // degraded path); tileToWorldXY resolves the same world cell on either.
+  buildSmallTreeTrunkBodies(layer, treeTs) {
+    // Fresh group each scene create (called exactly once per splitTreeDepth).
+    this.treeTrunkColliders = this.physics.add.staticGroup();
+    layer.forEachTile((t) => {
+      if (!t || t.index === -1) return;
+      const body = TREE_TRUNK_BODY[t.index - treeTs.firstgid];
+      if (!body) return; // not a small/medium stump (massive uses tilemap collision)
+      const p = layer.tileToWorldXY(t.x, t.y); // cell top-left in world px
+      // Invisible zone — collision only, never rendered. Origin 0.5 centres the
+      // static body on (cx,cy) within the cell.
+      const zone = this.add.zone(p.x + body.cx, p.y + body.cy, body.w, body.h);
+      this.physics.add.existing(zone, true);
+      this.treeTrunkColliders.add(zone);
+    });
   }
 
   // Sprint 13 world-render fixes. Two prop clean-ups on the baked Tiled world:
@@ -879,6 +948,13 @@ export default class GameScene extends Phaser.Scene {
       this.physics.add.collider(this.player, layer);
       this.physics.add.collider(this.slimeGroup, layer);
       this.physics.add.collider(this.skeletonGroup, layer);
+    }
+    // Small/medium tree trunks collide via their own static bodies (narrow,
+    // bottom-half) rather than the tilemap layer — wire them the same way.
+    if (this.treeTrunkColliders) {
+      this.physics.add.collider(this.player, this.treeTrunkColliders);
+      this.physics.add.collider(this.slimeGroup, this.treeTrunkColliders);
+      this.physics.add.collider(this.skeletonGroup, this.treeTrunkColliders);
     }
   }
 
