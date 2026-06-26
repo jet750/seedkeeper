@@ -1599,25 +1599,6 @@ export default class GameScene extends Phaser.Scene {
     return this.getSpawnPositionInBand(minR, maxR); // any valid band point
   }
 
-  // Nudge a point off the water so a seed never strands mid-river. Returns the
-  // original point when already clear, else the nearest clear point found by
-  // searching outward rings (favouring vertical moves toward the seed's biome).
-  clearOfRiver(x, y) {
-    if (!this.worldZoneSystem.isNearRiver(x, y, 16)) return { x, y };
-    const dirs = [
-      [0, -1], [0, 1], [-1, 0], [1, 0],
-      [-0.7, -0.7], [0.7, -0.7], [-0.7, 0.7], [0.7, 0.7]
-    ];
-    for (let radius = 40; radius <= 200; radius += 40) {
-      for (const [dx, dy] of dirs) {
-        const nx = Phaser.Math.Clamp(x + dx * radius, 40, WORLD_WIDTH - 40);
-        const ny = Phaser.Math.Clamp(y + dy * radius, GARDEN_ZONE_HEIGHT + 40, WORLD_HEIGHT - 40);
-        if (!this.worldZoneSystem.isNearRiver(nx, ny, 16)) return { x: nx, y: ny };
-      }
-    }
-    return { x, y };
-  }
-
   updateSeeds() {
     let candidate = null;
     let candidateDist = Infinity;
