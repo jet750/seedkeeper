@@ -19,6 +19,11 @@ const IDLE_BOB_MS = 600;
 const STEP_INTERVAL_BASE_MS = 320; // footstep cadence at base speed
 const STEP_VOLUME = 0.3;
 
+// Walk-cycle playback speed (Sprint 13). Lowered from 8 — playtest showed the
+// 4-frame walk cycling faster than the movement reads, so the sprite looked like
+// it was "fighting itself." Tunable: raise for a brisker step, lower for slower.
+const WALK_FRAME_RATE = 6;
+
 // Drawn at 1x (Sprint 13: halved from 2x — the doubled sprite read oversized
 // against the hand-built world's trees and props). Visual scale only; the physics
 // body is configured independently below. The idle squash + stopIdle reset use
@@ -273,7 +278,7 @@ export default class Player extends Phaser.Physics.Arcade.Sprite {
       this.anims.create({
         key,
         frames: this.anims.generateFrameNumbers('player_sheet', { start, end }),
-        frameRate: start === end ? 1 : 8,
+        frameRate: start === end ? 1 : WALK_FRAME_RATE,
         repeat: start === end ? 0 : -1
       });
     });

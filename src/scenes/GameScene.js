@@ -75,6 +75,23 @@ const FENCE_SCALE = 1.6; // Sprout Lands fence/gate sprite scale (16px source) �
 const RESPAWN_FADE_MS = 500;
 const RESPAWN_DELAY_MS = 1500;
 
+// --- Tree depth (Sprint 13) -----------------------------------------------
+// The Tiled world bakes every tree into one props_trees tile layer. To get the
+// 3D-in-2D feel (player passes BEHIND a tree's canopy but STOPS at its trunk,
+// and stands IN FRONT of the trunk base when south of the tree) the layer is
+// split into two depth bands at load — see splitTreeDepth().
+//   * Canopy band — renders ABOVE the player; never collides (walk-under).
+//   * Trunk band  — renders BELOW every gameplay entity; collides (solid base).
+const TREE_CANOPY_DEPTH = 12; // above player (10) + attack arc (11), below labels (20)
+const TREE_TRUNK_DEPTH = -2;  // above all backdrop layers (<= -12), below all gameplay (>= 2)
+// 'trees shrubs' tileset-local ids of the bottom (trunk/base) row of each tree
+// variant: small/narrow tree bottom row (12,13,14) and big tree bottom row
+// (69,70,71). Every other tree tile is canopy. Classified by tile id (not a
+// geometric "is the tile below empty?" test) because trees are placed adjacently
+// and stack vertically — some trunk tiles sit directly above another tree, which
+// a geometric test would misclassify as canopy.
+const TREE_TRUNK_LIDS = [12, 13, 14, 69, 70, 71];
+
 // Screenshake profiles (Sprint 13) — different impacts feel different. duration
 // in ms, intensity as a fraction of viewport. Selected via shake(profileName).
 const SHAKE_PROFILES = {
@@ -650,17 +667,11 @@ export default class GameScene extends Phaser.Scene {
     if (!tilesets.length) return false; // nothing to draw — use the procedural world
 
     // Back-to-front backdrop. Most layers are < 0 so gameplay objects sit on top.
-    // props_trees is the EXCEPTION (Sprint 10 tree depth): it renders ABOVE the
-    // player/enemies (TREE_CANOPY_DEPTH) so the player passes BEHIND tree canopies
-    // instead of always drawing flat in front of them. Caveat — the trees are a
-    // single BAKED tile layer (20k+ tiles), so a true per-tile y-sort (player in
-    // front of a tree's base but behind its canopy) would require extracting every
-    // tree to a sortable sprite, which is out of scope. This whole-layer lift is the
-    // documented approximation: the player reads as behind trees (incl. the base
-    // when standing directly south of a trunk — collision keeps that rare). The
-    // canopy depth sits below floating labels (seed/bundle tags 20, indicators 30)
-    // so those stay readable. Flagged for visual review.
-    const TREE_CANOPY_DEPTH = 12; // above player (10) + attack arc (11), below labels (20)
+    // props_trees is created at TREE_CANOPY_DEPTH (above the player) — but it is
+    // immediately split by splitTreeDepth() (Sprint 13) into the canopy band that
+    // stays at this depth and a trunk band that drops below the player and gains
+    // collision. The canopy depth sits below floating labels (seed/bundle tags 20,
+    // indicators 30) so those stay readable.
     const LAYER_DEPTH = {
       ground: -20, water: -19, paths_main: -18, paths_spur: -17, bridges: -16,
       props_ground: -15, fences: -14, structures: -13, props_water: -12,
@@ -674,10 +685,18 @@ export default class GameScene extends Phaser.Scene {
       this.tiledLayers[ld.name] = layer;
     }
 
-    // Solid layers: water, trees, fences, structures and water props block movement.
-    // Player/enemy colliders are wired later (wireTiledWorldCollision) once the
-    // player and enemy groups exist.
-    const SOLID = ['water', 'props_trees', 'fences', 'structures', 'props_water'];
+    // Sprint 13: split the baked tree layer into a canopy band (stays above the
+    // player) and a trunk band (props_trees_trunk — below the player, collides).
+    // Must run before the SOLID wiring so the trunk layer is the one made solid.
+    // On failure it returns false and we keep the whole tree layer solid so the
+    // player can never walk straight through trees.
+    const treesSplit = this.splitTreeDepth(map, tilesets);
+
+    // Solid layers: water, the tree TRUNKS, fences, structures and water props
+    // block movement. The tree CANOPY (props_trees) is intentionally walk-under
+    // and is NOT solid. Player/enemy colliders are wired later
+    // (wireTiledWorldCollision) once the player and enemy groups exist.
+    const SOLID = ['water', treesSplit ? 'props_trees_trunk' : 'props_trees', 'fences', 'structures', 'props_water'];
     this.tiledSolidLayers = [];
     for (const name of SOLID) {
       const layer = this.tiledLayers[name];
@@ -699,6 +718,46 @@ export default class GameScene extends Phaser.Scene {
     // World + camera bounds to the map's true pixel size (6400x6400).
     this.physics.world.setBounds(0, 0, map.widthInPixels, map.heightInPixels);
     this.cameras.main.setBounds(0, 0, map.widthInPixels, map.heightInPixels);
+    return true;
+  }
+
+  // Sprint 13 — Tree depth (trunk solid + below player; canopy above player).
+  // The Tiled world bakes every tree into one props_trees tile layer. The wrong
+  // prior fix lifted that WHOLE layer above the player, so the player also passed
+  // behind trunk bases. The correct behavior (player passes BEHIND a canopy but
+  // STOPS at the trunk, and stands IN FRONT of the trunk base when south of the
+  // tree) needs the tree split into two depth bands. We move the bottom (trunk)
+  // row of every tree into a new low-depth, collidable layer and leave the rest as
+  // the canopy at TREE_CANOPY_DEPTH. Trunk vs canopy is decided by tileset-local
+  // tile id (TREE_TRUNK_LIDS) — robust even where trees stack vertically and a
+  // trunk tile sits directly above another tree. Approach (a) from the sprint
+  // brief (split the baked layer at load); no per-sprite extraction needed.
+  // Returns true when the trunk band was created (caller makes it the solid layer);
+  // false when the split could not run (caller keeps the whole tree layer solid).
+  splitTreeDepth(map, tilesets) {
+    const canopy = this.tiledLayers && this.tiledLayers.props_trees;
+    if (!canopy) return false; // no tree layer (e.g. procedural fallback) — nothing to do
+    // Resolve the trees tileset firstgid so local ids -> global tile indices.
+    const treeTs = (map.tilesets || []).find((t) => t.name === 'trees shrubs');
+    if (!treeTs) return false; // tree tileset absent — leave the layer as one solid band
+    const trunkIndices = new Set(TREE_TRUNK_LIDS.map((lid) => treeTs.firstgid + lid));
+
+    const trunk = map.createBlankLayer('props_trees_trunk', tilesets, 0, 0);
+    if (!trunk) return false; // can't create the band — keep the canopy layer solid
+    trunk.setDepth(TREE_TRUNK_DEPTH);
+
+    // Collect trunk tiles first, then move them, so we never mutate the layer mid-scan.
+    const trunkTiles = [];
+    canopy.forEachTile((t) => {
+      if (t && t.index !== -1 && trunkIndices.has(t.index)) trunkTiles.push(t);
+    });
+    for (const t of trunkTiles) {
+      trunk.putTileAt(t.index, t.x, t.y);
+      canopy.removeTileAt(t.x, t.y);
+    }
+    // The trunk band collides; the canopy band stays walk-under (kept out of SOLID).
+    trunk.setCollisionByExclusion([-1]);
+    this.tiledLayers.props_trees_trunk = trunk;
     return true;
   }
 
