@@ -64,8 +64,13 @@ export default class Slime extends Phaser.Physics.Arcade.Sprite {
   // pass nothing and behave as before.
   constructor(scene, x, y, slimeType, gameData, opts = {}) {
     const hasSheet = scene.textures.exists('slime_sheet');
+    // Sprint 14b: split children keep their dark-slime STATS but wear the STANDARD
+    // slime skin. Green and dark slimes share slime_sheet and differ only by the
+    // per-level body tint (levelTint), so skinType decides which type's tint +
+    // placeholder this slime renders with — independent of its stat type.
+    const skinType = opts.skinType || slimeType;
     const placeholderKey =
-      slimeType === 'dark_slime' ? 'px_dark_slime' : 'px_green_slime';
+      skinType === 'dark_slime' ? 'px_dark_slime' : 'px_green_slime';
     super(scene, x, y, hasSheet ? 'slime_sheet' : placeholderKey);
 
     this.hasSheet = hasSheet;
@@ -74,6 +79,7 @@ export default class Slime extends Phaser.Physics.Arcade.Sprite {
     scene.physics.add.existing(this);
 
     this.slimeType = slimeType;
+    this.skinType = skinType;
 
     // Split-child flags + factors (Sprint 4): children don't split again, drop no
     // loot (economy untouched), recycle through GameScene's split pool, and keep
@@ -100,6 +106,16 @@ export default class Slime extends Phaser.Physics.Arcade.Sprite {
     this._recoverTimer = 0;
     this._telegraphTween = null;
     this._baseTint = null;
+
+    // Anti-stand-and-mash (Sprint 14b). _attackImmuneUntil: while a lunge is
+    // committed the slime can't be interrupted or knocked out of it, so spam can't
+    // cancel-lock it. The snap fields track stationary-spam: when the player stands
+    // still and keeps swinging in range, the NEXT lunge becomes a faster red snap.
+    this._attackImmuneUntil = 0;
+    this._spamSeenAttackCount = 0;
+    this._stationarySpamHits = 0;
+    this._snapNextLunge = false;
+    this._lungeIsSnap = false;
 
     // Level marker (Sprint 5): pips above the slime, colored by danger vs player.
     this.levelMarker = createLevelMarker(scene);
@@ -162,7 +178,10 @@ export default class Slime extends Phaser.Physics.Arcade.Sprite {
 
     // levelTint[0] is 0xffffff (no shift), so lvl-1 reads as the base sprite;
     // for dark slimes the array carries the purple identity, darker per level.
-    this._baseTint = stats.levelTint ? parseInt(stats.levelTint[i], 16) : null;
+    // Sprint 14b: the tint comes from skinType, not slimeType — a split child has
+    // dark-slime stats but renders with the green-slime tint so it looks standard.
+    const skinStats = this.scene.gameData.enemies[this.skinType] || stats;
+    this._baseTint = skinStats.levelTint ? parseInt(skinStats.levelTint[i], 16) : null;
     this.restoreBaseTint();
     this.refreshDangerColor();
   }
@@ -238,6 +257,9 @@ export default class Slime extends Phaser.Physics.Arcade.Sprite {
       // Frozen mid-tell — the pulse tween is doing the talking.
       this.setVelocity(0, 0);
     } else if (this.state === STATE.CHASE) {
+      // Read stationary spam (Sprint 14b) so a standing, mashing player provokes a
+      // faster snap-lunge instead of a predictable walk-into-range lunge.
+      this.detectStationarySpam(player, dist);
       // Commit to a lunge when in range and off cooldown; otherwise close in.
       if (this.lunge && dist <= this.lunge.attackRange && this.scene.time.now >= this._attackCdUntil) {
         this.beginLunge();
@@ -259,8 +281,12 @@ export default class Slime extends Phaser.Physics.Arcade.Sprite {
 
   // Begin an attack: a high-level slime chains multiple lunges (Sprint 5), each
   // with its own readable wind-up. Tracks how many strikes this attack will run.
+  // Latches whether this whole attack is a punishing snap-lunge (Sprint 14b),
+  // provoked by stationary spam, then clears the one-shot flag.
   beginLunge() {
     this._attackStrikesDone = 0;
+    this._lungeIsSnap = this._snapNextLunge;
+    this._snapNextLunge = false;
     this.startWindUp();
   }
 
@@ -282,11 +308,16 @@ export default class Slime extends Phaser.Physics.Arcade.Sprite {
     this.state = STATE.WIND_UP;
     this.setVelocity(0, 0);
     if (this._telegraphTween) this._telegraphTween.stop();
-    this.setTint(0xffe08a); // warm warning flash — same grammar across enemies
+    // Commit-immunity opens here (Sprint 14b): hits land for damage but can't
+    // interrupt or knock the slime out of the lunge for attackImmunityMs.
+    this._attackImmuneUntil = this.scene.time.now + (this.lunge.attackImmunityMs || 0);
+    // Snap-lunge (provoked by stationary spam) telegraphs red and quicker; the
+    // standard commit keeps the warm warning flash — same grammar across enemies.
+    this.setTint(this._lungeIsSnap ? 0xff5a3c : 0xffe08a);
     this._telegraphTween = this.scene.tweens.add({
       targets: this,
       scaleY: this._baseScale * this.lunge.squashScaleY,
-      duration: this.lunge.windUpMs,
+      duration: this.lungeWindUpMs(),
       ease: 'Quad.easeIn',
       onComplete: () => {
         if (this.isDead || this.state !== STATE.WIND_UP) return;
@@ -302,11 +333,56 @@ export default class Slime extends Phaser.Physics.Arcade.Sprite {
     this._telegraphTween = null;
     this.setScale(this._baseScale); // un-squash: the spring releases
     this.restoreBaseTint();
-    this.setVelocity(
-      Math.cos(angle) * this.lunge.lungeSpeed,
-      Math.sin(angle) * this.lunge.lungeSpeed
-    );
+    const speed = this.lungeSpeedVal();
+    this.setVelocity(Math.cos(angle) * speed, Math.sin(angle) * speed);
     this._strikeTimer = this.lunge.lungeDurationMs;
+  }
+
+  // Effective lunge timings: a snap-lunge uses the faster snap windUp/lungeSpeed
+  // (Sprint 14b), otherwise the standard telegraph values. Both come from config.
+  lungeWindUpMs() {
+    const snap = this._lungeIsSnap && this.lunge.snap;
+    return snap ? this.lunge.snap.windUpMs : this.lunge.windUpMs;
+  }
+
+  lungeSpeedVal() {
+    const snap = this._lungeIsSnap && this.lunge.snap;
+    return snap ? this.lunge.snap.lungeSpeed : this.lunge.lungeSpeed;
+  }
+
+  // True while a committed lunge is protected from interruption/knockback.
+  isAttackImmune() {
+    return (
+      (this.state === STATE.WIND_UP || this.state === STATE.STRIKE) &&
+      this.scene.time.now < this._attackImmuneUntil
+    );
+  }
+
+  // Count player swings made while standing still and in range; once enough pile
+  // up, arm a snap-lunge for the next attack so standing and mashing gets punished
+  // instead of being a safe dominant strategy. Any meaningful movement resets the
+  // read. All thresholds are config (lunge.snap).
+  detectStationarySpam(player, dist) {
+    const snap = this.lunge && this.lunge.snap;
+    if (!snap) return;
+    const body = player.body;
+    const speed = body ? Math.hypot(body.velocity.x, body.velocity.y) : 0;
+    const stationary = speed < snap.stationarySpeed;
+    const inRange = dist <= this.lunge.attackRange * snap.rangeMult;
+    const attacks = player.attackCount || 0;
+    const newAttacks = attacks - this._spamSeenAttackCount;
+    this._spamSeenAttackCount = attacks;
+    if (!stationary) {
+      this._stationarySpamHits = 0; // moving breaks the read — reposition rewarded
+      return;
+    }
+    if (newAttacks > 0 && inRange) {
+      this._stationarySpamHits += newAttacks;
+      if (this._stationarySpamHits >= snap.triggerAttacks) {
+        this._snapNextLunge = true;
+        this._stationarySpamHits = 0;
+      }
+    }
   }
 
   enterRecover() {
@@ -318,9 +394,12 @@ export default class Slime extends Phaser.Physics.Arcade.Sprite {
 
   // A landed hit during the wind-up interrupts the coil — the slime can't follow
   // through. A committed leap (STRIKE) still lands and the RECOVER punish window
-  // is preserved; only the pre-commit wind-up is cancellable.
+  // is preserved; only the pre-commit wind-up is cancellable. Sprint 14b: while
+  // the commit-immunity window is open, even the wind-up can't be cancelled, so
+  // spamming attack no longer trivially cancel-locks the lunge.
   interruptAttack() {
     if (this.state !== STATE.WIND_UP) return;
+    if (this.isAttackImmune()) return;
     if (this._telegraphTween) {
       this._telegraphTween.stop();
       this._telegraphTween = null;
@@ -445,7 +524,12 @@ export default class Slime extends Phaser.Physics.Arcade.Sprite {
 
   takeDamage(amount, sourcePosition) {
     if (this.isDead) return;
-    // Getting hit mid-wind-up interrupts the coil (no effect on STRIKE/RECOVER).
+    // A committed lunge is protected (Sprint 14b): the hit still deals damage, but
+    // it neither interrupts the wind-up nor knocks the slime off its leap — so the
+    // lunge lands on a stationary player rather than being mash-cancelled.
+    const committed = this.isAttackImmune();
+    // Getting hit mid-wind-up interrupts the coil (no-op on STRIKE/RECOVER, and
+    // no-op while committed).
     this.interruptAttack();
     this.hp -= amount;
 
@@ -457,10 +541,13 @@ export default class Slime extends Phaser.Physics.Arcade.Sprite {
       else this.clearTint();
     });
 
-    // Knockback away from the hit source.
-    const angle = Phaser.Math.Angle.Between(sourcePosition.x, sourcePosition.y, this.x, this.y);
-    this.setVelocity(Math.cos(angle) * KNOCKBACK_VELOCITY, Math.sin(angle) * KNOCKBACK_VELOCITY);
-    this._knockbackUntil = this.scene.time.now + KNOCKBACK_MS;
+    // Knockback away from the hit source — skipped during a protected commit so the
+    // leap's locked-in velocity rides through.
+    if (!committed) {
+      const angle = Phaser.Math.Angle.Between(sourcePosition.x, sourcePosition.y, this.x, this.y);
+      this.setVelocity(Math.cos(angle) * KNOCKBACK_VELOCITY, Math.sin(angle) * KNOCKBACK_VELOCITY);
+      this._knockbackUntil = this.scene.time.now + KNOCKBACK_MS;
+    }
 
     // Float-up damage number.
     EventBus.emit('ui:floatText', {
@@ -542,6 +629,11 @@ export default class Slime extends Phaser.Physics.Arcade.Sprite {
     this._strikeTimer = 0;
     this._recoverTimer = 0;
     this._attackStrikesDone = 0;
+    this._attackImmuneUntil = 0;
+    this._spamSeenAttackCount = 0;
+    this._stationarySpamHits = 0;
+    this._snapNextLunge = false;
+    this._lungeIsSnap = false;
     if (this._telegraphTween) {
       this._telegraphTween.stop();
       this._telegraphTween = null;
@@ -558,14 +650,14 @@ export default class Slime extends Phaser.Physics.Arcade.Sprite {
     if (this.slimeType !== 'dark_slime') return;
     const threshold = this.scene.gameData.enemies.dark_slime.bundleDropChance || 0;
     if (Math.random() > threshold) return;
-    const plantType = getRandomBundleDrop();
+    const plantType = getRandomBundleDrop(this.scene.gameData);
     new PlantBundle(this.scene, this.x, this.y, plantType, this.scene.gameData);
   }
 
   dropSeeds() {
     const drops = this.slimeType === 'dark_slime' ? DARK_SLIME_DROPS : GREEN_SLIME_DROPS;
     for (let i = 0; i < drops; i++) {
-      const plantType = getRandomSeedDrop();
+      const plantType = getRandomSeedDrop(this.scene.gameData);
       new Seed(
         this.scene,
         this.x + (Math.random() - 0.5) * DROP_SCATTER,

@@ -19,6 +19,9 @@ const SOIL_WET = 0x3f3022;
 
 // Watering overhaul (Sprint 9): each watering rolls two independent checks whose
 // odds scale with the watering-can tier (0 = basic, 1 = copper, 2 = golden).
+// Sprint 14b audit: the faster-growth (accelerate) chance is UNIFORM across every
+// plant type — it's this single shared constant (+ can tier + weather bonus), with
+// no per-plant override anywhere, so no crop is luckier to grow than another.
 const ACCELERATE_BASE_CHANCE = 0.4; // +0.10 per can tier → 40 / 50 / 60%
 const ACCELERATE_PER_TIER = 0.1;
 const DOUBLE_BASE_CHANCE = 0.08; // +0.04 per can tier → 8 / 12 / 16%
@@ -308,11 +311,19 @@ export default class GardenBed {
     EventBus.emit('bed:planted', { plantType, bedIndex: this.bedIndex });
   }
 
-  // Watering overhaul (Sprint 9): marking the bed wet still gates the once-a-day
-  // rule, but watering now fires two probabilistic checks immediately rather
-  // than a silent 33% growth bonus on the next day.
+  // Watering overhaul (Sprint 9): watering fires two probabilistic checks
+  // immediately rather than a silent next-day bonus.
+  //
+  // Sprint 14b — once-per-day gate: only the FIRST water of the in-game day per
+  // plant has an effect. A bed already watered today re-waters as a no-op —
+  // allowed (no error) but it does NOTHING: no growth-boost reroll, no "grew
+  // faster" notice, no ripple, no charge value. The `watered` flag is the gate; it
+  // resets at day rollover (onDayAdvanced) and on plant()/harvest(). Returns true
+  // only on the effective (first) water so callers can decide whether to spend a
+  // watering-can charge.
   water(canTier = 0, accelBonus = 0) {
     if (this.state !== STATE.PLANTED && this.state !== STATE.GROWING) return false;
+    if (this.watered) return false; // already watered today — re-water does nothing
     this.watered = true;
     this.refreshSoil();
     // Physical watering feedback — expanding blue ripple (Sprint 13).

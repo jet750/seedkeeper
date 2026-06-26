@@ -149,6 +149,15 @@ const SPAWN_BAND = {
   skeleton: { min: 2200, max: 3000 } //   deep forest, ~Lv4-5 (→ mega variant)
 };
 
+// Wild-seed placement bands by tier (radius from the garden centre). Shared by the
+// initial fan-out (spawnSeeds) and the Sprint 14b daily reroll so both place seeds
+// in the same tier-appropriate annuli — meadow seeds close, deep-forest seeds far.
+const WILD_SEED_BANDS = {
+  meadow: { min: 700, max: 1300 }, // easy reach — speed / defense / harvest
+  mid_forest: { min: 1400, max: 2200 }, // moderate — attack / crit / hp / dash
+  deep_forest: { min: 2300, max: 2950 } // best + sell-only — ranged / magic / regen / melons
+};
+
 // --- Upgrades, save & projectiles (Sprint 4) ---
 // Equip slots filled by the coin economy (economy.json gear catalog). v2 moved
 // gear off the plant trees, so there is no longer a plant→slot mapping.
@@ -1300,6 +1309,9 @@ export default class GameScene extends Phaser.Scene {
       hpFactor: cfg.hpFactor,
       damageFactor: cfg.damageFactor,
       scaleFactor: cfg.scaleFactor,
+      // Sprint 14b: children render with the standard slime skin (config-driven),
+      // keeping dark-slime stats but shedding the parent's purple tint.
+      skinType: cfg.childSkin || 'green_slime',
       level
     };
     for (let i = 0; i < count; i++) {
@@ -1426,13 +1438,29 @@ export default class GameScene extends Phaser.Scene {
       if (x < margin || x > WORLD_WIDTH - margin) continue;
       if (y < margin || y > WORLD_HEIGHT - margin) continue;
       if (this.isInGarden(x, y)) continue; // never inside the safe centred garden
-      if (this.worldZoneSystem.isNearRiver(x, y)) continue;
+      if (this.isOnWaterTile(x, y)) continue; // never in a lake/river/pond
       return { x, y };
     }
     return {
       x: Phaser.Math.Clamp(ENEMY_HOME.x, margin, WORLD_WIDTH - margin),
       y: Phaser.Math.Clamp(ENEMY_HOME.y + minR, margin, WORLD_HEIGHT - margin)
     };
+  }
+
+  // Authoritative no-spawn-in-water test for both seeds AND enemies (Sprint 14b).
+  // The hand-built Tiled world has lakes/ponds the procedural river geometry never
+  // modelled, so when that world is active we sample the map's actual `water` tile
+  // layer (a real water tile at the point → reject). The procedural fallback world
+  // has no tile layer, so there we fall back to the winding-river proximity test.
+  // This replaces the river-only `isNearRiver` check the seed/enemy samplers used,
+  // which missed every lake on the Tiled map.
+  isOnWaterTile(x, y) {
+    const water = this.tiledLayers && this.tiledLayers.water;
+    if (water) {
+      const tile = water.getTileAtWorldXY(x, y);
+      return !!(tile && tile.index !== -1);
+    }
+    return this.worldZoneSystem.isNearRiver(x, y);
   }
 
   // --- Zone boundary (Sprint 7) ---------------------------------------------
@@ -1691,11 +1719,7 @@ export default class GameScene extends Phaser.Scene {
     // same radial-band rejection logic as enemy spawns (clear of the garden interior,
     // the river, and the world edge). Distance per tier comes from the plant's
     // entities.json `foundNear`, so the catalog drives placement, not magic coords.
-    const BANDS = {
-      meadow: { min: 700, max: 1300 }, // easy reach — speed / defense / harvest
-      mid_forest: { min: 1400, max: 2200 }, // moderate — attack / crit / hp / dash
-      deep_forest: { min: 2300, max: 2950 } // best + sell-only — ranged / magic / regen / melons
-    };
+    const BANDS = WILD_SEED_BANDS;
 
     // Group plants by tier, then round-robin interleave so the even angular fan mixes
     // near and far seeds around the garden instead of bunching a tier on one side.
@@ -1728,6 +1752,23 @@ export default class GameScene extends Phaser.Scene {
     });
   }
 
+  // Daily wild-seed reroll (Sprint 14b): on day rollover, move each respawning
+  // world seed to a fresh position inside its tier band (rejecting water / garden /
+  // edge via seedPositionAtAngle) so the forest feels different each morning rather
+  // than static. Daily-special and dropped (despawning) seeds are one-offs and left
+  // alone; a seed mid-magnet-arc is skipped so we don't fight its collect tween.
+  rerollWildSeedPositions() {
+    if (!this.seeds) return;
+    for (const seed of this.seeds) {
+      if (!seed || seed.isDailySpecial || seed.isDespawning || seed.collecting) continue;
+      const tier = (seed.plantData && seed.plantData.foundNear) || 'mid_forest';
+      const band = WILD_SEED_BANDS[tier] || WILD_SEED_BANDS.mid_forest;
+      const angle = Math.random() * Math.PI * 2; // fresh bearing each morning
+      const pos = this.seedPositionAtAngle(angle, band.min, band.max);
+      seed.relocate(pos.x, pos.y);
+    }
+  }
+
   // Place a wild seed near a target angle within a radius band around the garden
   // centre (Sprint 12), rejecting the garden interior, the river and the world edge.
   // Jitters the angle a little so an even fan still looks organic; falls back to any
@@ -1742,7 +1783,7 @@ export default class GameScene extends Phaser.Scene {
       if (x < margin || x > WORLD_WIDTH - margin) continue;
       if (y < margin || y > WORLD_HEIGHT - margin) continue;
       if (this.isInGarden(x, y)) continue; // never inside the safe garden
-      if (this.worldZoneSystem.isNearRiver(x, y)) continue; // never on water
+      if (this.isOnWaterTile(x, y)) continue; // never in a lake/river/pond
       return { x, y };
     }
     return this.getSpawnPositionInBand(minR, maxR); // any valid band point
@@ -2431,10 +2472,16 @@ export default class GameScene extends Phaser.Scene {
       bed.plant(plantType);
       return true;
     }
-    if (bed.isGrowing() && this.player.waterCharges > 0) {
-      this.waterBedsFrom(bed);
-      this.player.useWater(); // spend one charge (multi-bed soak still costs one)
-      return true;
+    if (bed.isGrowing()) {
+      // Once-per-day water gate (Sprint 14b): a bed already watered today is a
+      // no-op — consume the F press but spend no charge and roll nothing, so
+      // re-watering can't farm extra growth-boosts (matches "Watered today ✓").
+      if (bed.watered) return true;
+      if (this.player.waterCharges > 0) {
+        this.waterBedsFrom(bed);
+        this.player.useWater(); // spend one charge (multi-bed soak still costs one)
+        return true;
+      }
     }
     return false;
   }
@@ -2702,8 +2749,16 @@ export default class GameScene extends Phaser.Scene {
   spawnDailySpecialSeed() {
     const dateStr = new Date().toDateString();
     const hash = dateStr.split('').reduce((acc, c) => acc + c.charCodeAt(0), 0);
-    const x = 400 + (hash % (WORLD_WIDTH - 800));
-    const y = GARDEN_ZONE_HEIGHT + 600 + (hash % (WORLD_HEIGHT - GARDEN_ZONE_HEIGHT - 800));
+    let x = 400 + (hash % (WORLD_WIDTH - 800));
+    let y = GARDEN_ZONE_HEIGHT + 600 + (hash % (WORLD_HEIGHT - GARDEN_ZONE_HEIGHT - 800));
+    // The deterministic daily spot must still respect water/garden (Sprint 14b) —
+    // a gift seed in the lake was the reported bug. If the hashed point lands on
+    // water or inside the garden, drop back to a valid forest band position.
+    if (this.isOnWaterTile(x, y) || this.isInGarden(x, y)) {
+      const pos = this.getSpawnPositionInBand(1400, 2950);
+      x = pos.x;
+      y = pos.y;
+    }
     // High-value crops for the daily gift (v3 Sprint 6/3d): the magic tree plus a
     // sell-only melon, weighted toward the magic crops.
     const rarePlants = ['blue_flower', 'red_berry', 'pineapple', 'blue_melon', 'watermelon'];
@@ -2955,6 +3010,7 @@ export default class GameScene extends Phaser.Scene {
       });
     }
     this.handleEnemyScaling(d ? d.dayNumber : this.daySystem.dayNumber);
+    this.rerollWildSeedPositions(); // Sprint 14b — fresh wild-seed spots each day
     this.applyDayTint(); // deepen the atmosphere a touch with the new day
   }
 

@@ -5,10 +5,36 @@
     "attackDamage": 10,
     "attackCooldown": 600,
     "critChance": 0.05,
-    "seedSlots": 3
+    "seedSlots": 3,
+    "_attackCommitNote": "Sprint 14b anti-stand-and-mash: while mid-swing the player is committed for attackCommitMs and cannot dash-cancel out of the attack, so mashing then instantly dodging the slime's lunge isn't free — you must time swings / reposition. Brief (a swing's length); set to 0 to disable. Not an input remap, just a combat-commit window.",
+    "attackCommitMs": 150
   },
   "newGamePlus": {
     "enemyDensityMult": 1.2
+  },
+  "loot": {
+    "_dropNote": "Sprint 14b: enemy seed drops were carrot-dominated — carrots carried the single highest weight (30) and the warm-tone everyday crops read alike, so kills felt like 'carrots, carrots, carrots, the occasional beanstalk'. The RNG itself (weightedRandom) was fine. Flattened to TWO tiers so kills yield a varied spread: every everyday crop shares one weight (no crop dominates), and the high-value crops (pineapple + the magic crops) stay a rarer treat. Tune the two numbers, never individual crops, to keep it feeling random.",
+    "seedDropWeights": {
+      "carrots": 10,
+      "sunflower": 10,
+      "wheat": 10,
+      "tomato": 10,
+      "pumpkin": 10,
+      "cucumber": 10,
+      "beanstalk": 10,
+      "pineapple": 4,
+      "red_berry": 4,
+      "blue_flower": 4
+    },
+    "bundleDropWeights": {
+      "tomato": 20,
+      "pumpkin": 18,
+      "wheat": 15,
+      "beanstalk": 12,
+      "pineapple": 12,
+      "blue_flower": 12,
+      "red_berry": 6
+    }
   },
   "enemies": {
     "green_slime": {
@@ -34,7 +60,16 @@
         "lungeSpeed": 140,
         "lungeDurationMs": 240,
         "recoverMs": 450,
-        "cooldownMs": 1200
+        "cooldownMs": 1200,
+        "_spamNote": "Sprint 14b anti-stand-and-mash. attackImmunityMs: once the slime commits to a lunge it can't be interrupted OR knocked out of it for this long, so spamming attack no longer cancel-locks it — the lunge lands on a stationary player; the punish window is RECOVER (dodge, then hit). snap: if the player is stationary AND keeps attacking in range, the slime's NEXT lunge becomes a faster, red-telegraphed snap that closes before they can react (triggerAttacks = stationary in-range swings to provoke it; stationarySpeed = body speed below which the player counts as standing still; rangeMult scales how close counts as 'in range' for the read).",
+        "attackImmunityMs": 500,
+        "snap": {
+          "triggerAttacks": 3,
+          "stationarySpeed": 14,
+          "rangeMult": 1.6,
+          "windUpMs": 150,
+          "lungeSpeed": 215
+        }
       }
     },
     "dark_slime": {
@@ -61,13 +96,24 @@
         "lungeSpeed": 125,
         "lungeDurationMs": 260,
         "recoverMs": 550,
-        "cooldownMs": 1500
+        "cooldownMs": 1500,
+        "_spamNote": "Sprint 14b anti-stand-and-mash — see green_slime.lunge._spamNote. Darks commit harder (longer immunity) and snap a touch slower than greens.",
+        "attackImmunityMs": 600,
+        "snap": {
+          "triggerAttacks": 3,
+          "stationarySpeed": 14,
+          "rangeMult": 1.6,
+          "windUpMs": 180,
+          "lungeSpeed": 195
+        }
       },
       "split": {
+        "_skinNote": "Sprint 14b: children keep dark-slime stats (hp/damage factors below) but wear the STANDARD slime skin via childSkin, so a dark slime fractures into basic green-looking slimes rather than mini purple clones.",
         "count": 2,
         "hpFactor": 0.5,
         "damageFactor": 0.6,
         "scaleFactor": 0.7,
+        "childSkin": "green_slime",
         "splitCountByLevel": [2, 2, 2, 3, 3]
       }
     },

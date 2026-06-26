@@ -492,13 +492,13 @@ export default class Skeleton extends Phaser.Physics.Arcade.Sprite {
   dropBundle() {
     const threshold = this.scene.gameData.enemies.skeleton.bundleDropChance || 0;
     if (Math.random() > threshold) return;
-    const plantType = getRandomBundleDrop();
+    const plantType = getRandomBundleDrop(this.scene.gameData);
     new PlantBundle(this.scene, this.x, this.y, plantType, this.scene.gameData);
   }
 
   dropSeeds() {
     // Guaranteed deep-forest magic seed (red_berry) + one weighted-random seed.
-    const drops = ['red_berry', getRandomSeedDrop()];
+    const drops = ['red_berry', getRandomSeedDrop(this.scene.gameData)];
     drops.forEach((plantType) => {
       new Seed(
         this.scene,

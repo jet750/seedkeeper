@@ -106,6 +106,14 @@ export default class Player extends Phaser.Physics.Arcade.Sprite {
     this.attackCooldown = stats.attackCooldown; // ms between swings (weapon overrides)
     this.attackCooldownRemaining = 0;
 
+    // Anti-stand-and-mash (Sprint 14b). attackCommitMs: a brief window after a
+    // swing during which the player is committed and cannot dash-cancel out of the
+    // attack, so mashing then instantly dodging a slime lunge isn't free. attackCount
+    // is a monotonic swing tally slimes read to detect stationary spam.
+    this.attackCommitMs = stats.attackCommitMs || 0;
+    this._attackCommitRemaining = 0;
+    this.attackCount = 0;
+
     // Input buffers (Sprint 12) — set when a press lands during cooldown, drained
     // the instant the matching cooldown clears.
     this.attackBuffer = false;
@@ -295,6 +303,9 @@ export default class Player extends Phaser.Physics.Arcade.Sprite {
     if (this.attackCooldownRemaining > 0) {
       this.attackCooldownRemaining = Math.max(0, this.attackCooldownRemaining - dtMs);
     }
+    if (this._attackCommitRemaining > 0) {
+      this._attackCommitRemaining = Math.max(0, this._attackCommitRemaining - dtMs);
+    }
     if (this.rangedCooldownRemaining > 0) {
       this.rangedCooldownRemaining = Math.max(0, this.rangedCooldownRemaining - dtMs);
     }
@@ -468,6 +479,10 @@ export default class Player extends Phaser.Physics.Arcade.Sprite {
   attack() {
     if (this.attackCooldownRemaining > 0) return;
     this.attackCooldownRemaining = this.attackCooldown;
+    // Commit to the swing (Sprint 14b): can't dash-cancel for a brief window, and
+    // bump the tally slimes read to punish stationary spam.
+    this._attackCommitRemaining = this.attackCommitMs;
+    this.attackCount++;
 
     let damage = this.getAttackDamage();
     const crit = Math.random() < this.effectiveCrit;
@@ -653,8 +668,19 @@ export default class Player extends Phaser.Physics.Arcade.Sprite {
 
   // --- Dash (Sprint 4) ------------------------------------------------------
 
+  // Mid-swing commitment (Sprint 14b) — true during the brief window after an
+  // attack when the player can't dash-cancel out of it.
+  isAttackCommitted() {
+    return this._attackCommitRemaining > 0;
+  }
+
   canDash() {
-    return this.dashEnabled && this.dashCooldownRemaining <= 0 && !this.isDashing;
+    return (
+      this.dashEnabled &&
+      this.dashCooldownRemaining <= 0 &&
+      !this.isDashing &&
+      !this.isAttackCommitted()
+    );
   }
 
   tryDash() {
@@ -899,6 +925,7 @@ export default class Player extends Phaser.Physics.Arcade.Sprite {
     this.setPosition(x, y);
     this.currentHP = this.maxHP;
     this.attackCooldownRemaining = 0;
+    this._attackCommitRemaining = 0;
     this.isDashing = false;
     this.dashCooldownRemaining = 0;
     this.rangedCooldownRemaining = 0;
