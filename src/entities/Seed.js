@@ -207,6 +207,13 @@ export default class Seed extends Phaser.GameObjects.Image {
       this.destroy();
       return;
     }
+    // Region-managed wild seeds (Sprint 16) are owned by RegionSpawnSystem, which
+    // repopulates cells on entry / day rollover — a collected one is consumed, not
+    // respawned in place (that would re-seed the spot the player just cleared).
+    if (this._regionManaged) {
+      this.destroy();
+      return;
+    }
 
     // Strong Wind weather shortens respawn timers for the day (Sprint 11).
     const mult = (this.scene && this.scene.weatherRespawnMult) || 1;

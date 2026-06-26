@@ -131,7 +131,8 @@ const ENEMY_HOME = { x: GARDEN_X + GARDEN_WIDTH / 2, y: GARDEN_Y + GARDEN_HEIGHT
 // points (which were authored for the old top-garden map and never moved when the
 // garden was re-centred — they clustered every "meadow"/"mid_forest" zone ~2000px
 // away, so even green slimes spawned at Lv4 in the deep map). Distance IS the level
-// driver (see computeEnemyLevel: ~720px ≈ one level vs distanceForMaxLevel 3600), so
+// driver (see computeEnemyLevel — Sprint 16 distance BANDS: lv1-2 near the gate,
+// lv4-5 only near the world edges), so
 // these bands set both WHERE and HOW STRONG: gentle enemies ring the home close in,
 // dangerous ones spawn far out. Bands kept inside the world half-extent (~3120px on
 // axis) so the annulus sampler finds valid points without crowding the corners.
@@ -149,9 +150,10 @@ const SPAWN_BAND = {
   skeleton: { min: 2200, max: 3000 } //   deep forest, ~Lv4-5 (→ mega variant)
 };
 
-// Wild-seed placement bands by tier (radius from the garden centre). Shared by the
-// initial fan-out (spawnSeeds) and the Sprint 14b daily reroll so both place seeds
-// in the same tier-appropriate annuli — meadow seeds close, deep-forest seeds far.
+// Tier placement bands by radius from the garden centre. Sprint 16: wild seeds are
+// now region-spawned around the player (RegionSpawnSystem), so these no longer place
+// gameplay seeds — they remain as the annuli for scatterTilesetProps' biome decor
+// (meadow clusters close, deep-forest clusters far) via seedPositionAtAngle.
 const WILD_SEED_BANDS = {
   meadow: { min: 700, max: 1300 }, // easy reach — speed / defense / harvest
   mid_forest: { min: 1400, max: 2200 }, // moderate — attack / crit / hp / dash
@@ -404,8 +406,10 @@ export default class GameScene extends Phaser.Scene {
     this.wireTiledWorldCollision();
 
     // --- Sprint 2 world objects ---
+    // Sprint 16: wild seeds are no longer placed as a fixed fan-out here — they're
+    // region-spawned around the player (RegionSpawnSystem.populateSeedsInCell), so
+    // the far edges are rewarding and the player isn't wandering the map for scraps.
     this.seeds = [];
-    this.spawnSeeds();
     this.spawnGardenBeds();
     this.createBedSoil(); // Sprint 10d — tilled soil under the beds (needs beds)
     this.spawnGardenStructures();
@@ -1477,6 +1481,21 @@ export default class GameScene extends Phaser.Scene {
     else enemy.destroy();
   }
 
+  // Spawn one region-managed wild seed (Sprint 16). The Seed self-registers into
+  // this.seeds; the caller tags it _regionManaged so it despawns with its region
+  // (and is consumed, not respawned in place, when collected — see Seed.collect).
+  spawnRegionSeed(type, x, y) {
+    if (!this.gameData.plants[type]) return null;
+    return new Seed(this, x, y, type, this.gameData);
+  }
+
+  // Region despawn for a wild seed (left its region uncollected): tear it down with
+  // no respawn. Seed.destroy() unregisters it from this.seeds and clears its tweens.
+  despawnSeed(seed) {
+    if (!seed) return;
+    seed.destroy();
+  }
+
   // True when (x, y) is within `px` of a road/path tile — used to thin spawns near
   // roads (Sprint 15). Samples the Tiled path layers (main + spur + bridges) at the
   // point and on a small ring. Roaming/chasing are unaffected — this only weights
@@ -1744,67 +1763,7 @@ export default class GameScene extends Phaser.Scene {
     if (i > -1) this.seeds.splice(i, 1);
   }
 
-  spawnSeeds() {
-    // One seed per plant (10 growable + the 2 sell-only melons, so every plant is
-    // obtainable for the demo win). Sprint 12: the old hardcoded coordinates predated
-    // the Sprint 9 world re-center and clustered north-west of the now-centred garden,
-    // leaving most of the massive world seedless. Seeds now fan out around the garden
-    // centre (3200,3200) at tier-appropriate distances — meadow seeds ring close,
-    // mid-forest seeds sit moderately out, deep-forest/sell seeds spawn far — using the
-    // same radial-band rejection logic as enemy spawns (clear of the garden interior,
-    // the river, and the world edge). Distance per tier comes from the plant's
-    // entities.json `foundNear`, so the catalog drives placement, not magic coords.
-    const BANDS = WILD_SEED_BANDS;
-
-    // Group plants by tier, then round-robin interleave so the even angular fan mixes
-    // near and far seeds around the garden instead of bunching a tier on one side.
-    const groups = { meadow: [], mid_forest: [], deep_forest: [] };
-    Object.keys(this.gameData.plants).forEach((k) => {
-      const tier = (this.gameData.plants[k] && this.gameData.plants[k].foundNear) || 'mid_forest';
-      (groups[tier] || groups.mid_forest).push(k);
-    });
-    const order = [];
-    const lists = [groups.meadow, groups.mid_forest, groups.deep_forest];
-    let added = true;
-    while (added) {
-      added = false;
-      for (const list of lists) {
-        if (list.length) {
-          order.push(list.shift());
-          added = true;
-        }
-      }
-    }
-
-    const n = order.length;
-    order.forEach((type, i) => {
-      const plant = this.gameData.plants[type];
-      const band = BANDS[(plant && plant.foundNear)] || BANDS.mid_forest;
-      const angle = (i / n) * Math.PI * 2; // even fan around the garden centre
-      const pos = this.seedPositionAtAngle(angle, band.min, band.max);
-      // eslint-disable-next-line no-new
-      new Seed(this, pos.x, pos.y, type, this.gameData);
-    });
-  }
-
-  // Daily wild-seed reroll (Sprint 14b): on day rollover, move each respawning
-  // world seed to a fresh position inside its tier band (rejecting water / garden /
-  // edge via seedPositionAtAngle) so the forest feels different each morning rather
-  // than static. Daily-special and dropped (despawning) seeds are one-offs and left
-  // alone; a seed mid-magnet-arc is skipped so we don't fight its collect tween.
-  rerollWildSeedPositions() {
-    if (!this.seeds) return;
-    for (const seed of this.seeds) {
-      if (!seed || seed.isDailySpecial || seed.isDespawning || seed.collecting) continue;
-      const tier = (seed.plantData && seed.plantData.foundNear) || 'mid_forest';
-      const band = WILD_SEED_BANDS[tier] || WILD_SEED_BANDS.mid_forest;
-      const angle = Math.random() * Math.PI * 2; // fresh bearing each morning
-      const pos = this.seedPositionAtAngle(angle, band.min, band.max);
-      seed.relocate(pos.x, pos.y);
-    }
-  }
-
-  // Place a wild seed near a target angle within a radius band around the garden
+  // Place a decor/seed anchor near a target angle within a radius band around the garden
   // centre (Sprint 12), rejecting the garden interior, the river and the world edge.
   // Jitters the angle a little so an even fan still looks organic; falls back to any
   // valid point in the band so a seed is never dropped.
@@ -2328,10 +2287,13 @@ export default class GameScene extends Phaser.Scene {
   // Frames verified by eye against the sheet (row 0 mushrooms, row 1 stones, row 2
   // bushes, row 3 flowers incl. the yellow sunflower at 38, row 4 blue/purple).
   scatterTilesetProps() {
-    if (!this.textures.exists('mushrooms_flowers') || !this.seeds) return;
-    // v3 (Sprint 6/3d): keyed to the new catalog by dominant colour (decorative
-    // hint near each seed; the mushrooms/flowers/stones sheet has no crop art, so
-    // these are approximate — unmapped plants simply get no scatter). Flagged.
+    if (!this.textures.exists('mushrooms_flowers')) return;
+    // v3 (Sprint 6/3d): keyed to the catalog by dominant colour (decorative biome
+    // hint; the mushrooms/flowers/stones sheet has no crop art, so these are
+    // approximate — unmapped plants simply get no scatter). Sprint 16: wild seeds
+    // are now region-spawned and transient, so decor is anchored to each plant's
+    // tier BAND (a few clusters in the right biome annulus) rather than to live
+    // seed objects, preserving the "right decor in the right biome" read.
     const FRAME_BY_PLANT = {
       tomato: 0, red_berry: 0, pumpkin: 0, // red/orange → red mushroom
       sunflower: 38, pineapple: 38, wheat: 38, // yellow/gold → sunflower
@@ -2340,18 +2302,24 @@ export default class GameScene extends Phaser.Scene {
     };
     const ROCK_FRAMES = [13, 14, 15];
 
-    this.seeds.forEach((seed) => {
-      const frame = FRAME_BY_PLANT[seed.plantType];
-      if (frame === undefined) return;
-      const count = 2 + Math.floor(Math.random() * 2); // 2–3 per seed
-      for (let i = 0; i < count; i++) {
-        const angle = Math.random() * Math.PI * 2;
-        const dist = 34 + Math.random() * 26;
-        const px = seed.x + Math.cos(angle) * dist;
-        const py = seed.y + Math.sin(angle) * dist;
-        if (this.worldZoneSystem.isNearRiver(px, py, 12)) continue;
-        if (py < GARDEN_ZONE_HEIGHT) continue; // keep decor out of the garden
-        this.add.image(px, py, 'mushrooms_flowers', frame).setScale(1.6).setDepth(2);
+    Object.keys(FRAME_BY_PLANT).forEach((plantType) => {
+      const plant = this.gameData.plants[plantType];
+      if (!plant) return;
+      const band = WILD_SEED_BANDS[plant.foundNear] || WILD_SEED_BANDS.mid_forest;
+      const frame = FRAME_BY_PLANT[plantType];
+      const clusters = 3; // a few decorative clusters per plant, in its biome band
+      for (let c = 0; c < clusters; c++) {
+        const anchor = this.seedPositionAtAngle(Math.random() * Math.PI * 2, band.min, band.max);
+        const count = 2 + Math.floor(Math.random() * 2); // 2–3 per cluster
+        for (let i = 0; i < count; i++) {
+          const angle = Math.random() * Math.PI * 2;
+          const dist = 34 + Math.random() * 26;
+          const px = anchor.x + Math.cos(angle) * dist;
+          const py = anchor.y + Math.sin(angle) * dist;
+          if (this.isOnWaterTile(px, py)) continue;
+          if (this.isInGarden(px, py)) continue; // keep decor out of the garden
+          this.add.image(px, py, 'mushrooms_flowers', frame).setScale(1.6).setDepth(2);
+        }
       }
     });
 
@@ -2359,9 +2327,7 @@ export default class GameScene extends Phaser.Scene {
     for (let i = 0; i < 22; i++) {
       const px = Phaser.Math.Between(ENEMY_SPAWN_MARGIN, WORLD_WIDTH - ENEMY_SPAWN_MARGIN);
       const py = Phaser.Math.Between(GARDEN_ZONE_HEIGHT + 200, WORLD_HEIGHT - 200);
-      if (this.worldZoneSystem.isNearRiver(px, py, 16)) continue;
-      const onSeed = this.seeds.some((s) => Phaser.Math.Distance.Between(px, py, s.x, s.y) < 50);
-      if (onSeed) continue;
+      if (this.isOnWaterTile(px, py)) continue;
       const frame = ROCK_FRAMES[Math.floor(Math.random() * ROCK_FRAMES.length)];
       this.add.image(px, py, 'mushrooms_flowers', frame).setScale(1.4).setDepth(2);
     }
@@ -3044,8 +3010,10 @@ export default class GameScene extends Phaser.Scene {
         }
       });
     }
+    // Sprint 16: handleEnemyScaling -> regionSpawn.refreshForNewDay() now refreshes
+    // wild SEEDS too (fresh region-spawned seeds each morning), so the old separate
+    // rerollWildSeedPositions() daily reroll is gone.
     this.handleEnemyScaling(d ? d.dayNumber : this.daySystem.dayNumber);
-    this.rerollWildSeedPositions(); // Sprint 14b — fresh wild-seed spots each day
     this.applyDayTint(); // deepen the atmosphere a touch with the new day
   }
 
@@ -3083,21 +3051,39 @@ export default class GameScene extends Phaser.Scene {
   // spread so a zone isn't perfectly uniform (Sprint 6 chest guards need variety).
   computeEnemyLevel(x, y) {
     const cfg = this.gameData.enemies.leveling;
-    const zoneLevel = this.worldZoneSystem.getZoneLevelAt
-      ? this.worldZoneSystem.getZoneLevelAt(x, y)
-      : null;
-    let base;
-    if (zoneLevel != null) {
-      base = zoneLevel;
-    } else {
-      const dist = Phaser.Math.Distance.Between(x, y, ENEMY_HOME.x, ENEMY_HOME.y);
-      const t = Phaser.Math.Clamp(dist / cfg.distanceForMaxLevel, 0, 1);
-      base = 1 + Math.floor(t * 5);
-    }
     const day = this.daySystem ? this.daySystem.dayNumber : 1;
     const dayBump = cfg.dayLevelBumpEvery ? Math.floor((day - 1) / cfg.dayLevelBumpEvery) : 0;
     const spread = cfg.spread ? Phaser.Math.Between(-cfg.spread, cfg.spread) : 0;
-    return Phaser.Math.Clamp(base + dayBump + spread, 1, 5);
+
+    // An authored zone level still wins outright (LDtk worlds); day bump + spread
+    // ride on top, clamped to the full 1-5 range as before.
+    const zoneLevel = this.worldZoneSystem.getZoneLevelAt
+      ? this.worldZoneSystem.getZoneLevelAt(x, y)
+      : null;
+    if (zoneLevel != null) {
+      return Phaser.Math.Clamp(zoneLevel + dayBump + spread, 1, 5);
+    }
+
+    // Sprint 16 — three readable distance bands (LOW lv1-2, MID lv2-3, HIGH lv4-5)
+    // replacing the old single linear ramp that rolled high levels at the gate.
+    // Within a band the level eases from min (inner edge) to max (outer edge); the
+    // day bump + spread are CLAMPED INSIDE the band, so the spatial guarantee holds
+    // — leaving the gate is always lv1-2 (never lv5) whatever the day, and lv5 only
+    // appears far out near the world edges.
+    const dist = Phaser.Math.Distance.Between(x, y, ENEMY_HOME.x, ENEMY_HOME.y);
+    const bands = cfg.bands;
+    let bi = bands.length - 1;
+    for (let i = 0; i < bands.length; i++) {
+      if (dist <= bands[i].maxDist) {
+        bi = i;
+        break;
+      }
+    }
+    const band = bands[bi];
+    const start = bi > 0 ? bands[bi - 1].maxDist : 0;
+    const frac = Phaser.Math.Clamp((dist - start) / Math.max(1, band.maxDist - start), 0, 1);
+    const base = band.min + Math.round(frac * (band.max - band.min));
+    return Phaser.Math.Clamp(base + dayBump + spread, band.min, band.max);
   }
 
   // A 1-5 read of player power from invested stat-tree tiers + owned gear tiers.

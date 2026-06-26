@@ -1,7 +1,8 @@
 {
   "player": {
     "maxHP": 100,
-    "speed": 160,
+    "_speedNote": "Sprint 16: base move speed cut 160 -> 120 (75%) so the 6400x6400 world reads as appropriately large to traverse and a chase is a committed run, not a stroll. Enemy chase speeds were cut slightly more (see each enemy's chaseSpeed) so a fresh player still edges out a chaser; the slime LUNGE (unchanged) stays the close-range punish, and the post-timer 1.5x overtime can outpace the player (get-home tension). speedMult upgrades + boots stack on this. TUNE for feel.",
+    "speed": 120,
     "attackDamage": 10,
     "attackCooldown": 600,
     "critChance": 0.05,
@@ -40,8 +41,8 @@
     "green_slime": {
       "hp": 15,
       "damage": 8,
-      "wanderSpeed": 40,
-      "chaseSpeed": 90,
+      "wanderSpeed": 28,
+      "chaseSpeed": 64,
       "detectRange": 80,
       "loseRange": 200,
       "respawnCooldownMs": 180000,
@@ -75,8 +76,8 @@
     "dark_slime": {
       "hp": 35,
       "damage": 15,
-      "wanderSpeed": 25,
-      "chaseSpeed": 70,
+      "wanderSpeed": 18,
+      "chaseSpeed": 50,
       "detectRange": 150,
       "loseRange": 300,
       "bundleDropChance": 0.5,
@@ -120,8 +121,8 @@
     "skeleton": {
       "hp": 50,
       "damage": 20,
-      "patrolSpeed": 55,
-      "chaseSpeed": 110,
+      "patrolSpeed": 40,
+      "chaseSpeed": 80,
       "detectRange": 120,
       "loseRange": 400,
       "bundleDropChance": 0.7,
@@ -151,8 +152,13 @@
       }
     },
     "leveling": {
-      "_note": "Per-enemy level 1-5 is the single difficulty driver (Sprint 5). Procedural level = distance-from-home gradient + a day bump + a small per-guard spread, clamped 1-5; an LDtk zone `level` property overrides the distance heuristic when present.",
+      "_note": "Per-enemy level 1-5 is the single difficulty driver (Sprint 5). Sprint 16: the old single linear distance ramp (distanceForMaxLevel) rolled high levels right at the garden gate, so it was replaced by three readable distance BANDS (px from garden centre 3200,3200): LOW (gate -> first ~2 screens) = lv1-2 only, MID (mid-forest) = lv2-3, HIGH (far forest / near edges) = lv4-5. Within a band the level eases from min at the inner edge to max at the outer edge. The day bump + per-guard spread still add variety but are CLAMPED INSIDE the band, so leaving the gate ALWAYS meets lv1-2 (never lv5) regardless of day, and lv5 appears ONLY far out near the world edges. An LDtk zone `level` property still overrides the distance heuristic when present. distanceForMaxLevel is retained for reference but is SUPERSEDED by bands. All band thresholds are TUNE knobs.",
       "distanceForMaxLevel": 3600,
+      "bands": [
+        { "maxDist": 1300, "min": 1, "max": 2 },
+        { "maxDist": 2400, "min": 2, "max": 3 },
+        { "maxDist": 3200, "min": 4, "max": 5 }
+      ],
       "spread": 1,
       "dayLevelBumpEvery": 4,
       "sizeStepPerLevel": 0.05,
@@ -169,21 +175,33 @@
       "maxActiveSlimes": 40
     },
     "regionSpawn": {
-      "_note": "Sprint 15 region-based spawning. APPROACH = grid of cells (not a rolling radius): the 6400² world is diced into cellSize² cells; only cells within activeRadiusCells of the player's cell are populated, and enemies whose cell drifts past despawnRadiusCells from the player are returned/destroyed (hysteresis: despawn radius > active radius, so cells don't flicker and despawn happens off-screen). The camera shows only ~400x225 world px (zoom 4), so cells are kept small and dense near the player rather than spread thin across the whole map. Each active cell targets baseCellDensity enemies; candidate positions near a road/path are mostly rejected (road.keepChance) so roads stay quieter but never enemy-free. Type eligibility is gated by distance-from-garden (darks past darkMinDist, skeletons past skeletonMinDist) AND day (darks day startDay_darkSlime+, skeletons day startDay_skeleton+); LEVEL still comes from the distance-from-garden gradient (computeEnemyLevel), so the radial SPAWN_BAND leveling is preserved — only WHERE/WHEN spawning happens changed. maxActiveEnemies caps the total across all loaded cells (counts split children too). Aggroed enemies are NEVER despawned mid-chase (cross-boundary chase persistence). ALL values are playtest knobs — density, cap and cellSize are the primary feel/perf dials.",
+      "_note": "Sprint 15 region-based spawning, RECALIBRATED Sprint 16. APPROACH = grid of cells (not a rolling radius): the 6400² world is diced into cellSize² cells; only cells within activeRadiusCells of the player's cell are populated, and enemies whose cell drifts past despawnRadiusCells from the player are returned/destroyed (hysteresis: despawn radius > active radius, so cells don't flicker and despawn happens off-screen). The camera shows only ~400x225 world px (zoom 4). Sprint 15 gave EVERY cell the same baseCellDensity, so leaving the gate met a near-camp swarm that chase-trained into the viewport. Sprint 16 makes per-cell density DISTANCE-SCALED (cellDensityByBand, indexed by the same leveling.bands a cell centre falls in): SPARSE near camp (a few lv1-2 you can skirt), DENSER far out — which weights the population to the dangerous far/high bands and pairs with seeds being denser+rarer far out (risk/reward). Type eligibility is gated by distance-from-garden (darks past darkMinDist, skeletons past skeletonMinDist) AND day; LEVEL comes from the distance bands (computeEnemyLevel). maxActiveEnemies caps the total across all loaded cells (counts split children too). Aggroed enemies are NEVER despawned mid-chase (cross-boundary chase persistence). cellDensityByBand, maxActiveEnemies and cellSize are the primary feel/perf dials.",
       "cellSize": 560,
       "activeRadiusCells": 1,
       "despawnRadiusCells": 2,
       "maxActiveEnemies": 50,
-      "baseCellDensity": 5,
+      "cellDensityByBand": [1, 3, 5],
       "darkMinDist": 1400,
       "skeletonMinDist": 2200,
       "typeWeights": { "green_slime": 6, "dark_slime": 4, "skeleton": 2 },
       "sweepIntervalMs": 1000,
       "road": {
-        "_roadNote": "Spawn-frequency only — chasing/roaming across roads is unaffected (task 3). A candidate spawn within proximityPx of a paths_main/paths_spur/bridges tile is kept only with keepChance, otherwise re-sampled, so roads read quieter and the deep brush denser.",
-        "proximityPx": 90,
-        "keepChance": 0.4
+        "_roadNote": "Spawn-frequency only — chasing/roaming across roads is unaffected. Sprint 15's version RE-SAMPLED a near-road candidate, which only repositioned the spawn off the path tile but kept the cell's full count, so road areas were never actually quieter. Sprint 16 instead DROPS the spawn (count reduction) when a valid land point lands within proximityPx of a paths_main/paths_spur/bridges tile and random > keepChance, so roads carry genuinely FEWER enemies and the open off-road forest is the dense zone. proximityPx widened (90 -> 130) and keepChance lowered (0.4 -> 0.15) so walking a road reads clearly calm.",
+        "proximityPx": 130,
+        "keepChance": 0.15
       }
+    }
+  },
+  "seeds": {
+    "regionSpawn": {
+      "_note": "Sprint 16 region-based WILD SEED spawning (Sprint 15 built enemies only and left seeds as a sparse fixed fan-out, so players wandered the whole map for scraps and the far edges were unrewarding). Mirrors the enemy region system: each cell the player enters is populated with wild seeds and they despawn with their region on leave / refresh on return + day rollover (replacing the 14b daily reroll for wild seeds; death-drop and daily-special seeds are NOT region-managed and are untouched). DENSITY scales with distance (seedsPerCellByBand, indexed by the leveling.bands the cell centre falls in) — denser the further out. RARITY scales with distance too (tierWeightByBand): near camp rolls almost all common meadow-tier seeds, far out rolls mostly deep_forest-tier (the rare / high-value / magic crops). This is the reward gradient that makes the dangerous far bands worth running. Within a chosen tier a random plant of that foundNear is picked, so the existing tier gating (meadow/mid_forest/deep_forest) still drives WHICH seeds appear where. Seeds reject water / garden interior / world edges (resample). Counts tuned so a full 8-slot satchel fills by exploring a region or two, not the whole map. maxActiveSeeds caps the loaded total. All knobs are TUNE values.",
+      "seedsPerCellByBand": [2, 3, 4],
+      "maxActiveSeeds": 30,
+      "tierWeightByBand": [
+        { "meadow": 7, "mid_forest": 2, "deep_forest": 0 },
+        { "meadow": 3, "mid_forest": 6, "deep_forest": 2 },
+        { "meadow": 1, "mid_forest": 3, "deep_forest": 7 }
+      ]
     }
   },
   "daySystem": {

@@ -86,11 +86,15 @@ export const BRIDGE_WIDTH = 120; // gap in the river wall the bridge spans
 export const DAY_TIMER_MS = 180000; // 3 minutes
 
 // Player
-export const PLAYER_SPEED = 160;
+// Sprint 16: slowed 160 -> 120 so the 6400² world reads as appropriately large to
+// traverse and a chase is a committed run. Live value is entities.json player.speed
+// (what Player reads); this mirror is kept in sync as the canonical reference.
+export const PLAYER_SPEED = 120;
 
-// Slimes
-export const SLIME_WANDER_SPEED = 40;
-export const SLIME_CHASE_SPEED = 90;
+// Slimes — Sprint 16 slowed (mirror of entities.json enemies.green_slime; enemy
+// chase cut slightly more than the player so a fresh player can still outrun one).
+export const SLIME_WANDER_SPEED = 28;
+export const SLIME_CHASE_SPEED = 64;
 export const SLIME_DETECT_RANGE = 80;
 export const SLIME_LOSE_RANGE = 200;
 
