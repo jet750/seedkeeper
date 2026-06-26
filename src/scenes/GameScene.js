@@ -84,12 +84,18 @@ const RESPAWN_DELAY_MS = 1500;
 //   * Trunk band  — renders BELOW every gameplay entity; collides (solid base).
 const TREE_CANOPY_DEPTH = 12; // above player (10) + attack arc (11), below labels (20)
 const TREE_TRUNK_DEPTH = -2;  // above all backdrop layers (<= -12), below all gameplay (>= 2)
-// 'trees shrubs' tileset-local ids of the bottom (trunk/base) row of each tree
-// variant: small/narrow tree bottom row (12,13,14) and big tree bottom row
-// (69,70,71). Every other tree tile is canopy. Classified by tile id (not a
-// geometric "is the tile below empty?" test) because trees are placed adjacently
-// and stack vertically — some trunk tiles sit directly above another tree, which
-// a geometric test would misclassify as canopy.
+// 'trees shrubs' tileset-local ids of the GROUND-CONTACT trunk row of each tree
+// variant — ONLY the bottom (stump) row(s), so the player walks behind the whole
+// canopy and only the stump clips (matching the massive tree, confirmed perfect).
+// Derived per variant from the actual stamps baked into world_v1.props_trees:
+//   * 2-tile tree (1x2)  stamp [00 / 12]            -> trunk = 12          (top 00 = canopy)
+//   * 4-tile tree (2x2)  stamp [01 02 / 13 14]      -> trunk = 13,14       (top 01,02 = canopy)
+//   * massive   (3x3)    stamp [45 46 47 / 57 58 59 / 69 70 71]
+//                                                   -> trunk = 69,70,71    (rows above = canopy)
+// Every other tree tile is canopy. Classified by tile id (not a geometric "is the
+// tile below empty?" test) because trees are placed adjacently and stack
+// vertically — some trunk tiles sit directly above another tree, which a geometric
+// test would misclassify as canopy.
 const TREE_TRUNK_LIDS = [12, 13, 14, 69, 70, 71];
 
 // Screenshake profiles (Sprint 13) — different impacts feel different. duration
@@ -715,6 +721,10 @@ export default class GameScene extends Phaser.Scene {
       });
     }
 
+    // Sprint 13 render fixes: keep props off the water surface and off bridges so
+    // rivers read clean and bridges cross without clipping/blocking props.
+    this.suppressMisplacedProps();
+
     // World + camera bounds to the map's true pixel size (6400x6400).
     this.physics.world.setBounds(0, 0, map.widthInPixels, map.heightInPixels);
     this.cameras.main.setBounds(0, 0, map.widthInPixels, map.heightInPixels);
@@ -759,6 +769,59 @@ export default class GameScene extends Phaser.Scene {
     trunk.setCollisionByExclusion([-1]);
     this.tiledLayers.props_trees_trunk = trunk;
     return true;
+  }
+
+  // Sprint 13 world-render fixes. Two prop clean-ups on the baked Tiled world:
+  //   (1) Non-water props (flowers/mushrooms/stones/shrubs in props_ground) must
+  //       never sit on a water tile — they read as floating in the river. Removed.
+  //   (2) Props on a BRIDGE tile break the crossing: props_water is in the SOLID
+  //       set, so a water prop left on a bridge tile blocks the player mid-span;
+  //       ground props on a bridge just clutter it. Remove every prop (ground and
+  //       water) that overlaps a bridge tile so bridges cross cleanly.
+  // removeTileAt also clears any collision on the removed tile, so suppressed
+  // water props stop blocking even though SOLID already ran above.
+  suppressMisplacedProps() {
+    const water = this.tiledLayers && this.tiledLayers.water;
+    const bridges = this.tiledLayers && this.tiledLayers.bridges;
+    const ground = this.tiledLayers && this.tiledLayers.props_ground;
+    const waterProps = this.tiledLayers && this.tiledLayers.props_water;
+    const has = (layer, x, y) => {
+      if (!layer) return false;
+      const t = layer.getTileAt(x, y);
+      return !!(t && t.index !== -1);
+    };
+    let removedOnWater = 0;
+    let removedOnBridge = 0;
+    // (1)+(2) ground props: off water, and off bridges.
+    if (ground) {
+      const drop = [];
+      ground.forEachTile((t) => {
+        if (!t || t.index === -1) return;
+        const onWater = has(water, t.x, t.y);
+        const onBridge = has(bridges, t.x, t.y);
+        if (onWater || onBridge) drop.push({ x: t.x, y: t.y, onWater });
+      });
+      for (const d of drop) {
+        ground.removeTileAt(d.x, d.y);
+        if (d.onWater) removedOnWater++; else removedOnBridge++;
+      }
+    }
+    // (2) water props: off bridges only (they belong on the open water otherwise).
+    if (waterProps && bridges) {
+      const drop = [];
+      waterProps.forEachTile((t) => {
+        if (!t || t.index === -1) return;
+        if (has(bridges, t.x, t.y)) drop.push({ x: t.x, y: t.y });
+      });
+      for (const d of drop) {
+        waterProps.removeTileAt(d.x, d.y);
+        removedOnBridge++;
+      }
+    }
+    if ((removedOnWater || removedOnBridge) && this.game && this.game.config && this.game.config.dev) {
+      // eslint-disable-next-line no-console
+      console.log(`[world] suppressed props — onWater:${removedOnWater} onBridge:${removedOnBridge}`);
+    }
   }
 
   // Wire player + enemy colliders against the Tiled solid layers. Called from
