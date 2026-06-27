@@ -13,6 +13,7 @@
 // HUD and other listeners stay in sync.
 
 import Phaser from 'phaser';
+import { fitCameraToVirtual } from '../core/ViewportFit.js';
 import EventBus from '../core/EventBus.js';
 import { VIRTUAL_WIDTH, isDevModeActive } from '../core/Constants.js';
 
@@ -46,6 +47,7 @@ export default class DevMenuScene extends Phaser.Scene {
 
     this.gameScene = this.scene.get('GameScene');
     if (!this.gameScene) return;
+    fitCameraToVirtual(this);
     this.gameData = this.gameScene.gameData;
 
     this.menuOpen = false;

@@ -8,6 +8,7 @@
 // file matching the manifest filename into /assets and it loads automatically.
 
 import Phaser from 'phaser';
+import { fitCameraToVirtual } from '../core/ViewportFit.js';
 import GameState from '../core/GameState.js';
 import { VIRTUAL_WIDTH, VIRTUAL_HEIGHT, USE_TILED_WORLD, TILED_WORLD_KEY } from '../core/Constants.js';
 import manifest from '../data/assetManifest.json';
@@ -49,6 +50,7 @@ export default class BootScene extends Phaser.Scene {
   }
 
   preload() {
+    fitCameraToVirtual(this);
     this.drawLoadingUI();
 
     let queued = 0;

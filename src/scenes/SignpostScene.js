@@ -8,6 +8,7 @@
 // dismisses and emits 'signpost:closed' so GameScene un-freezes.
 
 import Phaser from 'phaser';
+import { fitCameraToVirtual } from '../core/ViewportFit.js';
 import EventBus from '../core/EventBus.js';
 import { VIRTUAL_WIDTH, VIRTUAL_HEIGHT } from '../core/Constants.js';
 import { ACHIEVEMENTS, ACHIEVEMENT_COUNT, TIER_LABELS } from '../data/achievements.js';
@@ -31,6 +32,7 @@ export default class SignpostScene extends Phaser.Scene {
   }
 
   create() {
+    fitCameraToVirtual(this);
     const gameScene = this.scene.get('GameScene');
     const as = gameScene && gameScene.achievementSystem;
     this.unlocked = as ? as.unlockedIds : new Set();

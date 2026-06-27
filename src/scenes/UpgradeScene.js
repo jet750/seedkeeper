@@ -12,6 +12,7 @@
 // as overflow) rather than 5 + 5. Page-scoped objects are torn down on each switch.
 
 import Phaser from 'phaser';
+import { fitCameraToVirtual } from '../core/ViewportFit.js';
 import EventBus from '../core/EventBus.js';
 import MobileDetect from '../core/MobileDetect.js';
 import { VIRTUAL_WIDTH, VIRTUAL_HEIGHT } from '../core/Constants.js';
@@ -50,6 +51,7 @@ export default class UpgradeScene extends Phaser.Scene {
   }
 
   create() {
+    fitCameraToVirtual(this);
     this.gameScene = this.scene.get('GameScene');
     this.gameData = this.gameScene.gameData;
 

@@ -11,7 +11,6 @@
 
 import EventBus from '../core/EventBus.js';
 import MobileDetect from '../core/MobileDetect.js';
-import { VIRTUAL_WIDTH, VIRTUAL_HEIGHT } from '../core/Constants.js';
 
 export default class TouchControlSystem {
   constructor(scene) {
@@ -33,15 +32,18 @@ export default class TouchControlSystem {
     this.createActionButtons();
     this.createMobileHUDAdjustments();
     this.setupOrientationHandler();
+
+    // Seat every control at the current viewport. UIScene also calls layout() right
+    // after constructing us (and on every Scale 'resize'), but doing it here keeps
+    // the controls correct even if that initial pass is ever skipped.
+    this.layout(this.scene.scale.width, this.scene.scale.height, this.safe);
   }
 
-  // Convert the CSS safe-area insets into virtual (1600x900) px using the real
-  // on-screen canvas size (displaySize), not the 1600x900 base size.
+  // Raw CSS-pixel safe-area insets. Under the mobile RESIZE scale mode the control
+  // layer's coordinate space IS the on-screen CSS-pixel space (game size == display
+  // size), so the notch/home-bar insets apply 1:1 with no virtual-space conversion.
   computeSafeArea() {
-    const ds = this.scene.scale.displaySize;
-    const screenW = ds && ds.width ? ds.width : window.innerWidth;
-    const screenH = ds && ds.height ? ds.height : window.innerHeight;
-    return MobileDetect.getSafeArea(VIRTUAL_WIDTH, VIRTUAL_HEIGHT, screenW, screenH);
+    return MobileDetect.getRawInsets();
   }
 
   // Track a scene-level pointer handler so destroy() can detach it.
@@ -65,50 +67,24 @@ export default class TouchControlSystem {
   // --- Virtual joystick (bottom-left, fixed base) ---------------------------
 
   createJoystick() {
-    const JOYSTICK_X = 150;
-    const JOYSTICK_Y = VIRTUAL_HEIGHT - 150 - this.safe.bottom;
     const BASE_RADIUS = 70;
     const HANDLE_RADIUS = 30;
+    this.joystickBaseRadius = BASE_RADIUS;
+    // Bottom-left, inset past a left notch and the home indicator. layout()
+    // recomputes these on resize; this is just the initial seat.
+    const JOYSTICK_X = 150 + this.safe.left;
+    const JOYSTICK_Y = this.scene.scale.height - 150 - this.safe.bottom;
 
-    // Base disc + ring — static, semi-transparent.
+    // Base disc + ring — static, semi-transparent. The ring + arrows are Graphics
+    // (redrawn by _drawJoystickDecor on every layout); the disc/handle/dot just move.
     this.joystickBase = this.scene.add
       .circle(JOYSTICK_X, JOYSTICK_Y, BASE_RADIUS, 0xffffff, 0.12)
       .setScrollFactor(0)
       .setDepth(100);
-    const baseRing = this.scene.add.graphics().setScrollFactor(0).setDepth(100);
-    baseRing.lineStyle(2, 0xffffff, 0.4);
-    baseRing.strokeCircle(JOYSTICK_X, JOYSTICK_Y, BASE_RADIUS);
-
+    this.baseRing = this.scene.add.graphics().setScrollFactor(0).setDepth(100);
     // Four faint directional arrows so the control reads as a D-pad at a glance.
-    const dirGfx = this.scene.add.graphics().setScrollFactor(0).setDepth(100);
-    dirGfx.fillStyle(0xffffff, 0.2);
-    const a = 8; // arrow half-width
-    const inset = 12; // distance of the arrow tip from the ring
-    const r = BASE_RADIUS;
-    // up
-    dirGfx.fillTriangle(
-      JOYSTICK_X, JOYSTICK_Y - r + inset,
-      JOYSTICK_X - a, JOYSTICK_Y - r + inset + a * 1.5,
-      JOYSTICK_X + a, JOYSTICK_Y - r + inset + a * 1.5
-    );
-    // down
-    dirGfx.fillTriangle(
-      JOYSTICK_X, JOYSTICK_Y + r - inset,
-      JOYSTICK_X - a, JOYSTICK_Y + r - inset - a * 1.5,
-      JOYSTICK_X + a, JOYSTICK_Y + r - inset - a * 1.5
-    );
-    // left
-    dirGfx.fillTriangle(
-      JOYSTICK_X - r + inset, JOYSTICK_Y,
-      JOYSTICK_X - r + inset + a * 1.5, JOYSTICK_Y - a,
-      JOYSTICK_X - r + inset + a * 1.5, JOYSTICK_Y + a
-    );
-    // right
-    dirGfx.fillTriangle(
-      JOYSTICK_X + r - inset, JOYSTICK_Y,
-      JOYSTICK_X + r - inset - a * 1.5, JOYSTICK_Y - a,
-      JOYSTICK_X + r - inset - a * 1.5, JOYSTICK_Y + a
-    );
+    this.dirGfx = this.scene.add.graphics().setScrollFactor(0).setDepth(100);
+    this._drawJoystickDecor(JOYSTICK_X, JOYSTICK_Y, BASE_RADIUS);
 
     // Handle + inner dot — these track the thumb.
     this.joystickHandle = this.scene.add
@@ -130,9 +106,11 @@ export default class TouchControlSystem {
     };
 
     // Claim a pointer that lands in the left half; the right half belongs to the
-    // action buttons. Tracked by pointer.id so a second finger never hijacks it.
+    // action buttons. The split is the live screen midpoint (scale.width), not the
+    // 1600 base — under RESIZE pointer coords are in screen px. Tracked by pointer.id
+    // so a second finger never hijacks it.
     this._onScene('pointerdown', (pointer) => {
-      if (pointer.x < VIRTUAL_WIDTH / 2 && this.joystickPointer === null) {
+      if (pointer.x < this.scene.scale.width / 2 && this.joystickPointer === null) {
         this.joystickPointer = pointer.id;
         this.joystickActive = true;
         this.updateJoystick(pointer.x, pointer.y);
@@ -183,38 +161,67 @@ export default class TouchControlSystem {
     EventBus.emit('touch:move', { x: 0, y: 0 });
   }
 
+  // (Re)draw the static ring + D-pad arrows at a given centre. Both are Graphics
+  // with baked coords, so a resize clears and redraws them at the new joystick seat.
+  _drawJoystickDecor(cx, cy, r) {
+    this.baseRing.clear();
+    this.baseRing.lineStyle(2, 0xffffff, 0.4);
+    this.baseRing.strokeCircle(cx, cy, r);
+
+    this.dirGfx.clear();
+    this.dirGfx.fillStyle(0xffffff, 0.2);
+    const a = 8; // arrow half-width
+    const inset = 12; // distance of the arrow tip from the ring
+    // up
+    this.dirGfx.fillTriangle(cx, cy - r + inset, cx - a, cy - r + inset + a * 1.5, cx + a, cy - r + inset + a * 1.5);
+    // down
+    this.dirGfx.fillTriangle(cx, cy + r - inset, cx - a, cy + r - inset - a * 1.5, cx + a, cy + r - inset - a * 1.5);
+    // left
+    this.dirGfx.fillTriangle(cx - r + inset, cy, cx - r + inset + a * 1.5, cy - a, cx - r + inset + a * 1.5, cy + a);
+    // right
+    this.dirGfx.fillTriangle(cx + r - inset, cy, cx + r - inset - a * 1.5, cy - a, cx + r - inset - a * 1.5, cy + a);
+  }
+
   // --- Action buttons (bottom-right cluster) --------------------------------
 
   createActionButtons() {
+    const W = this.scene.scale.width;
+    const H = this.scene.scale.height;
     const safeBottom = this.safe.bottom;
     const safeRight = this.safe.right;
     const BTN_RADIUS = 38;
     const BTN_ALPHA = 0.75;
+    this.buttonRadius = BTN_RADIUS;
 
-    // Staggered for thumb reach. dash + ranged stay hidden until unlocked.
-    const buttons = [
-      { id: 'attack', x: VIRTUAL_WIDTH - 90 - safeRight, y: VIRTUAL_HEIGHT - 190 - safeBottom, color: 0xcc2222, label: '⚔', event: 'touch:attack', alwaysVisible: true },
-      { id: 'interact', x: VIRTUAL_WIDTH - 185 - safeRight, y: VIRTUAL_HEIGHT - 105 - safeBottom, color: 0x228822, label: 'F', event: 'touch:interact', alwaysVisible: true },
-      { id: 'dash', x: VIRTUAL_WIDTH - 90 - safeRight, y: VIRTUAL_HEIGHT - 105 - safeBottom, color: 0x2244cc, label: '⚡', event: 'touch:dash', alwaysVisible: false },
-      { id: 'ranged', x: VIRTUAL_WIDTH - 185 - safeRight, y: VIRTUAL_HEIGHT - 190 - safeBottom, color: 0xcc8822, label: '\u{1f3f9}', event: 'touch:ranged', alwaysVisible: false }
+    // Offsets from the bottom-right corner (dx from the right edge, dy from the
+    // bottom). Stored so layout() can re-seat each button against the live screen
+    // size + insets on resize. Staggered for thumb reach; dash + ranged stay hidden
+    // until unlocked.
+    this._buttonDefs = [
+      { id: 'attack', dx: 90, dy: 190, color: 0xcc2222, label: '⚔', event: 'touch:attack', alwaysVisible: true },
+      { id: 'interact', dx: 185, dy: 105, color: 0x228822, label: 'F', event: 'touch:interact', alwaysVisible: true },
+      { id: 'dash', dx: 90, dy: 105, color: 0x2244cc, label: '⚡', event: 'touch:dash', alwaysVisible: false },
+      { id: 'ranged', dx: 185, dy: 190, color: 0xcc8822, label: '\u{1f3f9}', event: 'touch:ranged', alwaysVisible: false }
     ];
 
     this.touchButtons = {};
 
-    buttons.forEach((btn) => {
+    this._buttonDefs.forEach((btn) => {
+      const x = W - btn.dx - safeRight;
+      const y = H - btn.dy - safeBottom;
       const bg = this.scene.add
-        .circle(btn.x, btn.y, BTN_RADIUS, btn.color, BTN_ALPHA)
+        .circle(x, y, BTN_RADIUS, btn.color, BTN_ALPHA)
         .setScrollFactor(0)
         .setDepth(100)
         .setVisible(btn.alwaysVisible);
 
       const ring = this.scene.add.graphics().setScrollFactor(0).setDepth(100);
       ring.lineStyle(2, 0xffffff, 0.5);
-      ring.strokeCircle(btn.x, btn.y, BTN_RADIUS);
+      ring.strokeCircle(x, y, BTN_RADIUS);
       ring.setVisible(btn.alwaysVisible);
 
       const label = this.scene.add
-        .text(btn.x, btn.y, btn.label, { fontSize: '24px', color: '#ffffff' })
+        .text(x, y, btn.label, { fontSize: '24px', color: '#ffffff' })
         .setOrigin(0.5)
         .setScrollFactor(0)
         .setDepth(101)
@@ -222,7 +229,7 @@ export default class TouchControlSystem {
 
       // Hit zone is larger than the visual for forgiving thumb taps.
       const hitZone = this.scene.add
-        .circle(btn.x, btn.y, BTN_RADIUS + 10, 0x000000, 0.001)
+        .circle(x, y, BTN_RADIUS + 10, 0x000000, 0.001)
         .setScrollFactor(0)
         .setDepth(99)
         .setInteractive()
@@ -274,7 +281,7 @@ export default class TouchControlSystem {
     const safeLeft = this.safe.left;
 
     const mapBtn = this.scene.add
-      .text(VIRTUAL_WIDTH - 20 - safeRight, safeTop + 18, 'MAP', {
+      .text(this.scene.scale.width - 20 - safeRight, safeTop + 18, 'MAP', {
         fontFamily: '"SproutLands", "Courier New", monospace',
         fontSize: '16px',
         color: '#ffffff',
@@ -322,12 +329,15 @@ export default class TouchControlSystem {
 
   showRotatePrompt() {
     if (this.rotatePrompt) return;
+    // Size to the live viewport (full-bleed under RESIZE), not the 1600x900 base.
+    const w = this.scene.scale.width;
+    const h = this.scene.scale.height;
     this.rotatePrompt = this.scene.add
-      .rectangle(VIRTUAL_WIDTH / 2, VIRTUAL_HEIGHT / 2, VIRTUAL_WIDTH, VIRTUAL_HEIGHT, 0x000000, 0.95)
+      .rectangle(w / 2, h / 2, w, h, 0x000000, 0.95)
       .setScrollFactor(0)
       .setDepth(400);
     this.rotateText = this.scene.add
-      .text(VIRTUAL_WIDTH / 2, VIRTUAL_HEIGHT / 2, '↻\nRotate your phone\nto landscape to play', {
+      .text(w / 2, h / 2, '↻\nRotate your phone\nto landscape to play', {
         fontFamily: '"SproutLands", "Courier New", monospace',
         fontSize: '36px',
         color: '#88cc44',
@@ -345,6 +355,53 @@ export default class TouchControlSystem {
       this.rotateText.destroy();
       this.rotatePrompt = null;
       this.rotateText = null;
+    }
+  }
+
+  // --- Live reflow ----------------------------------------------------------
+  // Re-seat every control against the current viewport size + safe insets. Called by
+  // UIScene on each Scale 'resize' (rotation / toolbar collapse) so the joystick,
+  // action buttons, MAP/pause buttons and the rotate overlay reflow with no reload.
+  // Repositions existing objects only — never re-binds input or re-emits events.
+  layout(width, height, safe) {
+    if (!this.active) return;
+    this.safe = safe;
+
+    // Joystick (bottom-left, inset past a left notch + the home indicator).
+    const jx = 150 + safe.left;
+    const jy = height - 150 - safe.bottom;
+    this.joystick.baseX = jx;
+    this.joystick.baseY = jy;
+    this.joystickBase.setPosition(jx, jy);
+    this._drawJoystickDecor(jx, jy, this.joystickBaseRadius);
+    // Don't yank the handle out from under an active thumb mid-drag.
+    if (!this.joystickActive) {
+      this.joystickHandle.setPosition(jx, jy);
+      this.joystickDot.setPosition(jx, jy);
+    }
+
+    // Action buttons (bottom-right, inset past a right notch + the home indicator).
+    this._buttonDefs.forEach((btn) => {
+      const b = this.touchButtons[btn.id];
+      if (!b) return;
+      const x = width - btn.dx - safe.right;
+      const y = height - btn.dy - safe.bottom;
+      b.bg.setPosition(x, y);
+      b.label.setPosition(x, y);
+      b.hitZone.setPosition(x, y);
+      b.ring.clear();
+      b.ring.lineStyle(2, 0xffffff, 0.5);
+      b.ring.strokeCircle(x, y, this.buttonRadius);
+    });
+
+    // MAP (top-right) + pause (top-left) buttons.
+    if (this.mapBtn) this.mapBtn.setPosition(width - 20 - safe.right, safe.top + 18);
+    if (this.pauseBtn) this.pauseBtn.setPosition(20 + safe.left, safe.top + 18);
+
+    // Rotate overlay — keep it full-screen + centred if it's currently up.
+    if (this.rotatePrompt) {
+      this.rotatePrompt.setPosition(width / 2, height / 2).setSize(width, height);
+      this.rotateText.setPosition(width / 2, height / 2);
     }
   }
 

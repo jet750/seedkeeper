@@ -7,6 +7,7 @@
 // the menu through a valid PAUSED → MENU transition.
 
 import Phaser from 'phaser';
+import { fitCameraToVirtual } from '../core/ViewportFit.js';
 import EventBus from '../core/EventBus.js';
 import GameState from '../core/GameState.js';
 import {
@@ -36,6 +37,7 @@ export default class PauseScene extends Phaser.Scene {
   }
 
   create() {
+    fitCameraToVirtual(this);
     const cx = VIRTUAL_WIDTH / 2;
     const cy = VIRTUAL_HEIGHT / 2;
 

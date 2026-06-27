@@ -7,6 +7,7 @@
 // applied immediately. ESC or [Close] dismisses and emits 'settings:closed'.
 
 import Phaser from 'phaser';
+import { fitCameraToVirtual } from '../core/ViewportFit.js';
 import EventBus from '../core/EventBus.js';
 import SaveSystem from '../core/SaveSystem.js';
 import {
@@ -53,6 +54,7 @@ export default class SettingsScene extends Phaser.Scene {
   }
 
   create() {
+    fitCameraToVirtual(this);
     const cx = VIRTUAL_WIDTH / 2;
     const top = (VIRTUAL_HEIGHT - PANEL_H) / 2;
 

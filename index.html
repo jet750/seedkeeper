@@ -44,8 +44,15 @@
       touch-action: none;
     }
 
-    /* MOBILE / touch — full-bleed, inset by the safe area, no bounce-scroll.
-       Scoped to coarse pointers + small screens so desktop layout is untouched. */
+    /* MOBILE / touch — full-bleed canvas, edge-to-edge, no bounce-scroll. The
+       canvas fills the entire viewport (RESIZE scale mode); the HUD itself insets
+       to the safe area in JS (layoutHUD/TouchControlSystem.layout read the --sa*
+       vars), so the game art reaches under the notch/home indicator but no button
+       or readout ever sits beneath them. Scoped to coarse pointers + small screens
+       so the desktop FIT layout is untouched.
+       JS (main.js) also pins width/height to window.visualViewport in px on resize
+       so the iOS Safari collapsing-toolbar area is excluded; the 100% here is the
+       pre-JS default. */
     @media (pointer: coarse), (max-width: 768px) {
       html, body {
         position: fixed;
@@ -59,12 +66,10 @@
       body { display: block; background: #1a2410; }
       #game-container {
         position: fixed;
-        top: var(--sat);
-        left: var(--sal);
-        right: var(--sar);
-        bottom: var(--sab);
-        width: calc(100% - var(--sal) - var(--sar));
-        height: calc(100% - var(--sat) - var(--sab));
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
         max-width: none;
         aspect-ratio: auto;
       }

@@ -32,17 +32,16 @@ const MobileDetect = {
     return Number.isFinite(n) ? n : 0;
   },
 
-  // Convert the four CSS-pixel safe-area insets into virtual (1600x900) pixels,
-  // using the live FIT scale factor between the virtual canvas and the screen.
-  // Controls and HUD positioned with these never sit under the notch/home bar.
-  getSafeArea(virtualWidth, virtualHeight, screenWidth, screenHeight) {
-    const scaleX = screenWidth > 0 ? virtualWidth / screenWidth : 1;
-    const scaleY = screenHeight > 0 ? virtualHeight / screenHeight : 1;
+  // Raw CSS-pixel safe-area insets, no virtual-space conversion. Under the mobile
+  // RESIZE scale mode the HUD coordinate space IS the on-screen CSS-pixel space
+  // (game size == display size), so the insets need no scaling — a notch of 44 CSS
+  // px is 44 HUD px. layoutHUD()/TouchControlSystem.layout() consume these directly.
+  getRawInsets() {
     return {
-      top: this._cssInset('--sat') * scaleY,
-      bottom: this._cssInset('--sab') * scaleY,
-      left: this._cssInset('--sal') * scaleX,
-      right: this._cssInset('--sar') * scaleX
+      top: this._cssInset('--sat'),
+      bottom: this._cssInset('--sab'),
+      left: this._cssInset('--sal'),
+      right: this._cssInset('--sar')
     };
   }
 };

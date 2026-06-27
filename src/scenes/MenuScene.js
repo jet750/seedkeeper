@@ -8,6 +8,7 @@
 // Credits link (Sprint 13) opens the credits. Clicking a card launches GameScene.
 
 import Phaser from 'phaser';
+import { fitCameraToVirtual } from '../core/ViewportFit.js';
 import GameState from '../core/GameState.js';
 import SaveSystem from '../core/SaveSystem.js';
 import { VIRTUAL_WIDTH, VIRTUAL_HEIGHT, FONT_FAMILY, UI_ACCENT_GOLD } from '../core/Constants.js';
@@ -27,6 +28,8 @@ export default class MenuScene extends Phaser.Scene {
   }
 
   create() {
+    fitCameraToVirtual(this);
+
     // If we arrived here from a finished run, settle the state machine back to
     // MENU through a valid transition (GAME_OVER / WIN → MENU).
     if (GameState.is('GAME_OVER') || GameState.is('WIN')) {

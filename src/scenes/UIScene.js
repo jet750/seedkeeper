@@ -116,11 +116,35 @@ export default class UIScene extends Phaser.Scene {
     // it draws over the HUD, and only on touch devices — desktop stays untouched.
     if (MobileDetect.isMobile()) {
       this.touchControls = new TouchControlSystem(this);
-      this.scaleHUDForMobile();
     }
+
+    // Live reflow: under the mobile RESIZE scale mode the game size IS the screen
+    // size and changes on rotation / toolbar collapse. Re-lay-out the whole HUD on
+    // every Scale 'resize' so it reflows without a page reload. On desktop (FIT) the
+    // game size stays 1600x900, so this reproduces the exact same positions — a
+    // no-op for desktop. Run once now to seat everything at the current viewport.
+    this.scale.on('resize', this.onResize, this);
+    this.layoutAll(this.scale.width, this.scale.height);
 
     this.events.once('shutdown', this.teardown, this);
     this.events.once('destroy', this.teardown, this);
+  }
+
+  // Scale Manager 'resize' → reflow. gameSize is the live (screen-sized under RESIZE)
+  // game dimensions; everything in the HUD is a function of these + the safe insets.
+  onResize(gameSize) {
+    this.layoutAll(gameSize.width, gameSize.height);
+  }
+
+  // One entry point for both the initial create() pass and every resize. Safe insets
+  // are the raw CSS-pixel notch/home-bar values on mobile (HUD space == screen px
+  // under RESIZE), zero on desktop so the desktop layout is byte-for-byte unchanged.
+  layoutAll(width, height) {
+    const safe = MobileDetect.isMobile()
+      ? MobileDetect.getRawInsets()
+      : { top: 0, bottom: 0, left: 0, right: 0 };
+    this.layoutHUD(width, height, safe);
+    if (this.touchControls) this.touchControls.layout(width, height, safe);
   }
 
   // --- HUD construction -----------------------------------------------------
@@ -130,12 +154,13 @@ export default class UIScene extends Phaser.Scene {
 
     // Semi-transparent dark bars behind the top and bottom HUD clusters so the
     // text reads clearly over any garden/forest background (Sprint 8 polish).
-    // Created first so every HUD element draws on top of them.
-    this.add
+    // Created first so every HUD element draws on top of them. Stored so layoutHUD
+    // can re-span them to the current width and re-seat the bottom one on resize.
+    this.topBar = this.add
       .rectangle(0, 0, VIRTUAL_WIDTH, 80, 0x000000, 0.42)
       .setOrigin(0, 0)
       .setDepth(-1);
-    this.add
+    this.bottomBar = this.add
       .rectangle(0, VIRTUAL_HEIGHT - 80, VIRTUAL_WIDTH, 80, 0x000000, 0.42)
       .setOrigin(0, 0)
       .setDepth(-1);
@@ -1123,8 +1148,6 @@ export default class UIScene extends Phaser.Scene {
   createMinimap() {
     const MAP_W = 120;
     const MAP_H = 90;
-    const MAP_X = VIRTUAL_WIDTH - MAP_W - 16;
-    const MAP_Y = 96; // below the top HUD bar so it never overlaps the timer
     const SCALE_X = MAP_W / WORLD_WIDTH;
     const SCALE_Y = MAP_H / WORLD_HEIGHT;
     const SAMPLE = 3; // minimap px per sampled cell
@@ -1132,15 +1155,20 @@ export default class UIScene extends Phaser.Scene {
     // connected line at this coarse scale.
     const RIVER_MARGIN = 50;
 
-    this.minimapBg = this.add
-      .rectangle(MAP_X, MAP_Y, MAP_W, MAP_H, 0x000000, 0.6)
-      .setOrigin(0, 0)
-      .setScrollFactor(0)
-      .setDepth(50);
-    this._minimapObjects.push(this.minimapBg);
+    // Everything lives in one container drawn at relative (0,0)-based coords so the
+    // whole minimap moves by a single setPosition() on resize (the zone Graphics
+    // bakes its rects, so it can't be re-anchored any other way without a redraw).
+    // layoutHUD positions the container's top-left to the current top-right corner.
+    const container = this.add.container(0, 0).setScrollFactor(0).setDepth(50);
+    this.minimapContainer = container;
+    this.minimapW = MAP_W;
+    this.minimapH = MAP_H;
 
-    // Sampled zone + river map, batched into one Graphics.
-    const zoneGfx = this.add.graphics().setScrollFactor(0).setDepth(51);
+    const bg = this.add.rectangle(0, 0, MAP_W, MAP_H, 0x000000, 0.6).setOrigin(0, 0);
+    container.add(bg);
+
+    // Sampled zone + river map, batched into one Graphics (relative coords).
+    const zoneGfx = this.add.graphics();
     for (let mx = 0; mx < MAP_W; mx += SAMPLE) {
       for (let my = 0; my < MAP_H; my += SAMPLE) {
         const wx = mx / SCALE_X;
@@ -1149,41 +1177,30 @@ export default class UIScene extends Phaser.Scene {
           ? this.worldZoneSystem.getZoneColor('river')
           : this.worldZoneSystem.getZoneColor(this.worldZoneSystem.getZoneAt(wx, wy));
         zoneGfx.fillStyle(color, 0.85);
-        zoneGfx.fillRect(MAP_X + mx, MAP_Y + my, SAMPLE, SAMPLE);
+        zoneGfx.fillRect(mx, my, SAMPLE, SAMPLE);
       }
     }
-    this._minimapObjects.push(zoneGfx);
+    container.add(zoneGfx);
 
-    // Player dot (updated by player:moved).
-    this.minimapPlayer = this.add
-      .circle(MAP_X, MAP_Y, 3, 0x00ffff)
-      .setScrollFactor(0)
-      .setDepth(52);
-    this._minimapObjects.push(this.minimapPlayer);
+    // Player dot (updated by player:moved) — relative to the container.
+    this.minimapPlayer = this.add.circle(0, 0, 3, 0x00ffff);
+    container.add(this.minimapPlayer);
 
     // Border.
-    this._minimapObjects.push(
+    container.add(
       this.add
-        .rectangle(MAP_X, MAP_Y, MAP_W, MAP_H, 0xffffff, 0)
+        .rectangle(0, 0, MAP_W, MAP_H, 0xffffff, 0)
         .setOrigin(0, 0)
-        .setScrollFactor(0)
-        .setDepth(52)
         .setStrokeStyle(1, 0x888888)
     );
 
     // Home marker at the garden centre — a yellow flag (rect + orange pennant)
     // with a tiny "HOME" label. Static, so it's always shown while the minimap is.
-    const homeX = MAP_X + (GARDEN_X + GARDEN_WIDTH / 2) * SCALE_X;
-    const homeY = MAP_Y + (GARDEN_Y + GARDEN_HEIGHT / 2) * SCALE_Y;
-    this._minimapObjects.push(
-      this.add
-        .rectangle(homeX, homeY, 8, 6, 0xffd23f)
-        .setScrollFactor(0)
-        .setDepth(53),
-      this.add
-        .triangle(homeX, homeY - 7, 0, -4, -5, 3, 5, 3, 0xff7a1a)
-        .setScrollFactor(0)
-        .setDepth(53),
+    const homeX = (GARDEN_X + GARDEN_WIDTH / 2) * SCALE_X;
+    const homeY = (GARDEN_Y + GARDEN_HEIGHT / 2) * SCALE_Y;
+    container.add([
+      this.add.rectangle(homeX, homeY, 8, 6, 0xffd23f),
+      this.add.triangle(homeX, homeY - 7, 0, -4, -5, 3, 5, 3, 0xff7a1a),
       this.add
         .text(homeX, homeY + 5, 'HOME', {
           fontFamily: FONT_FAMILY,
@@ -1191,22 +1208,18 @@ export default class UIScene extends Phaser.Scene {
           color: '#ffd23f'
         })
         .setOrigin(0.5, 0)
-        .setScrollFactor(0)
-        .setDepth(53)
-    );
+    ]);
 
     this.minimapScaleX = SCALE_X;
     this.minimapScaleY = SCALE_Y;
-    this.minimapX = MAP_X;
-    this.minimapY = MAP_Y;
+    // Toggle helpers operate on this list; one container hides/shows every child.
+    this._minimapObjects = [container];
   }
 
   updateMinimapPlayer(x, y) {
     if (!this.minimapPlayer) return;
-    this.minimapPlayer.setPosition(
-      this.minimapX + x * this.minimapScaleX,
-      this.minimapY + y * this.minimapScaleY
-    );
+    // Container-relative: the container itself carries the screen offset.
+    this.minimapPlayer.setPosition(x * this.minimapScaleX, y * this.minimapScaleY);
   }
 
   toggleMinimap() {
@@ -1221,46 +1234,96 @@ export default class UIScene extends Phaser.Scene {
     this._minimapObjects.forEach((o) => o.setVisible(this._minimapVisible));
   }
 
-  // --- Mobile HUD layout pass (Sprint Mobile) -------------------------------
-  // Nudges HUD clusters out of the safe-area insets and relocates the seed-slot
-  // row into the clear central-bottom gap so the joystick (bottom-left) and the
-  // action buttons (bottom-right) never sit on top of it. Additive shifts: with
-  // no notch/home-bar the only thing that moves is the seed row. Desktop never
-  // calls this.
-  scaleHUDForMobile() {
-    const ds = this.scale.displaySize;
-    const safe = MobileDetect.getSafeArea(
-      VIRTUAL_WIDTH,
-      VIRTUAL_HEIGHT,
-      ds && ds.width ? ds.width : window.innerWidth,
-      ds && ds.height ? ds.height : window.innerHeight
-    );
+  // --- HUD layout / live reflow (Sprint Mobile viewport scaling) -------------
+  // Positions EVERY persistent HUD element as a function of the current viewport
+  // (width/height) and the safe-area insets, rather than baking 1600x900 coords at
+  // create(). Called once in create() and again on every Scale Manager 'resize', so
+  // rotation portrait<->landscape reflows the HUD live with no page reload.
+  //
+  // Desktop invariant: at width=1600, height=900, zero insets this reproduces the
+  // original hardcoded positions byte-for-byte, so the desktop FIT build is
+  // unchanged. The mobile cluster shifts (notch/home-bar insets) and the seed-row
+  // relocation only kick in when insets are non-zero / on a touch device.
+  layoutHUD(width, height, safe) {
+    const pad = 32;
+    const isMobile = MobileDetect.isMobile();
+    const st = safe.top;
+    const sb = safe.bottom;
+    const sl = safe.left;
+    const sr = safe.right;
 
-    // Top-left cluster (HP + water + coins) clears a left notch and the status bar.
-    [this.hpFill, this.hpBorder, this.hpText, this.waterIndicator, this.coinText].forEach((o) => {
-      if (!o) return;
-      o.x += safe.left;
-      o.y += safe.top;
+    // Dark backing bars span the full width; the bottom one re-seats to the height.
+    if (this.topBar) this.topBar.setPosition(0, 0).setSize(width, 80);
+    if (this.bottomBar) this.bottomBar.setPosition(0, height - 80).setSize(width, 80);
+
+    // TOP LEFT — HP + water + coins (clear a left notch and the top bar).
+    if (this.hpFill) this.hpFill.setPosition(pad + sl, 40 + st);
+    if (this.hpBorder) this.hpBorder.setPosition(pad + sl, 40 + st);
+    if (this.hpText) this.hpText.setPosition(pad + sl, 60 + st);
+    if (this.waterIndicator) this.waterIndicator.setPosition(pad + sl, 92 + st);
+    if (this.coinText) this.coinText.setPosition(300 + sl, 40 + st);
+
+    // TOP CENTER — day + zone + weather + NG+ (drop below the top inset).
+    if (this.dayText) this.dayText.setPosition(width / 2, 30 + st);
+    if (this.zoneBadge) this.zoneBadge.setPosition(width / 2, 66 + st);
+    if (this.weatherIcon) {
+      this.weatherIcon.setPosition(
+        width / 2 + (this._weatherIsSprite ? 96 : 92),
+        (this._weatherIsSprite ? 46 : 32) + st
+      );
+    }
+    if (this.ngPlusIndicator) this.ngPlusIndicator.setPosition(width / 2, 96 + st);
+
+    // TOP RIGHT — timer + mute + overtime (clear a right notch and the top bar).
+    if (this.timerText) this.timerText.setPosition(width - 40 - sr, 40 + st);
+    if (this.muteIndicator) this.muteIndicator.setPosition(width - 40 - sr, 112 + st);
+    if (this.overtimeText) this.overtimeText.setPosition(width - 40 - sr, 78 + st);
+
+    // BOTTOM LEFT / CENTER — seed slots. On touch, shift them out of the joystick's
+    // corner into the central-bottom gap and above the home indicator; on desktop
+    // they keep the original bottom-left anchor. Re-anchoring _slotBaseX/Y means
+    // later satchel-driven rebuilds land in the same place.
+    if (isMobile) {
+      this._slotBaseX = 270;
+      this._slotBaseY = height - 64 - sb;
+    } else {
+      this._slotBaseX = pad;
+      this._slotBaseY = height - 48;
+    }
+    this.repositionSeedSlots();
+    if (this.seedsLabel) {
+      this.seedsLabel.setPosition(this._slotBaseX, this._slotBaseY + 28);
+      this.seedsLabel.setVisible(!isMobile); // on mobile the frames are self-evident
+    }
+
+    // BOTTOM CENTER — interaction prompt.
+    if (this.interactPrompt) this.interactPrompt.setPosition(width / 2, height - 112);
+
+    // BOTTOM RIGHT — bank + ammo (clear a right notch and the home indicator).
+    if (this.bankText) this.bankText.setPosition(width - pad - sr, height - 40 - sb);
+    if (this.ammoText) this.ammoText.setPosition(width - pad - sr, height - 72 - sb);
+
+    // CENTER RIGHT — combo counter.
+    if (this.comboText) this.comboText.setPosition(width * 0.72, height / 2);
+
+    // Minimap — top-right, below the top HUD bar, clear of a right notch.
+    if (this.minimapContainer) {
+      this.minimapContainer.setPosition(width - this.minimapW - 16 - sr, 96 + st);
+    }
+  }
+
+  // Move existing seed-slot graphics to the current _slotBaseX/_slotBaseY without a
+  // rebuild, so a resize keeps each slot's fill colour (rebuilding would blank them
+  // until the next inventory:changed). Mirrors the cx formula in buildSeedSlots.
+  repositionSeedSlots() {
+    if (!this.seedSlots) return;
+    const size = this._slotSize;
+    const gap = this._slotGap;
+    this.seedSlots.forEach((slot, i) => {
+      const cx = this._slotBaseX + i * (size + gap) + size / 2;
+      slot.box.setPosition(cx, this._slotBaseY);
+      slot.fill.setPosition(cx, this._slotBaseY);
     });
-
-    // Top-center cluster just drops below the status bar.
-    [this.dayText, this.zoneBadge, this.weatherIcon, this.ngPlusIndicator].forEach((o) => {
-      if (o) o.y += safe.top;
-    });
-
-    // Top-right cluster (timer + mute + overtime) clears a right notch and status bar.
-    [this.timerText, this.muteIndicator, this.overtimeText].forEach((o) => {
-      if (!o) return;
-      o.x -= safe.right;
-      o.y += safe.top;
-    });
-
-    // Seed slots → central-bottom gap, clear of the joystick and action buttons.
-    // Re-anchoring _slotBaseX/Y means later satchel-driven rebuilds stay here too.
-    this._slotBaseX = 270;
-    this._slotBaseY = VIRTUAL_HEIGHT - 64 - safe.bottom;
-    this.buildSeedSlots(this.slotCount);
-    if (this.seedsLabel) this.seedsLabel.setVisible(false); // frames are self-evident
   }
 
   // --- Death message (Sprint 7 + death-fix) ---------------------------------
@@ -1419,6 +1482,7 @@ export default class UIScene extends Phaser.Scene {
   }
 
   teardown() {
+    this.scale.off('resize', this.onResize, this);
     if (this.touchControls) {
       this.touchControls.destroy();
       this.touchControls = null;

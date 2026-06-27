@@ -44,9 +44,14 @@ const config = {
   powerPreference: 'high-performance',
   failIfMajorPerformanceCaveat: false,
   scale: {
-    // FIT + CENTER already absorbs the Chrome URL-bar viewport shift (it
-    // recomputes on resize), so no manual innerHeight lock is needed here.
-    mode: Phaser.Scale.FIT,
+    // Mobile uses RESIZE so the canvas fills the whole viewport (no 16:9 letterbox
+    // bands) and a larger screen simply shows more world at CAMERA_ZOOM. Desktop
+    // stays on FIT — RESIZE at a sub-1600 desktop window would change the world FOV
+    // and HUD scale, which the "desktop unchanged" guardrail forbids. At exactly
+    // 1600x900 the two modes are identical, so this only diverges on real phones.
+    // Under RESIZE the HUD coordinate space becomes the live screen size, so UIScene
+    // re-runs layoutHUD() on every Scale 'resize' (see UIScene.onResize).
+    mode: isMobile ? Phaser.Scale.RESIZE : Phaser.Scale.FIT,
     autoCenter: Phaser.Scale.CENTER_BOTH,
     width: VIRTUAL_WIDTH,
     height: VIRTUAL_HEIGHT
@@ -101,5 +106,34 @@ function loadGameFonts() {
   );
 }
 
-// eslint-disable-next-line no-new
-loadGameFonts().finally(() => new Phaser.Game(config));
+// Drive the canvas off the TRUE visible area on mobile. window.innerHeight on iOS
+// Safari includes the strip behind the collapsing address bar, so the game would be
+// sized into space the user can't see; window.visualViewport excludes it. We resize
+// the Phaser scale to the visualViewport on its own 'resize' event (fires when the
+// toolbar expands/collapses) AND on orientationchange, and pin the parent's pixel
+// size to match so Phaser's RESIZE parent-read agrees instead of fighting us. The
+// Scale Manager then emits 'resize', which UIScene listens for to reflow the HUD —
+// that chain is what makes portrait<->landscape reflow live without a page reload.
+function setupViewportSizing(game) {
+  const vv = window.visualViewport;
+  const parent = document.getElementById('game-container');
+  const apply = () => {
+    const w = Math.round(vv ? vv.width : window.innerWidth);
+    const h = Math.round(vv ? vv.height : window.innerHeight);
+    if (parent) {
+      parent.style.width = `${w}px`;
+      parent.style.height = `${h}px`;
+    }
+    if (game.scale) game.scale.resize(w, h);
+  };
+  if (vv) vv.addEventListener('resize', apply);
+  // orientationchange fires before the new dimensions settle, so apply after a beat.
+  window.addEventListener('orientationchange', () => setTimeout(apply, 250));
+  // Sync once the Scale Manager is live (its size is otherwise the 1600x900 base).
+  game.events.once(Phaser.Core.Events.READY, apply);
+}
+
+loadGameFonts().finally(() => {
+  const game = new Phaser.Game(config);
+  if (isMobile) setupViewportSizing(game);
+});

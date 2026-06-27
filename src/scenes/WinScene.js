@@ -9,6 +9,7 @@
 // the GameState machine (PLAYING → WIN, then MenuScene settles WIN → MENU).
 
 import Phaser from 'phaser';
+import { fitCameraToVirtual } from '../core/ViewportFit.js';
 import EventBus from '../core/EventBus.js';
 import GameState from '../core/GameState.js';
 import { VIRTUAL_WIDTH, VIRTUAL_HEIGHT } from '../core/Constants.js';
@@ -45,6 +46,7 @@ export default class WinScene extends Phaser.Scene {
   }
 
   create() {
+    fitCameraToVirtual(this);
     const cx = VIRTUAL_WIDTH / 2;
     const isFull = this.winType === 'full';
 

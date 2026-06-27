@@ -7,6 +7,7 @@
 // ESC or [Close] dismisses and emits 'dictionary:closed' so GameScene unfreezes.
 
 import Phaser from 'phaser';
+import { fitCameraToVirtual } from '../core/ViewportFit.js';
 import EventBus from '../core/EventBus.js';
 import { VIRTUAL_WIDTH, VIRTUAL_HEIGHT } from '../core/Constants.js';
 import entitiesData from '../data/entities.json';
@@ -49,6 +50,7 @@ export default class SeedDictScene extends Phaser.Scene {
   }
 
   create() {
+    fitCameraToVirtual(this);
     const gameScene = this.scene.get('GameScene');
     this.discovered = new Set((gameScene && gameScene.discoveredPlants) || []);
     this.grown = (gameScene && gameScene.plantsGrownEver) || {};

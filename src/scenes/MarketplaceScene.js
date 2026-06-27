@@ -13,6 +13,7 @@
 // whether a future upgrade is worth saving for before committing coins.
 
 import Phaser from 'phaser';
+import { fitCameraToVirtual } from '../core/ViewportFit.js';
 import EventBus from '../core/EventBus.js';
 import MobileDetect from '../core/MobileDetect.js';
 import { VIRTUAL_WIDTH, VIRTUAL_HEIGHT } from '../core/Constants.js';
@@ -80,6 +81,7 @@ export default class MarketplaceScene extends Phaser.Scene {
   }
 
   create() {
+    fitCameraToVirtual(this);
     this.gameScene = this.scene.get('GameScene');
     this.gameData = this.gameScene.gameData;
     this.economy = this.gameScene.economyData;
