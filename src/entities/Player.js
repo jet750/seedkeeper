@@ -316,13 +316,17 @@ export default class Player extends Phaser.Physics.Arcade.Sprite {
   }
 
   createAnimations() {
-    // Sprout Lands 48x48 4-dir sheet assumed layout: rows of walk frames.
-    // Adjust frame ranges when the real sheet is finalised.
+    // player_sheet is a 4x4 grid (192x192 @ 48px): one ROW per direction, four walk
+    // frames per row — row 0 down (0-3), row 1 up (4-7), row 2 left (8-11), row 3 right
+    // (12-15), verified against the art. The idle pose for a direction is the FIRST frame
+    // of that direction's row (the neutral standing frame). The old idle_* mapping read
+    // 0/1/2/3 — i.e. four frames of the DOWN row — so idle_up/left/right showed a
+    // down-facing pose; each idle now points at its own row's frame 0.
     const defs = [
       ['idle_down', 0, 0],
-      ['idle_up', 1, 1],
-      ['idle_left', 2, 2],
-      ['idle_right', 3, 3],
+      ['idle_up', 4, 4],
+      ['idle_left', 8, 8],
+      ['idle_right', 12, 12],
       ['walk_down', 0, 3],
       ['walk_up', 4, 7],
       ['walk_left', 8, 11],

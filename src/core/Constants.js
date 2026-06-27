@@ -147,7 +147,16 @@ export const TOUCH_BUTTON_LOCKED_ALPHA = 0.3;
 // spread*√2 ≈ 70.7px ≈ 1.18× the 60px button diameter (target band 1.1–1.25×). // TUNE
 export const TOUCH_DIAMOND_SPREAD = 50; // centre→button distance (button gaps grow with this)
 export const TOUCH_DIAMOND_CENTER_X = 120; // diamond centre inset from the right edge
-export const TOUCH_DIAMOND_CENTER_Y = 150; // diamond centre inset from the bottom edge
+// Shared vertical resting anchor for BOTH control clusters (Sprint movement-jank). The
+// joystick and the diamond both sit too high before this — near screen centre — which
+// compresses the play area, badly in landscape. Instead of insetting each cluster's
+// CENTRE from the bottom (which left a big gap below them), anchor each cluster's BOTTOM
+// edge this many px above the effective bottom inset (= max(safe.bottom, BOTTOM_SAFE_MIN)),
+// so both rest as low as the safe area allows and the play view above is maximised. Each
+// cluster derives its own centre from its half-height, so the joystick and the diamond
+// bottoms line up regardless of their different sizes. Small = lower (closer to the home
+// indicator); raise to lift both clusters together. // TUNE
+export const TOUCH_CLUSTER_BOTTOM_GAP = 16;
 // Minimum bottom inset for the touch controls (Sprint mobile-control-feel). env(safe-
 // area-inset-bottom) reports 0 in a non-PWA Android Chrome tab even though a bottom
 // nav/URL bar overlaps, so the dash button fell under the chrome. The control layer

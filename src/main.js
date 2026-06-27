@@ -66,9 +66,18 @@ const config = {
     arcade: {
       gravity: { x: 0, y: 0 },
       debug: false,
-      // 30Hz physics on mobile halves the integration cost; the game is
-      // velocity-driven so it stays smooth. Desktop keeps the 60Hz default.
-      fps: isMobile ? 30 : 60
+      // Integrate exactly ONE physics step per rendered frame, using the real frame
+      // delta (fixedStep:false). The previous mobile path pinned a 30Hz FIXED step to
+      // halve integration cost — but Phaser then advanced the body only every OTHER
+      // frame at 60Hz render, while the camera (lerped follow) scrolled smoothly every
+      // frame. That mismatch made the player sawtooth-jitter against the world — the
+      // "movement strobe", and the reason it was WORSE on mobile (desktop already ran
+      // 60Hz = render, so it was smooth). A variable per-frame step keeps motion smooth
+      // at ANY refresh rate (60/90/120 Hz) with no more than one integration per frame,
+      // so it never costs more than the old 30Hz path on a 60 Hz screen. The mobile CPU
+      // saver remains the slime-AI throttle (slimeUpdateInterval), independent of this.
+      fps: 60,
+      fixedStep: false
     }
   },
   scene: [

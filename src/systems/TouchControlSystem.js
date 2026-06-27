@@ -21,7 +21,7 @@ import {
   TOUCH_PORTRAIT_SCALE,
   TOUCH_DIAMOND_SPREAD,
   TOUCH_DIAMOND_CENTER_X,
-  TOUCH_DIAMOND_CENTER_Y,
+  TOUCH_CLUSTER_BOTTOM_GAP,
   TOUCH_BOTTOM_SAFE_MIN,
   RADIAL_LONGPRESS_MS
 } from '../core/Constants.js';
@@ -107,10 +107,13 @@ export default class TouchControlSystem {
     const BASE_RADIUS = TOUCH_JOYSTICK_BASE_RADIUS;
     const HANDLE_RADIUS = TOUCH_JOYSTICK_HANDLE_RADIUS;
     this.joystickBaseRadius = BASE_RADIUS;
-    // Bottom-left, inset past a left notch and the home indicator. layout()
-    // recomputes these on resize; this is just the initial seat.
+    // Bottom-left, inset past a left notch and the home indicator. The base disc's
+    // BOTTOM rests TOUCH_CLUSTER_BOTTOM_GAP above the effective bottom inset (shared low
+    // anchor with the diamond), so its centre sits one radius higher. layout() recomputes
+    // these on resize; this is just the initial seat.
     const JOYSTICK_X = 150 + this.safe.left;
-    const JOYSTICK_Y = this.scene.scale.height - 150 - this._bottomInset(this.safe);
+    const JOYSTICK_Y =
+      this.scene.scale.height - this._bottomInset(this.safe) - TOUCH_CLUSTER_BOTTOM_GAP - BASE_RADIUS;
 
     // Base disc + ring — static, semi-transparent. The ring + arrows are Graphics
     // (redrawn by _drawJoystickDecor on every layout); the disc/handle/dot just move.
@@ -352,11 +355,12 @@ export default class TouchControlSystem {
     const btnR = TOUCH_BUTTON_RADIUS * cs;
     const sb = this._bottomInset(safe);
     const cx = width - TOUCH_DIAMOND_CENTER_X * cs - safe.right;
-    let cy = height - TOUCH_DIAMOND_CENTER_Y * cs - sb;
-    // Never let the BOTTOM (dash) button dip under the effective bottom inset: clamp the
-    // cluster centre up so cy + spread + btnR stays above it (Sprint mobile-control-feel).
-    const maxCy = height - sb - spread - btnR;
-    if (cy > maxCy) cy = maxCy;
+    // Anchor the cluster low: place the centre so the BOTTOM (dash) button's lower edge
+    // (cy + spread + btnR) rests TOUCH_CLUSTER_BOTTOM_GAP above the effective bottom inset
+    // — the same low resting line as the joystick. This both maximises the play area above
+    // (was a centre-inset that left the cluster near screen middle) and guarantees the
+    // bottom button clears the home indicator / browser chrome in both orientations.
+    const cy = height - sb - TOUCH_CLUSTER_BOTTOM_GAP - spread - btnR;
     switch (pos) {
       case 'top': return { x: cx, y: cy - spread };
       case 'bottom': return { x: cx, y: cy + spread };
@@ -497,7 +501,10 @@ export default class TouchControlSystem {
     this.joystick.baseRadius = baseR;
     this.joystick.handleRadius = handleR;
     const jx = (portrait ? baseR + 24 : 150) + safe.left;
-    const jy = height - 150 - this._bottomInset(safe);
+    // Low anchor: the joystick disc's BOTTOM sits TOUCH_CLUSTER_BOTTOM_GAP above the
+    // effective bottom inset, lining up with the diamond's bottom (both clusters low so
+    // the play area above is roomy, especially in landscape).
+    const jy = height - this._bottomInset(safe) - TOUCH_CLUSTER_BOTTOM_GAP - baseR;
     this.joystick.baseX = jx;
     this.joystick.baseY = jy;
     this.joystickBase.setPosition(jx, jy).setRadius(baseR);
