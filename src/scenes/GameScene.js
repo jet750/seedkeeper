@@ -267,6 +267,7 @@ export default class GameScene extends Phaser.Scene {
     this._sleeping = false;
     this._swapCandidate = null;
     this._swapPickerOpen = false;
+    this._swapPaused = false; // true while WE hard-paused the world for the picker
     this._swapSnoozedSeed = null;
     this._upgradeOpen = false;
     this._marketOpen = false; // Sprint 3 — marketplace overlay open
@@ -1988,27 +1989,50 @@ export default class GameScene extends Phaser.Scene {
     });
   }
 
-  // Full inventory near a collectible seed → show the swap picker (Sprint 7,
-  // replacing the old FIFO auto-drop). The player chooses which slot to drop.
+  // Full inventory near a collectible seed → register it as a context interactable
+  // (mobile-playability-2). The HUD shows "[F] Swap" and an interact press opens the
+  // picker via openSwapPicker — it NEVER auto-opens on walk-over, because in the wild
+  // an overlay you didn't ask for can get you killed before you see it. While the
+  // picker is open the world is hard-paused, so updateSeeds (and this) don't run,
+  // which is why the old open-state / walk-away branch is gone.
   handleSwapPicker(candidate) {
-    if (this._swapPickerOpen) {
-      const s = this._swapCandidate;
-      if (!s || !s.active || s.collected) {
-        this.closeSwapPicker(true);
-        return;
-      }
-      const d = Phaser.Math.Distance.Between(this.player.x, this.player.y, s.x, s.y);
-      if (d > SWAP_TIMEOUT_DIST) this.closeSwapPicker(true); // walked away → cancel
-      return;
-    }
+    if (this._swapPickerOpen) return; // picker owns state; world is paused
+    this._swapCandidate = candidate; // null when none in range → clears the prompt
+  }
 
-    if (candidate) {
-      this._swapCandidate = candidate;
-      this._swapPickerOpen = true;
-      EventBus.emit('inventory:swapRequested', {
-        slots: [...this.player.seedSlots],
-        newPlantType: candidate.plantType
-      });
+  // Interact press over a full-satchel seed: open the picker and hard-pause the
+  // world (physics + master clock) the same way the pause menu / map do, so a
+  // read-and-choose list can't be interrupted by an off-screen attack. The picker
+  // backdrop stays non-interactive (UIScene) since the open originates from a tap.
+  openSwapPicker() {
+    if (this._swapPickerOpen) return;
+    const seed = this._swapCandidate;
+    if (!seed || !seed.active || seed.collected) return;
+    this._swapPickerOpen = true;
+    this._pauseForSwap();
+    EventBus.emit('inventory:swapRequested', {
+      slots: [...this.player.seedSlots],
+      newPlantType: seed.plantType
+    });
+  }
+
+  // Hard-pause owned by the swap picker. Mirrors tryOpenPause/openMap so enemies,
+  // contact damage and the day clock all freeze. `_swapPaused` tracks that WE own
+  // the pause so the matching resume can't fight another flow's freeze.
+  _pauseForSwap() {
+    if (this._swapPaused) return;
+    this._swapPaused = true;
+    this.player.setVelocity(0, 0);
+    GameState.transition('PAUSED'); // PLAYING → PAUSED
+    this.physics.pause();
+  }
+
+  _resumeFromSwapPause() {
+    if (!this._swapPaused) return;
+    this._swapPaused = false;
+    if (GameState.is('PAUSED')) {
+      GameState.transition('PLAYING');
+      this.physics.resume();
     }
   }
 
@@ -2016,6 +2040,7 @@ export default class GameScene extends Phaser.Scene {
   executeSwap(dropSlotIndex) {
     const seed = this._swapCandidate;
     this._swapPickerOpen = false;
+    this._resumeFromSwapPause();
     if (!seed || !seed.active || seed.collected) {
       this._swapCandidate = null;
       return;
@@ -2047,14 +2072,17 @@ export default class GameScene extends Phaser.Scene {
     this._swapSnoozedSeed = this._swapCandidate;
     this._swapCandidate = null;
     this._swapPickerOpen = false;
+    this._resumeFromSwapPause();
   }
 
-  // Close the picker from the GameScene side (timeout / seed gone). When
-  // `snooze` is set the seed is remembered so it doesn't instantly reopen.
+  // Close the picker from the GameScene side (seed gone, or another modal force-
+  // closing it). When `snooze` is set the seed is remembered so it doesn't
+  // instantly reopen. Always resumes the world if we paused it for the picker.
   closeSwapPicker(snooze) {
     if (snooze) this._swapSnoozedSeed = this._swapCandidate;
     this._swapCandidate = null;
     this._swapPickerOpen = false;
+    this._resumeFromSwapPause();
     EventBus.emit('inventory:swapClosed', {});
   }
 
@@ -2324,6 +2352,13 @@ export default class GameScene extends Phaser.Scene {
     const wd = this.nearestWorldDetail(INTERACT_RANGE);
     if (wd) consider(wd, INTERACT_RANGE, () => ({ text: '[F] Examine', actionable: true }));
 
+    // Full satchel underfoot a collectible seed (mobile-playability-2): offer a
+    // click-to-open swap. Strictly lowest priority — only when nothing else is in
+    // reach — so this prompt matches what handleInteract's F press actually does.
+    if (!best && this._swapCandidate) {
+      best = { text: '[F] Swap seed', actionable: true };
+    }
+
     if (best) {
       if (best.text !== this._lastPromptText) {
         this._lastPromptText = best.text;
@@ -2565,7 +2600,7 @@ export default class GameScene extends Phaser.Scene {
     // player chooses a seed or cancels (Sprint 10c). Likewise a modal overlay
     // (workshop / market) owns input until dismissed (matters on mobile, where
     // the touch interact button can still fire while the world loop is frozen).
-    if (this._plantPickerOpen || this._upgradeOpen || this._marketOpen) return;
+    if (this._plantPickerOpen || this._upgradeOpen || this._marketOpen || this._swapPickerOpen) return;
     // Priority: chest > sleep > well > garden bed > seed swap. Objects are
     // spatially separated so only one is ever in range, but ordering keeps it
     // deterministic.
@@ -2598,7 +2633,14 @@ export default class GameScene extends Phaser.Scene {
 
     // Lowest priority: examine a forest world-detail object (Sprint 11).
     const detail = this.nearestWorldDetail(INTERACT_RANGE);
-    if (detail) this.openWorldDetail(detail);
+    if (detail) {
+      this.openWorldDetail(detail);
+      return;
+    }
+
+    // Final fallback (mobile-playability-2): full satchel standing on a collectible
+    // seed → open the swap picker. Click-to-open only; never fires on walk-over.
+    if (this._swapCandidate) this.openSwapPicker();
   }
 
   interactBed(bed) {
