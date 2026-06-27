@@ -18,7 +18,8 @@ import {
   TOUCH_BUTTON_RADIUS,
   TOUCH_BUTTON_LABEL_PX,
   TOUCH_BUTTON_LOCKED_ALPHA,
-  TOUCH_PORTRAIT_SCALE
+  TOUCH_PORTRAIT_SCALE,
+  RADIAL_LONGPRESS_MS
 } from '../core/Constants.js';
 
 export default class TouchControlSystem {
@@ -209,11 +210,17 @@ export default class TouchControlSystem {
     // weapon is acquired (ranged:equipped), so the 2x2 cluster reads complete without
     // letting the player fire before they can. 2x2 layout is unchanged (the
     // rearrange is a later sprint); only the per-button size shrank.
+    // Sprint control-scheme-combat-input: the ranged button is now the generic
+    // "Ranged-Magic" control — tap = fire active secondary, long-press = radial select
+    // (Phase D). It is ALWAYS active (no longer locked until a ranged weapon is
+    // acquired): firing simply no-ops until something castable is selected, and the
+    // long-press radial must work from the start. Interact shows 'E' (F is a legacy
+    // alias). The 2x2 layout is unchanged.
     this._buttonDefs = [
       { id: 'attack', dx: 90, dy: 190, color: 0xcc2222, label: '⚔', event: 'touch:attack' },
-      { id: 'interact', dx: 185, dy: 105, color: 0x228822, label: 'F', event: 'touch:interact' },
+      { id: 'interact', dx: 185, dy: 105, color: 0x228822, label: 'E', event: 'touch:interact' },
       { id: 'dash', dx: 90, dy: 105, color: 0x2244cc, label: '⚡', event: 'touch:dash' },
-      { id: 'ranged', dx: 185, dy: 190, color: 0xcc8822, label: '\u{1f3f9}', event: 'touch:ranged', lockedInitially: true }
+      { id: 'ranged', dx: 185, dy: 190, color: 0xcc8822, label: '\u{1f3f9}', event: 'touch:ranged' }
     ];
 
     this.touchButtons = {};
@@ -256,7 +263,13 @@ export default class TouchControlSystem {
         if (entry.locked) return; // inert until unlocked (e.g. ranged before pickup)
         bg.setScale(0.85);
         label.setScale(0.85);
-        EventBus.emit(btn.event, {});
+        // The Ranged-Magic button is tap-to-fire / hold-to-radial, so it resolves on
+        // RELEASE (see _beginRangedPress). Every other button fires immediately.
+        if (btn.id === 'ranged') {
+          this._beginRangedPress(pointer);
+        } else {
+          EventBus.emit(btn.event, {});
+        }
       });
       const relax = () => {
         bg.setScale(1);
@@ -266,13 +279,66 @@ export default class TouchControlSystem {
       hitZone.on('pointerout', relax);
     });
 
-    // Ranged starts locked; activate it (full alpha + live taps) once a ranged weapon
-    // is acquired. ranged:equipped is the existing equip/load signal. Dash needs no
-    // such gate — it is a base ability, active from the start.
-    this._onBus('ranged:equipped', () => this.unlockButton('ranged'));
+    // Long-press radial tracking for the ranged button (Sprint control-scheme-combat-
+    // input). The release can land OFF the button (thumb dragged to a radial option),
+    // so resolution is wired at SCENE level, not on the button's own hitZone.
+    this._rangedPointerId = null;
+    this._rangedRadialOpen = false;
+    this._rangedPressTimer = null;
+    this._onScene('pointermove', (pointer) => {
+      if (pointer.id === this._rangedPointerId && this._rangedRadialOpen) {
+        EventBus.emit('combat:radialMove', { x: pointer.x, y: pointer.y });
+      }
+    });
+    const endRanged = (pointer) => {
+      if (pointer.id === this._rangedPointerId) this._endRangedPress();
+    };
+    this._onScene('pointerup', endRanged);
+    this._onScene('pointerupoutside', endRanged);
   }
 
-  // Promote a locked button to active: full opacity and its taps now emit.
+  // Ranged-Magic press begins: start the long-press timer. A release before it elapses
+  // is a tap (fire active secondary); if it elapses while still held, open the radial
+  // centred on the button. The timer runs on UIScene's clock, which is NOT slowed by
+  // the radial slow-mo (that only scales GameScene), so timing stays real.
+  _beginRangedPress(pointer) {
+    this._rangedPointerId = pointer.id;
+    this._rangedRadialOpen = false;
+    if (this._rangedPressTimer) this._rangedPressTimer.remove(false);
+    const r = this.touchButtons.ranged;
+    const cx = r ? r.bg.x : this.scene.scale.width;
+    const cy = r ? r.bg.y : this.scene.scale.height;
+    this._rangedPressTimer = this.scene.time.delayedCall(RADIAL_LONGPRESS_MS, () => {
+      if (this._rangedPointerId === null) return; // already released
+      this._rangedRadialOpen = true;
+      EventBus.emit('combat:radialOpen', { cx, cy });
+    });
+  }
+
+  // Ranged-Magic release: close the radial (selecting the highlighted slot) if it was
+  // open, otherwise treat the press as a tap and fire the active secondary.
+  _endRangedPress() {
+    if (this._rangedPressTimer) {
+      this._rangedPressTimer.remove(false);
+      this._rangedPressTimer = null;
+    }
+    const r = this.touchButtons.ranged;
+    if (r) {
+      r.bg.setScale(1);
+      r.label.setScale(1);
+    }
+    if (this._rangedRadialOpen) {
+      EventBus.emit('combat:radialClose', {});
+    } else {
+      EventBus.emit('touch:ranged', {});
+    }
+    this._rangedRadialOpen = false;
+    this._rangedPointerId = null;
+  }
+
+  // Promote a locked button to active: full opacity and its taps now emit. Retained as
+  // a generic helper; the ranged button no longer starts locked (Sprint control-scheme-
+  // combat-input un-gated it), so nothing calls this in normal play now.
   unlockButton(id) {
     const b = this.touchButtons && this.touchButtons[id];
     if (!b || !b.locked) return;

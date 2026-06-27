@@ -24,7 +24,7 @@ import { VIRTUAL_WIDTH, isDevModeActive } from '../core/Constants.js';
 // The grid is 2 columns; its row count is computed from the plant count.
 
 const PANEL_W = 388;
-const PANEL_H = 770; // Sprint 14: taller to fit the full 12-plant grant grid (6 rows)
+const PANEL_H = 802; // Sprint 14: full 12-plant grid; +1 row for the mana test button
 const PANEL_X = VIRTUAL_WIDTH - PANEL_W - 8; // 1204
 const PANEL_TOP = 6;
 const PAD = 12;
@@ -247,6 +247,12 @@ export default class DevMenuScene extends Phaser.Scene {
     this.makeButton(CONTENT_X, y, HALF_W, 'Full Heal', () => this.dispatch('dev:fullHeal'));
     this.makeButton(CONTENT_X + HALF_W + 8, y, HALF_W, 'Restore Ammo', () =>
       this.dispatch('dev:restoreAmmo')
+    );
+    y += BTN_H + 4;
+    // Sprint control-scheme-combat-input: reveal the dormant mana bar (no spells unlock
+    // it yet) so its placement + dual-orientation reflow can be feel-tested.
+    this.makeButton(CONTENT_X, y, CONTENT_W, 'Unlock Mana (test bar)', () =>
+      this.dispatch('dev:unlockMana')
     );
     y += BTN_H + 8;
 

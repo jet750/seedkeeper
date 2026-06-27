@@ -23,7 +23,7 @@ import {
 } from '../core/Constants.js';
 
 const PANEL_W = 420;
-const PANEL_H = 360;
+const PANEL_H = 430; // +Controls button (Sprint control-scheme-combat-input)
 
 export default class PauseScene extends Phaser.Scene {
   constructor() {
@@ -34,6 +34,7 @@ export default class PauseScene extends Phaser.Scene {
     this.dayNumber = (data && data.dayNumber) || 1;
     this.zone = (data && data.zone) || 'garden';
     this._settingsOpen = false;
+    this._controlsOpen = false;
   }
 
   create() {
@@ -66,10 +67,11 @@ export default class PauseScene extends Phaser.Scene {
       .rectangle(cx, cy - PANEL_H / 2 + 78, PANEL_W - 80, 2, UI_BORDER_COLOR)
       .setDepth(302);
 
-    const btnY = cy - 40;
+    const btnY = cy - 66;
     this.makeButton(cx, btnY, 280, 52, 'Resume', 0x3a7d44, () => this.resumeGame());
-    this.makeButton(cx, btnY + 64, 280, 52, 'Settings', 0x36322e, () => this.openSettings());
-    this.makeButton(cx, btnY + 128, 280, 52, 'Return to Menu', 0x36322e, () => this.toMenu());
+    this.makeButton(cx, btnY + 60, 280, 52, 'Controls', 0x36322e, () => this.openControls());
+    this.makeButton(cx, btnY + 120, 280, 52, 'Settings', 0x36322e, () => this.openSettings());
+    this.makeButton(cx, btnY + 180, 280, 52, 'Return to Menu', 0x36322e, () => this.toMenu());
 
     const zoneLabel = this.zone === 'forest' ? 'Forest' : 'Garden';
     this.add
@@ -82,16 +84,22 @@ export default class PauseScene extends Phaser.Scene {
       .setDepth(302);
 
     this.input.keyboard.on('keydown-ESC', () => {
-      if (!this._settingsOpen) this.resumeGame();
+      // Esc only resumes when no child overlay (settings / controls) owns it.
+      if (!this._settingsOpen && !this._controlsOpen) this.resumeGame();
     });
 
-    // Track the settings overlay so ESC doesn't both close settings AND resume.
+    // Track child overlays so ESC doesn't both close the child AND resume.
     this._onSettingsClosed = () => {
       this._settingsOpen = false;
     };
+    this._onControlsClosed = () => {
+      this._controlsOpen = false;
+    };
     EventBus.on('settings:closed', this._onSettingsClosed);
+    EventBus.on('controls:closed', this._onControlsClosed);
     this.events.once('shutdown', () => {
       EventBus.off('settings:closed', this._onSettingsClosed);
+      EventBus.off('controls:closed', this._onControlsClosed);
       this.input.keyboard.removeAllListeners();
     });
   }
@@ -129,6 +137,13 @@ export default class PauseScene extends Phaser.Scene {
     this.scene.bringToTop('SettingsScene');
   }
 
+  openControls() {
+    if (this._controlsOpen) return;
+    this._controlsOpen = true;
+    this.scene.launch('ControlsScene');
+    this.scene.bringToTop('ControlsScene');
+  }
+
   // Save the run, tear down the gameplay scenes, and return to the title.
   toMenu() {
     const gameScene = this.scene.get('GameScene');
@@ -137,7 +152,7 @@ export default class PauseScene extends Phaser.Scene {
     // PAUSED → MENU is a valid transition; MenuScene re-asserts MENU on create.
     GameState.transition('MENU');
 
-    ['SettingsScene', 'UpgradeScene', 'SignpostScene', 'SeedDictScene', 'MapScene', 'UIScene', 'DevMenuScene', 'GameScene'].forEach(
+    ['SettingsScene', 'ControlsScene', 'UpgradeScene', 'SignpostScene', 'SeedDictScene', 'MapScene', 'UIScene', 'DevMenuScene', 'GameScene'].forEach(
       (key) => {
         if (this.scene.get(key)) this.scene.stop(key);
       }

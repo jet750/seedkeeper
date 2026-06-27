@@ -6,7 +6,14 @@
 
 import Phaser from 'phaser';
 import EventBus from '../core/EventBus.js';
-import { GARDEN_LEFT, GARDEN_RIGHT, GARDEN_TOP, GARDEN_BOTTOM } from '../core/Constants.js';
+import {
+  GARDEN_LEFT,
+  GARDEN_RIGHT,
+  GARDEN_TOP,
+  GARDEN_BOTTOM,
+  SECONDARY_SLOT_COUNT,
+  MANA_DEFAULT_MAX
+} from '../core/Constants.js';
 import Seed from './Seed.js';
 
 const FLASH_INTERVAL_MS = 100;
@@ -123,6 +130,24 @@ export default class Player extends Phaser.Physics.Arcade.Sprite {
     this.dashBuffer = false;
     this.dashBufferTimer = 0;
 
+    // --- Secondary-slot model (Sprint control-scheme-combat-input) ---
+    // The active secondary determines what "fire active secondary" does. Slot 1 =
+    // ranged (the only functional secondary this sprint). Slots 2..N are inert spell
+    // SELECTORS. Defaults to slot 1.
+    this.activeSecondary = 1;
+    // Hold-to-strafe (Shift): while true, movement no longer rotates `facing`, so the
+    // player can move sideways while keeping their aim/swing direction.
+    this._strafing = false;
+
+    // --- Mana scaffold (Sprint control-scheme-combat-input; DORMANT) ---
+    // No spells exist yet, so mana stays at 0 and `manaUnlocked` false — the HUD bar
+    // therefore never shows. The spell sprint flips this via unlockMana() and gates
+    // each spell behind canCast()/spendMana(). Selecting/firing slots 2-5 is inert
+    // until then.
+    this.manaUnlocked = false;
+    this.maxMana = 0;
+    this.currentMana = 0;
+
     // --- Upgrades & gear (Sprint 4; reconciled Sprint 10) ---
     // Stat multipliers/bonuses recomputed from scratch on each upgrade (no drift).
     // One plant feeds each key (entities.json upgrades). timerBonus is legacy — no
@@ -214,7 +239,11 @@ export default class Player extends Phaser.Physics.Arcade.Sprite {
       this.createAnimations();
     }
 
-    // --- Input ---
+    // --- Input (Sprint control-scheme-combat-input: rebound) ---
+    // Q / left-click = melee · R / right-click = fire active secondary · Space = dash ·
+    // Shift = hold-to-strafe (lock facing) · 1-5 select the active secondary (handled in
+    // GameScene so it can be gated against the plant/swap pickers' own number keys) · E
+    // interact (F legacy alias) is owned by GameScene. Movement is WASD (arrows alt).
     this.keys = scene.input.keyboard.addKeys({
       up: Phaser.Input.Keyboard.KeyCodes.W,
       down: Phaser.Input.Keyboard.KeyCodes.S,
@@ -224,9 +253,10 @@ export default class Player extends Phaser.Physics.Arcade.Sprite {
       downArrow: Phaser.Input.Keyboard.KeyCodes.DOWN,
       leftArrow: Phaser.Input.Keyboard.KeyCodes.LEFT,
       rightArrow: Phaser.Input.Keyboard.KeyCodes.RIGHT,
-      attack: Phaser.Input.Keyboard.KeyCodes.SPACE,
-      ranged: Phaser.Input.Keyboard.KeyCodes.R,
-      dash: Phaser.Input.Keyboard.KeyCodes.SHIFT
+      melee: Phaser.Input.Keyboard.KeyCodes.Q,
+      fireSecondary: Phaser.Input.Keyboard.KeyCodes.R,
+      dash: Phaser.Input.Keyboard.KeyCodes.SPACE,
+      strafe: Phaser.Input.Keyboard.KeyCodes.SHIFT
     });
 
     // --- Damage requests arrive via EventBus (slimes never call us directly) ---
@@ -242,21 +272,19 @@ export default class Player extends Phaser.Physics.Arcade.Sprite {
       this.touchVelocity.x = x;
       this.touchVelocity.y = y;
     };
-    this._onTouchAttack = () => {
-      if (this.attackCooldownRemaining <= 0) {
-        this.attack();
-      } else {
-        // Buffer exactly like the keyboard press so a tap never feels eaten.
-        this.attackBuffer = true;
-        this.attackBufferTimer = ATTACK_BUFFER_MS;
-      }
-    };
+    this._onTouchAttack = () => this.meleePressed();
     this._onTouchDash = () => this.tryDash();
-    this._onTouchRanged = () => this.fireRanged();
+    // The mobile Ranged-Magic button fires the ACTIVE SECONDARY now (slot 1 = ranged;
+    // slots 2-5 inert), not ranged directly.
+    this._onTouchRanged = () => this.fireSecondary();
+    // The mobile radial (UIScene) and any cross-scene caller set the active secondary
+    // via EventBus (selection only — never casts).
+    this._onSecondarySelect = ({ slot } = {}) => this.selectSecondary(slot);
     EventBus.on('touch:move', this._onTouchMove);
     EventBus.on('touch:attack', this._onTouchAttack);
     EventBus.on('touch:dash', this._onTouchDash);
     EventBus.on('touch:ranged', this._onTouchRanged);
+    EventBus.on('secondary:select', this._onSecondarySelect);
 
     // Clean up listeners when the scene tears down.
     scene.events.once('shutdown', this.cleanup, this);
@@ -318,16 +346,12 @@ export default class Player extends Phaser.Physics.Arcade.Sprite {
     // Passive HP regen (red_berry healthRegen tree), paused briefly after a hit.
     this.tickRegen(dtMs);
 
-    // Attack with input buffering (Sprint 12): if the cooldown is still running
-    // the press is held briefly and fired the instant it clears.
-    if (Phaser.Input.Keyboard.JustDown(this.keys.attack)) {
-      if (this.attackCooldownRemaining <= 0) {
-        this.attack();
-      } else {
-        this.attackBuffer = true;
-        this.attackBufferTimer = ATTACK_BUFFER_MS;
-      }
-    }
+    // Hold-to-strafe (Shift): lock facing this frame so movement doesn't rotate aim.
+    this._strafing = this.keys.strafe.isDown;
+
+    // Melee with input buffering (Sprint 12): if the cooldown is still running the
+    // press is held briefly and fired the instant it clears.
+    if (Phaser.Input.Keyboard.JustDown(this.keys.melee)) this.meleePressed();
     if (this.attackBuffer) {
       if (this.attackCooldownRemaining <= 0) {
         this.attack();
@@ -338,7 +362,8 @@ export default class Player extends Phaser.Physics.Arcade.Sprite {
       }
     }
 
-    if (Phaser.Input.Keyboard.JustDown(this.keys.ranged)) this.fireRanged();
+    // Fire the active secondary (R / right-click). Slot 1 = ranged; slots 2-5 inert.
+    if (Phaser.Input.Keyboard.JustDown(this.keys.fireSecondary)) this.fireSecondary();
 
     // dt is provided for frame-rate independence; Arcade Physics integrates
     // velocity * dt internally each step, so we drive movement via velocity.
@@ -406,6 +431,8 @@ export default class Player extends Phaser.Physics.Arcade.Sprite {
   }
 
   updateFacing(dx, dy) {
+    // Hold-to-strafe: keep the current facing/aim while moving (Shift held).
+    if (this._strafing) return;
     if (Math.abs(dx) > Math.abs(dy)) {
       this.facing = dx < 0 ? 'left' : 'right';
     } else {
@@ -477,6 +504,18 @@ export default class Player extends Phaser.Physics.Arcade.Sprite {
   }
 
   // --- Melee attack (Sprint 3) ----------------------------------------------
+
+  // Single entry point for a melee press from any source (Q key, left-click, mobile
+  // melee button). Swings now if off cooldown, else buffers the press (Sprint 12) so
+  // a tap landing just before the cooldown clears still lands.
+  meleePressed() {
+    if (this.attackCooldownRemaining <= 0) {
+      this.attack();
+    } else {
+      this.attackBuffer = true;
+      this.attackBufferTimer = ATTACK_BUFFER_MS;
+    }
+  }
 
   attack() {
     if (this.attackCooldownRemaining > 0) return;
@@ -634,6 +673,55 @@ export default class Player extends Phaser.Physics.Arcade.Sprite {
     }
     this.seedSlots = next;
     EventBus.emit('inventory:changed', { slots: [...this.seedSlots] });
+  }
+
+  // --- Secondary slots (Sprint control-scheme-combat-input) -----------------
+  // Slot 1 = ranged (functional). Slots 2..SECONDARY_SLOT_COUNT are spell SELECTORS:
+  // selecting one changes the active secondary but casts NOTHING (spell effects are a
+  // later sprint). Switching slots is the intended tension mechanic.
+
+  selectSecondary(slot) {
+    if (!slot || slot < 1 || slot > SECONDARY_SLOT_COUNT) return;
+    if (slot === this.activeSecondary) return;
+    this.activeSecondary = slot;
+    EventBus.emit('secondary:changed', { slot, total: SECONDARY_SLOT_COUNT });
+    // TEST: toggle-then-fire vs auto-cast-on-select — once spell effects exist, flip
+    // this handler to fire immediately on select. For now selection NEVER casts.
+  }
+
+  // Fire the active secondary (R / right-click / mobile Ranged-Magic). Slot 1 routes to
+  // the existing ranged system; slots 2-5 are inert selectors, so firing them is a
+  // deliberate no-op until the spell sprint wires real effects.
+  fireSecondary() {
+    if (this.activeSecondary === 1) {
+      this.fireRanged();
+      return;
+    }
+    // Inert spell slot — selected, nothing to cast yet. The spell sprint will check
+    // canCast(cost)/spendMana(cost) here for the active slot's spell.
+  }
+
+  // --- Mana gating scaffold (Sprint control-scheme-combat-input; DORMANT) ----
+  // Built and wired, exercised only once the spell sprint unlocks mana. Until then
+  // unlockMana() is never called in normal play (a dev cheat reveals it for HUD
+  // testing), so the bar stays hidden and these gates always read "locked".
+
+  unlockMana(max = MANA_DEFAULT_MAX) {
+    this.manaUnlocked = true;
+    this.maxMana = max;
+    this.currentMana = max;
+    EventBus.emit('mana:unlocked', { mana: this.currentMana, max: this.maxMana });
+  }
+
+  canCast(cost) {
+    return this.manaUnlocked && this.currentMana >= cost;
+  }
+
+  spendMana(cost) {
+    if (!this.canCast(cost)) return false;
+    this.currentMana = Math.max(0, this.currentMana - cost);
+    EventBus.emit('mana:changed', { mana: this.currentMana, max: this.maxMana });
+    return true;
   }
 
   // --- Ranged attack (Sprint 4) ---------------------------------------------
@@ -951,6 +1039,7 @@ export default class Player extends Phaser.Physics.Arcade.Sprite {
     EventBus.off('touch:attack', this._onTouchAttack);
     EventBus.off('touch:dash', this._onTouchDash);
     EventBus.off('touch:ranged', this._onTouchRanged);
+    EventBus.off('secondary:select', this._onSecondarySelect);
     if (this._flashEvent) this._flashEvent.remove(false);
     if (this._invEndEvent) this._invEndEvent.remove(false);
   }

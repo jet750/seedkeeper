@@ -10,8 +10,10 @@
 // reconciliation): catalog reconciled to a clean 12 — 10 growable (one per stat
 // tree) + 2 sell-only (watermelon, blue_melon); blue_flower_2 renamed blue_flower;
 // retired keys dropped. Saves are disposable in this pre-launch showcase, so a
-// version bump WIPES old slots to a fresh default (no shim).
-const SAVE_VERSION = 4;
+// version bump WIPES old slots to a fresh default (no shim). v5 (Sprint control-scheme-
+// combat-input): added `autoTargetDesktop` (desktop auto-target preference). Saves are
+// disposable in this pre-launch showcase, so v4 slots wipe to a fresh v5 default.
+const SAVE_VERSION = 5;
 const SAVE_KEY_PREFIX = 'seedkeeper_save_';
 const SETTINGS_KEY = 'seedkeeper_settings'; // global audio settings (Sprint 12)
 
@@ -71,6 +73,8 @@ const SaveSystem = {
       discoveredPlants: [],
       newGamePlus: false,
       demoWinTriggered: false,
+      // Desktop auto-target preference (v5). Mobile ignores it (forced on).
+      autoTargetDesktop: false,
       settings: { masterVolume: 1.0, sfxVolume: 0.8, musicVolume: 0.5, footstepVolume: 0.25, muted: false },
       achievements: [],
       achievementDays: {},

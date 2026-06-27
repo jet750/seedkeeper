@@ -6,7 +6,13 @@
 
 import Phaser from 'phaser';
 import EventBus from '../core/EventBus.js';
-import { VIRTUAL_WIDTH, VIRTUAL_HEIGHT } from '../core/Constants.js';
+import {
+  VIRTUAL_WIDTH,
+  VIRTUAL_HEIGHT,
+  SECONDARY_SLOT_COUNT,
+  MANA_BAR_MAX_WIDTH,
+  MANA_BAR_HEIGHT
+} from '../core/Constants.js';
 import MobileDetect from '../core/MobileDetect.js';
 import TouchControlSystem from '../systems/TouchControlSystem.js';
 import entitiesData from '../data/entities.json';
@@ -95,6 +101,17 @@ export default class UIScene extends Phaser.Scene {
     this._plantObjects = [];
     this._plantSlots = [];
     this._plantBedIndex = null;
+    // Secondary-slot strip + mana scaffold (Sprint control-scheme-combat-input)
+    this._secActive = 1;
+    this._manaUnlocked = false; // bar stays hidden until the first spell unlock
+    this._mana = 0;
+    this._manaMax = 0;
+    // Mobile radial overlay state (Phase D)
+    this._radialOpen = false;
+    this._radialObjects = [];
+    this._radialSlots = [];
+    this._radialCenter = { x: 0, y: 0 };
+    this._radialSel = 1;
   }
 
   create() {
@@ -204,6 +221,20 @@ export default class UIScene extends Phaser.Scene {
       fontSize: '18px',
       color: COLOR_NORMAL
     });
+
+    // TOP LEFT (directly under the HP bar) — mana bar SCAFFOLD (Sprint control-scheme-
+    // combat-input). Dormant: renders only after the first spell unlock (none exist
+    // yet), so it starts hidden. Built here so it's ready; layoutHUD seats it under HP.
+    this.manaFill = this.add
+      .rectangle(pad, 62, MANA_BAR_MAX_WIDTH, MANA_BAR_HEIGHT, 0x4a78c8)
+      .setOrigin(0, 0.5)
+      .setVisible(false);
+    this.manaBorder = this.add
+      .rectangle(pad, 62, MANA_BAR_MAX_WIDTH, MANA_BAR_HEIGHT)
+      .setOrigin(0, 0.5)
+      .setStrokeStyle(2, 0x9ab4dc)
+      .setFillStyle()
+      .setVisible(false);
 
     // TOP CENTER — Day + zone badge
     this.dayText = this.add
@@ -374,6 +405,85 @@ export default class UIScene extends Phaser.Scene {
       .setOrigin(0.5)
       .setDepth(240)
       .setAlpha(0);
+
+    this.buildSecondaryStrip();
+  }
+
+  // --- Secondary-slot strip (Sprint control-scheme-combat-input) ------------
+  // A compact row of SECONDARY_SLOT_COUNT mini-slots, bottom-right. Slot 1 = ranged
+  // (functional); slots 2-5 are spell SELECTORS (locked/inert — dimmed ✦ until the
+  // spell sprint). The active slot gets a gold border. Selection is driven over
+  // EventBus ('secondary:changed'); layoutHUD seats the row per viewport.
+  buildSecondaryStrip() {
+    this._secSize = 30;
+    this._secGap = 6;
+    this.secondarySlots = [];
+    for (let i = 0; i < SECONDARY_SLOT_COUNT; i++) {
+      const box = this.add
+        .rectangle(0, 0, this._secSize, this._secSize, 0x2d2926, 0.92)
+        .setStrokeStyle(2, 0x57514b)
+        .setDepth(5);
+      const glyph = this.add
+        .text(0, 0, i === 0 ? '\u{1f3f9}' : '✦', {
+          fontFamily: '"SproutLands", "Courier New", monospace',
+          fontSize: '16px',
+          color: '#F5EFE6'
+        })
+        .setOrigin(0.5)
+        .setDepth(6);
+      // Slots 2-5 are locked spell selectors for now — dim them.
+      if (i > 0) glyph.setAlpha(0.35);
+      const num = this.add
+        .text(0, 0, `${i + 1}`, {
+          fontFamily: '"SproutLands", "Courier New", monospace',
+          fontSize: '10px',
+          color: '#9B9389'
+        })
+        .setOrigin(1, 1)
+        .setDepth(6);
+      this.secondarySlots.push({ box, glyph, num });
+    }
+    this.refreshSecondary(this._secActive);
+  }
+
+  // Highlight the active secondary slot; called on 'secondary:changed' and on build.
+  refreshSecondary(slot, total) {
+    this._secActive = slot;
+    if (total && total !== this.secondarySlots.length) {
+      // Slot count changed (e.g. SECONDARY_SLOT_COUNT retune) — rebuild to match.
+      this.secondarySlots.forEach((s) => { s.box.destroy(); s.glyph.destroy(); s.num.destroy(); });
+      this.buildSecondaryStrip();
+      this.layoutAll(this.scale.width, this.scale.height);
+      return;
+    }
+    this.secondarySlots.forEach((s, i) => {
+      const active = i + 1 === this._secActive;
+      s.box.setStrokeStyle(2, active ? 0xeac34f : 0x57514b);
+      s.box.setScale(active ? 1.12 : 1);
+      s.glyph.setScale(active ? 1.12 : 1);
+    });
+  }
+
+  // --- Mana bar scaffold (Sprint control-scheme-combat-input) ---------------
+  // DORMANT until the first spell unlock. No spell unlocks exist yet, so by default
+  // the bar stays hidden — but the render + gating are built and wired so the spell
+  // sprint only has to call unlockMana()/emit mana:changed.
+
+  unlockMana({ mana, max } = {}) {
+    this._manaUnlocked = true;
+    this._manaMax = max != null ? max : (this._manaMax || 0);
+    this._mana = mana != null ? mana : this._manaMax;
+    this.manaFill.setVisible(true);
+    this.manaBorder.setVisible(true);
+    this.refreshMana(this._mana, this._manaMax);
+  }
+
+  refreshMana(mana, max) {
+    if (mana != null) this._mana = mana;
+    if (max != null) this._manaMax = max;
+    if (!this._manaUnlocked) return; // stays hidden until unlocked
+    const ratio = this._manaMax > 0 ? Phaser.Math.Clamp(this._mana / this._manaMax, 0, 1) : 0;
+    this.manaFill.width = MANA_BAR_MAX_WIDTH * ratio;
   }
 
   refreshAmmo(ammo, max) {
@@ -593,6 +703,16 @@ export default class UIScene extends Phaser.Scene {
     // --- Sprint 13 — combo counter ---
     this.subscribe('combat:combo', (d) => this.showCombo(d.count));
     this.subscribe('combat:comboEnd', () => this.hideCombo());
+
+    // --- Sprint control-scheme-combat-input — secondary slots + mana scaffold + radial ---
+    this.subscribe('secondary:changed', (d) => this.refreshSecondary(d.slot, d.total));
+    // Mana scaffold: dormant until the first spell unlock (no spells yet → unused).
+    this.subscribe('mana:unlocked', (d) => this.unlockMana(d));
+    this.subscribe('mana:changed', (d) => this.refreshMana(d.mana, d.max));
+    // Mobile radial secondary-select (Phase D).
+    this.subscribe('combat:radialOpen', (d) => this.openRadial(d));
+    this.subscribe('combat:radialMove', (d) => this.moveRadial(d));
+    this.subscribe('combat:radialClose', () => this.closeRadial());
 
     // --- Sprint 11 — weather, world details, dictionary, notices ---
     this.subscribe('weather:changed', (d) => this.onWeather(d));
@@ -1142,6 +1262,110 @@ export default class UIScene extends Phaser.Scene {
     this.closePlantPicker();
   }
 
+  // --- Mobile radial secondary-select (Sprint control-scheme-combat-input) ---
+  // Opened by a long-press on the Ranged-Magic button (TouchControlSystem) while the
+  // world runs in slow-mo (GameScene). Draws SECONDARY_SLOT_COUNT options on a ring
+  // around the press point (clamped on-screen via _vp + safe insets), tracks the drag
+  // to highlight a sector, and on release sets the active secondary. Slot 1 = ranged;
+  // slots 2-5 are dimmed spell selectors (inert).
+
+  openRadial({ cx, cy } = {}) {
+    this.closeRadial(true); // silent teardown of any prior radial
+    const vp = this._vp();
+    const R = 92; // ring radius from the hub to each option
+    const margin = 76; // keep the whole ring clear of the screen edges / insets
+    const ccx = Phaser.Math.Clamp(cx != null ? cx : vp.cx, vp.safe.left + margin, vp.w - vp.safe.right - margin);
+    const ccy = Phaser.Math.Clamp(cy != null ? cy : vp.cy, vp.safe.top + margin, vp.h - vp.safe.bottom - margin);
+    this._radialCenter = { x: ccx, y: ccy };
+    this._radialOpen = true;
+    this._radialSel = this._secActive;
+    this._radialNodes = [];
+
+    this._radialObjects.push(
+      this.add.rectangle(0, 0, vp.w, vp.h, 0x000000, 0.45).setOrigin(0, 0).setDepth(350)
+    );
+    this._radialObjects.push(
+      this.add.circle(ccx, ccy, 26, 0x221e1b, 0.95).setStrokeStyle(2, 0xeac34f).setDepth(351)
+    );
+    this._radialObjects.push(
+      this.add
+        .text(ccx, ccy, 'PICK', {
+          fontFamily: '"SproutLands", "Courier New", monospace',
+          fontSize: '12px',
+          color: '#EDD49A'
+        })
+        .setOrigin(0.5)
+        .setDepth(352)
+    );
+
+    const total = SECONDARY_SLOT_COUNT;
+    for (let i = 0; i < total; i++) {
+      const ang = -Math.PI / 2 + (i / total) * Math.PI * 2; // start at top, clockwise
+      const ox = ccx + Math.cos(ang) * R;
+      const oy = ccy + Math.sin(ang) * R;
+      const box = this.add.circle(ox, oy, 28, 0x2d2926, 0.96).setStrokeStyle(2, 0x57514b).setDepth(351);
+      const glyph = this.add
+        .text(ox, oy, i === 0 ? '\u{1f3f9}' : '✦', {
+          fontFamily: '"SproutLands", "Courier New", monospace',
+          fontSize: '20px',
+          color: '#F5EFE6'
+        })
+        .setOrigin(0.5)
+        .setDepth(352);
+      if (i > 0) glyph.setAlpha(0.4);
+      const num = this.add
+        .text(ox, oy + 20, `${i + 1}`, {
+          fontFamily: '"SproutLands", "Courier New", monospace',
+          fontSize: '11px',
+          color: '#9B9389'
+        })
+        .setOrigin(0.5)
+        .setDepth(352);
+      this._radialNodes.push({ box, glyph, ang });
+      this._radialObjects.push(box, glyph, num);
+    }
+    this.highlightRadial();
+  }
+
+  moveRadial({ x, y } = {}) {
+    if (!this._radialOpen || !this._radialNodes) return;
+    const dx = x - this._radialCenter.x;
+    const dy = y - this._radialCenter.y;
+    if (Math.hypot(dx, dy) < 26) return; // deadzone near the hub — keep current pick
+    const ang = Math.atan2(dy, dx);
+    let best = 0;
+    let bestD = Infinity;
+    this._radialNodes.forEach((n, i) => {
+      const d = Math.abs(Phaser.Math.Angle.Wrap(ang - n.ang));
+      if (d < bestD) {
+        bestD = d;
+        best = i;
+      }
+    });
+    this._radialSel = best + 1;
+    this.highlightRadial();
+  }
+
+  highlightRadial() {
+    if (!this._radialNodes) return;
+    this._radialNodes.forEach((n, i) => {
+      const active = i + 1 === this._radialSel;
+      n.box.setStrokeStyle(2, active ? 0xeac34f : 0x57514b);
+      n.box.setScale(active ? 1.18 : 1);
+      n.glyph.setScale(active ? 1.18 : 1);
+    });
+  }
+
+  closeRadial(silent) {
+    if (!this._radialOpen && this._radialObjects.length === 0) return;
+    const sel = this._radialSel;
+    this._radialObjects.forEach((o) => o.destroy());
+    this._radialObjects = [];
+    this._radialNodes = null;
+    this._radialOpen = false;
+    if (!silent) EventBus.emit('secondary:select', { slot: sel });
+  }
+
   // --- HUD layout / live reflow (Sprint Mobile viewport scaling) -------------
   // Positions EVERY persistent HUD element as a function of the current viewport
   // (width/height) and the safe-area insets, rather than baking 1600x900 coords at
@@ -1172,11 +1396,16 @@ export default class UIScene extends Phaser.Scene {
     // bar was removed in Sprint mobile-playability-2).
     if (this.topBar) this.topBar.setPosition(0, 0).setSize(width, 80);
 
-    // TOP LEFT — HP + water + coins (clear a left notch and the top bar).
+    // TOP LEFT — HP + mana + water + coins (clear a left notch and the top bar).
     if (this.hpFill) this.hpFill.setPosition(pad + sl, 40 + st);
     if (this.hpBorder) this.hpBorder.setPosition(pad + sl, 40 + st);
     if (this.hpText) this.hpText.setPosition(pad + sl, 60 + st);
-    if (this.waterIndicator) this.waterIndicator.setPosition(pad + sl, 92 + st);
+    // Mana bar scaffold sits directly under the HP readout (Sprint control-scheme-
+    // combat-input). Hidden by default (dormant); when revealed it pushes the water
+    // counter down so nothing overlaps.
+    if (this.manaFill) this.manaFill.setPosition(pad + sl, 80 + st);
+    if (this.manaBorder) this.manaBorder.setPosition(pad + sl, 80 + st);
+    if (this.waterIndicator) this.waterIndicator.setPosition(pad + sl, (this._manaUnlocked ? 100 : 92) + st);
     if (this.coinText) this.coinText.setPosition(300 + sl, 40 + st);
 
     // TOP CENTER — day + zone + weather + NG+ (drop below the top inset).
@@ -1237,6 +1466,22 @@ export default class UIScene extends Phaser.Scene {
 
     // CENTER RIGHT — combo counter.
     if (this.comboText) this.comboText.setPosition(width * 0.72, height / 2);
+
+    // BOTTOM RIGHT (above ammo) — secondary-slot strip (Sprint control-scheme-combat-
+    // input). Right-aligned; portrait lifts it above the control band.
+    if (this.secondarySlots && this.secondarySlots.length) {
+      const n = this.secondarySlots.length;
+      const size = this._secSize;
+      const gap = this._secGap;
+      const right = width - pad - sr;
+      const secY = portrait ? bandTop - 84 : height - 104 - sb;
+      this.secondarySlots.forEach((s, i) => {
+        const cx = right - (n - 1 - i) * (size + gap) - size / 2;
+        s.box.setPosition(cx, secY);
+        s.glyph.setPosition(cx, secY);
+        s.num.setPosition(cx + size / 2 - 3, secY + size / 2 - 2);
+      });
+    }
   }
 
   // Move existing seed-slot graphics to the current _slotBaseX/_slotBaseY without a
@@ -1399,6 +1644,7 @@ export default class UIScene extends Phaser.Scene {
 
   teardown() {
     this.scale.off('resize', this.onResize, this);
+    this.closeRadial(true);
     if (this.touchControls) {
       this.touchControls.destroy();
       this.touchControls = null;

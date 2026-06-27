@@ -38,6 +38,9 @@ import {
   GARDEN_CENTER_Y,
   MAP_CHEAT_TAP_COUNT,
   MAP_CHEAT_RESET_MS,
+  SECONDARY_SLOT_COUNT,
+  AUTO_TARGET_DESKTOP_DEFAULT,
+  RADIAL_TIMESCALE,
   isDevModeActive
 } from '../core/Constants.js';
 import WorldZoneSystem, { RIVER_WIDTH, CREEK_WIDTH } from '../systems/WorldZoneSystem.js';
@@ -51,6 +54,7 @@ import WorldDetail from '../entities/WorldDetail.js';
 import Projectile from '../entities/Projectile.js';
 import DaySystem from '../systems/DaySystem.js';
 import CombatSystem from '../systems/CombatSystem.js';
+import TargetingSystem from '../systems/TargetingSystem.js';
 import RegionSpawnSystem from '../systems/RegionSpawnSystem.js';
 import ParticleSystem from '../systems/ParticleSystem.js';
 import AudioSystem from '../systems/AudioSystem.js';
@@ -331,6 +335,14 @@ export default class GameScene extends Phaser.Scene {
     this.plantsGrownEver = { ...DEFAULT_BANK, ...(this.saveData.plantsGrownEver || {}) };
     // Dual economy (v2): banked coins + the three coin-funded capacity tiers.
     this.coins = this.saveData.coins || 0;
+    // Desktop auto-target preference (Sprint control-scheme-combat-input; save v5).
+    // Mobile ignores it (forced on). Undefined on a pre-v5 save → fall back to default.
+    this.autoTargetDesktop = this.saveData.autoTargetDesktop != null
+      ? this.saveData.autoTargetDesktop
+      : AUTO_TARGET_DESKTOP_DEFAULT;
+    // Master world time-scale for the mobile radial slow-mo (1 = full speed). Set via
+    // setTimeScale(); the radial drives it, NOT a hard pause.
+    this.timeScale = 1;
     this.seedBagTier = this.saveData.seedBagTier || 0;
     this.gardenBedTier = this.saveData.gardenBedTier || 0;
     this.wateringTier = this.saveData.wateringTier || 0;
@@ -427,6 +439,10 @@ export default class GameScene extends Phaser.Scene {
 
     // --- Combat systems ---
     this.combatSystem = new CombatSystem(this);
+    // Auto-target / aim-assist (Sprint control-scheme-combat-input). Mobile forces it
+    // on; desktop follows this.autoTargetDesktop (toggle T, weak/mouse-led, off by
+    // default). Drives the pulsing reticle + per-shot target lock for ranged aiming.
+    this.targetingSystem = new TargetingSystem(this);
     this.particleSystem = new ParticleSystem(this);
     this.audioSystem = new AudioSystem(this, this.audioSettings);
     this.sound.mute = !!this.audioSettings.muted;
@@ -521,7 +537,31 @@ export default class GameScene extends Phaser.Scene {
     this.setupMusic();
 
     // --- Interaction input ---
+    // E is the primary interact key (Sprint control-scheme-combat-input); F stays a
+    // legacy alias. Both funnel through handleInteract() in update().
     this.fKey = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.F);
+    this.eKey = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.E);
+    // Number keys 1-5 select the active secondary. Read in GameScene (not Player) so
+    // they can be gated against the plant/swap pickers, whose own 1-5 keys plant/swap
+    // while the world runs unpaused.
+    this.slotKeys = this.input.keyboard.addKeys({
+      one: Phaser.Input.Keyboard.KeyCodes.ONE,
+      two: Phaser.Input.Keyboard.KeyCodes.TWO,
+      three: Phaser.Input.Keyboard.KeyCodes.THREE,
+      four: Phaser.Input.Keyboard.KeyCodes.FOUR,
+      five: Phaser.Input.Keyboard.KeyCodes.FIVE
+    });
+    // T toggles desktop auto-target (weak / mouse-led; OFF by default). Mobile forces
+    // it on and ignores this. The preference persists (save v5) — see toggleAutoTarget.
+    this.input.keyboard.on('keydown-T', () => this.toggleAutoTarget());
+
+    // Desktop mouse combat: left-click = melee, right-click = fire active secondary.
+    // Mobile uses the on-screen buttons instead, so this is wired desktop-only. The
+    // context menu is disabled so right-click never pops the browser menu mid-fight.
+    if (!this._mobile) {
+      this.input.mouse.disableContextMenu();
+      this.input.on('pointerdown', (pointer) => this.onCombatPointer(pointer));
+    }
     // M now toggles the HUD minimap (handled in UIScene, Sprint 10c). Mute moved
     // to the Settings overlay so the two no longer fight over the same key.
     // Esc opens the pause menu during normal play (Sprint 12). Guarded so it
@@ -571,6 +611,10 @@ export default class GameScene extends Phaser.Scene {
     // emits these). Registered via subscribe() so shutdown() detaches them.
     this.subscribe('touch:interact', () => this.handleInteract());
     this.subscribe('game:pauseRequested', () => this.tryOpenPause());
+    // Mobile radial secondary-select runs the world in slow-motion (NOT a hard pause)
+    // while the player holds the Ranged-Magic button and drags to a slot.
+    this.subscribe('combat:radialOpen', () => this.setTimeScale(RADIAL_TIMESCALE));
+    this.subscribe('combat:radialClose', () => this.clearTimeScale());
     // Full-screen pause map (Sprint mobile-playability-2). M key (UIScene) / MAP button
     // (TouchControlSystem) / map backdrop + close (MapScene) all funnel here so one
     // counter drives both the open/close toggle and the 10-rapid-tap dev-menu cheat.
@@ -652,6 +696,11 @@ export default class GameScene extends Phaser.Scene {
     }
     // Seed the minimap dot at the player's current position (Sprint 10c).
     EventBus.emit('player:moved', { x: this.player.x, y: this.player.y });
+    // Seed the secondary-slot HUD (Sprint control-scheme-combat-input).
+    EventBus.emit('secondary:changed', {
+      slot: this.player.activeSecondary,
+      total: SECONDARY_SLOT_COUNT
+    });
   }
 
   // --- Placeholder textures (Sprint 2 additive — leaves BootScene untouched) -
@@ -3878,6 +3927,8 @@ export default class GameScene extends Phaser.Scene {
       newGamePlus: this.newGamePlus,
       demoWinTriggered: this._demoWinTriggered,
       settings: { ...this.audioSettings },
+      // Sprint control-scheme-combat-input (save v5) — desktop auto-target preference.
+      autoTargetDesktop: this.autoTargetDesktop,
       ...(this.achievementSystem ? this.achievementSystem.serialize() : {})
     };
   }
@@ -3907,7 +3958,73 @@ export default class GameScene extends Phaser.Scene {
   firePooledProjectile({ x, y, facing, damage, range, speed }) {
     const p = this.projectiles.find((pr) => !pr.active);
     if (!p) return; // pool exhausted — drop the shot
-    p.fire(x, y, facing, damage, range, speed);
+    // Auto-target (Sprint control-scheme-combat-input): lock the current target for
+    // THIS shot and aim the projectile at it (any angle) with slight homing — the fix
+    // for cardinal-only "near-perfect axis alignment" aiming. With no target (assist
+    // off / nothing in cone) it falls back to the cardinal facing shot.
+    const target = this.targetingSystem ? this.targetingSystem.lockTarget() : null;
+    if (target) {
+      const angle = Phaser.Math.Angle.Between(x, y, target.x, target.y);
+      p.fire(x, y, facing, damage, range, speed, { angle, target });
+    } else {
+      p.fire(x, y, facing, damage, range, speed);
+    }
+  }
+
+  // --- Combat input helpers (Sprint control-scheme-combat-input) ------------
+
+  // True while any modal / picker / pause / map owns the screen, so desktop mouse
+  // combat and slot-select keys stay inert there. Mirrors the guards in tryOpenPause /
+  // openMap so all three agree on "is the player actually free to act".
+  _anyCombatModalOpen() {
+    return !!(
+      this._paused ||
+      this._swapPaused ||
+      this._upgradeOpen ||
+      this._marketOpen ||
+      this._winOpen ||
+      this._signpostOpen ||
+      this._dictionaryOpen ||
+      this._worldDetailOpen ||
+      this._swapPickerOpen ||
+      this._plantPickerOpen ||
+      this._mapOpen
+    );
+  }
+
+  // Desktop mouse → combat. Left-click = melee, right-click = fire active secondary.
+  onCombatPointer(pointer) {
+    if (!GameState.is('PLAYING')) return;
+    if (this._anyCombatModalOpen()) return;
+    if (pointer.rightButtonDown()) this.player.fireSecondary();
+    else if (pointer.leftButtonDown()) this.player.meleePressed();
+  }
+
+  // T key — flip the desktop auto-target preference (mobile ignores it, forced on).
+  // Persists immediately so the choice survives a reload (save v5).
+  toggleAutoTarget() {
+    if (this._mobile) return; // mobile is forced-on; nothing to toggle
+    this.autoTargetDesktop = !this.autoTargetDesktop;
+    if (this.targetingSystem) this.targetingSystem.setEnabled(this.autoTargetDesktop);
+    EventBus.emit('ui:notice', {
+      text: `Auto-target: ${this.autoTargetDesktop ? 'ON (mouse-led)' : 'OFF'}`
+    });
+    this.autoSave();
+  }
+
+  // Mobile radial slow-mo (Sprint control-scheme-combat-input). Scales physics, tweens,
+  // the master clock AND the dt we feed our own update() so the whole world eases into
+  // slow motion together — distinct from the hard physics.pause() the map / pause use.
+  // Arcade's world.timeScale is INVERSE (higher = slower), hence 1/scale.
+  setTimeScale(scale) {
+    this.timeScale = scale;
+    if (this.physics && this.physics.world) this.physics.world.timeScale = 1 / scale;
+    if (this.tweens) this.tweens.timeScale = scale;
+    if (this.time) this.time.timeScale = scale;
+  }
+
+  clearTimeScale() {
+    this.setTimeScale(1);
   }
 
   getHarvestRange() {
@@ -3931,6 +4048,9 @@ export default class GameScene extends Phaser.Scene {
     this.subscribe('dev:maxStats', () => this.devMaxAllStats());
     this.subscribe('dev:fullHeal', () => this.player.healToFull());
     this.subscribe('dev:restoreAmmo', () => this.player.restoreAmmo());
+    // Reveals the dormant mana bar so its render + reflow can be feel-tested (no spells
+    // unlock it in normal play yet). Scaffold only — Sprint control-scheme-combat-input.
+    this.subscribe('dev:unlockMana', () => this.player.unlockMana());
     this.subscribe('dev:spawnEnemy', (d) => this.devSpawnEnemy(d));
     this.subscribe('dev:clearEnemies', () => this.devClearEnemies());
     this.subscribe('dev:clearSave', () => this.devClearSave());
@@ -4069,7 +4189,11 @@ export default class GameScene extends Phaser.Scene {
     // popup is non-modal, so it deliberately does NOT freeze the world.
     if (this._upgradeOpen || this._marketOpen || this._winOpen || this._signpostOpen || this._dictionaryOpen) return;
 
-    const dt = delta / 1000;
+    // Slow-mo (mobile radial) scales gameplay dt + system deltas together; physics is
+    // scaled via world.timeScale in setTimeScale(). Real playtime stays on raw delta.
+    const ts = this.timeScale || 1;
+    const dt = (delta / 1000) * ts;
+    const sdelta = delta * ts;
     this._playtimeMs += delta;
 
     this.player.update(dt);
@@ -4087,8 +4211,9 @@ export default class GameScene extends Phaser.Scene {
     // ones they've left. Runs after the enemy update so any despawn this frame
     // can't race the loop above (which iterated a snapshot of this.enemies).
     if (this.regionSpawn) this.regionSpawn.update(dt);
-    this.daySystem.update(delta);
-    this.combatSystem.update(delta); // combo lapse timer (Sprint 13)
+    if (this.targetingSystem) this.targetingSystem.update(dt);
+    this.daySystem.update(sdelta);
+    this.combatSystem.update(sdelta); // combo lapse timer (Sprint 13)
     this.updateSeeds();
     this.updateStructureLabels();
     this.updateInteractPrompt();
@@ -4103,8 +4228,19 @@ export default class GameScene extends Phaser.Scene {
       for (const t of this.waterTiles) t.tilePositionX += delta * 0.004;
     }
 
-    if (Phaser.Input.Keyboard.JustDown(this.fKey)) {
+    if (Phaser.Input.Keyboard.JustDown(this.fKey) || Phaser.Input.Keyboard.JustDown(this.eKey)) {
       this.handleInteract();
+    }
+
+    // Secondary-slot select (1-5). Gated against the plant/swap pickers — those run with
+    // the world unpaused and own the number keys to plant/swap.
+    if (!this._plantPickerOpen && !this._swapPickerOpen) {
+      const sk = this.slotKeys;
+      if (Phaser.Input.Keyboard.JustDown(sk.one)) this.player.selectSecondary(1);
+      else if (Phaser.Input.Keyboard.JustDown(sk.two)) this.player.selectSecondary(2);
+      else if (Phaser.Input.Keyboard.JustDown(sk.three)) this.player.selectSecondary(3);
+      else if (Phaser.Input.Keyboard.JustDown(sk.four)) this.player.selectSecondary(4);
+      else if (Phaser.Input.Keyboard.JustDown(sk.five)) this.player.selectSecondary(5);
     }
   }
 

@@ -140,6 +140,39 @@ export const TOUCH_BUTTON_LOCKED_ALPHA = 0.3;
 export const MAP_CHEAT_TAP_COUNT = 10;
 export const MAP_CHEAT_RESET_MS = 600;
 
+// --- Control scheme & combat input (Sprint control-scheme-combat-input) ----
+// The full input / secondary-slot / auto-target framework. SPELL EFFECTS ARE OUT OF
+// SCOPE this sprint: slot 1 = ranged (fully functional, drives the existing ranged
+// system); slots 2..SECONDARY_SLOT_COUNT are inert spell SELECTORS (selecting changes
+// the active secondary but casts nothing yet). All values below are feel knobs.
+export const SECONDARY_SLOT_COUNT = 5; // slot 1 ranged + 4 spell selectors
+
+// Auto-target facing-weighted cone (FULL width, degrees). A candidate enemy must lie
+// within ±(cone/2) of the player's facing to be acquired; wider = more forgiving aim.
+// This is the fix for "ranged needs near-perfect axis alignment". Design range 90-120.
+export const AUTO_TARGET_CONE_DEG = 100; // TUNE
+
+// Projectile homing turn-rate (radians/sec) toward a per-shot locked target. SLIGHT —
+// it nudges near-misses onto the target, it is NOT a guided missile. 0 = straight shot.
+export const PROJECTILE_HOMING_RAD_PER_S = 3.5; // TUNE
+
+// Desktop auto-target defaults OFF (weak / mouse-led, toggle with T). Mobile forces it
+// on (strong / full-auto) regardless of this. Persisted per-save (save v5).
+export const AUTO_TARGET_DESKTOP_DEFAULT = false; // TUNE
+
+// Mobile radial secondary-select: hold the Ranged-Magic button this long (ms) to open
+// the radial; a shorter tap fires instead. While open the world runs in slow-motion
+// (timescale below) — NOT a hard pause.
+export const RADIAL_LONGPRESS_MS = 260; // TUNE
+export const RADIAL_TIMESCALE = 0.15; // ~15% speed while the radial is open // TUNE
+
+// Mana scaffold (DORMANT until the spell sprint). The bar renders ONLY after the first
+// spell unlock (none exist yet, so it stays hidden by default). Bar width matches the
+// HP bar; mounts directly beneath it.
+export const MANA_BAR_MAX_WIDTH = 240; // matches HP bar width
+export const MANA_BAR_HEIGHT = 12;
+export const MANA_DEFAULT_MAX = 100; // starting mana pool once unlocked // TUNE
+
 // --- Shared UI styling (Sprint 12 visual-consistency pass) ---
 // Every text object in the game already renders with this family; referencing the
 // constant keeps new scenes from drifting back to a default Phaser sans-serif.
