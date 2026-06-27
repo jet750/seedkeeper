@@ -134,6 +134,18 @@ export const TOUCH_PORTRAIT_SCALE = 0.8;
 // (e.g. ranged before a ranged weapon is acquired). Full-alpha once unlocked.
 export const TOUCH_BUTTON_LOCKED_ALPHA = 0.3;
 
+// --- Mobile diamond action cluster (Sprint combat-input-mobile-consolidated) --
+// The 2x2 grid was rotated 45° into a face-button diamond (interact top / melee
+// inner-left / ranged-ability outer-right / dash bottom). The diamond is anchored
+// from the bottom-right corner: its CENTRE sits TOUCH_DIAMOND_CENTER_X/Y in from the
+// corner (past the safe insets), and each button is TOUCH_DIAMOND_SPREAD from that
+// centre along the up/down/left/right axes. Raise the spread to space the four
+// buttons further apart with NO re-layout (the whole diamond just grows). Portrait
+// scales all three by TOUCH_PORTRAIT_SCALE. // TUNE
+export const TOUCH_DIAMOND_SPREAD = 70; // centre→button distance (button gaps grow with this)
+export const TOUCH_DIAMOND_CENTER_X = 120; // diamond centre inset from the right edge
+export const TOUCH_DIAMOND_CENTER_Y = 150; // diamond centre inset from the bottom edge
+
 // Mobile dev-menu cheat: N rapid taps on the MAP button opens DevMenuScene (there is
 // no tilde key on a phone). Taps must land within the reset window of each other, so
 // ordinary single-tap map toggling never trips it.

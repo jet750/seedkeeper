@@ -32,6 +32,11 @@ export default class TargetingSystem {
   constructor(scene) {
     this.scene = scene;
     this.activeTarget = null;
+    // Manual hard lock (Sprint combat-input-mobile-consolidated): clicking an enemy
+    // pins it as THE target — tracked (reticle + ranged homing) until it dies or the
+    // player clicks elsewhere — and overrides the weak/auto pick. Works whether or not
+    // the auto-target assist is on.
+    this.hardTarget = null;
     this._mobile = !!scene._mobile;
 
     // Pulsing reticle ring — depth 31 sits above enemy level markers (30) and the
@@ -72,7 +77,26 @@ export default class TargetingSystem {
     return this._mobile ? true : !!this.scene.autoTargetDesktop;
   }
 
+  // Manual click-to-lock (desktop). Pins a specific enemy; passing null/dead clears it.
+  setHardTarget(enemy) {
+    this.hardTarget = enemy && enemy.active && !enemy.isDead ? enemy : null;
+  }
+
+  clearHardTarget() {
+    this.hardTarget = null;
+  }
+
   update() {
+    // A live hard lock takes precedence and drives the reticle even with the auto-target
+    // assist OFF — clicking an enemy must track it regardless of the toggle.
+    if (this.hardTarget && (!this.hardTarget.active || this.hardTarget.isDead)) {
+      this.hardTarget = null; // it died / despawned — release the lock
+    }
+    if (this.hardTarget) {
+      this.activeTarget = this.hardTarget;
+      this.reticle.setPosition(this.activeTarget.x, this.activeTarget.y).setVisible(true);
+      return;
+    }
     if (!this.isActive()) {
       this.activeTarget = null;
       this.reticle.setVisible(false);
@@ -87,9 +111,12 @@ export default class TargetingSystem {
   }
 
   // The target for THIS shot — re-validated so a dead/despawned enemy never carries a
-  // homing projectile. GameScene calls this at fire time (per-shot lock).
+  // homing projectile. GameScene calls this at fire time (per-shot lock). The hard lock
+  // wins; else the auto/weak pick (activeTarget) when the assist is on.
   lockTarget() {
-    const t = this.activeTarget;
+    const t = (this.hardTarget && this.hardTarget.active && !this.hardTarget.isDead)
+      ? this.hardTarget
+      : this.activeTarget;
     if (!t || !t.active || t.isDead) return null;
     return t;
   }

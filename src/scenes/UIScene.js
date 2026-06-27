@@ -406,7 +406,12 @@ export default class UIScene extends Phaser.Scene {
       .setDepth(240)
       .setAlpha(0);
 
-    this.buildSecondaryStrip();
+    // Desktop keeps the 1-5 secondary strip; on mobile it's removed entirely (Sprint
+    // combat-input-mobile-consolidated). The radial (long-press the ability button) is
+    // the sole mobile switcher and the ability button's icon shows what's loaded — so the
+    // strip is redundant there and removing it clears the strip-over-buttons (landscape)
+    // and strip-over-tray (portrait) overlaps.
+    if (!MobileDetect.isMobile()) this.buildSecondaryStrip();
   }
 
   // --- Secondary-slot strip (Sprint control-scheme-combat-input) ------------
@@ -448,7 +453,10 @@ export default class UIScene extends Phaser.Scene {
 
   // Highlight the active secondary slot; called on 'secondary:changed' and on build.
   refreshSecondary(slot, total) {
+    // Track the active slot even on mobile (no strip there) — the radial opens centred
+    // on it (_radialSel = _secActive) and the ability button's icon follows it.
     this._secActive = slot;
+    if (!this.secondarySlots || !this.secondarySlots.length) return; // mobile: strip removed
     if (total && total !== this.secondarySlots.length) {
       // Slot count changed (e.g. SECONDARY_SLOT_COUNT retune) — rebuild to match.
       this.secondarySlots.forEach((s) => { s.box.destroy(); s.glyph.destroy(); s.num.destroy(); });
@@ -1303,7 +1311,15 @@ export default class UIScene extends Phaser.Scene {
       const ang = -Math.PI / 2 + (i / total) * Math.PI * 2; // start at top, clockwise
       const ox = ccx + Math.cos(ang) * R;
       const oy = ccy + Math.sin(ang) * R;
-      const box = this.add.circle(ox, oy, 28, 0x2d2926, 0.96).setStrokeStyle(2, 0x57514b).setDepth(351);
+      // Slots 2-5 are spell selectors — inert until the spell sprint. Render them dimmed
+      // with a lock badge (instead of the mobile-irrelevant number) so demo players don't
+      // tap one expecting an effect. They're still selectable (loading one makes the fire
+      // input a deliberate no-op, per the core invariant).
+      const locked = i > 0;
+      const box = this.add
+        .circle(ox, oy, 28, 0x2d2926, locked ? 0.6 : 0.96)
+        .setStrokeStyle(2, 0x57514b)
+        .setDepth(351);
       const glyph = this.add
         .text(ox, oy, i === 0 ? '\u{1f3f9}' : '✦', {
           fontFamily: '"SproutLands", "Courier New", monospace',
@@ -1312,16 +1328,16 @@ export default class UIScene extends Phaser.Scene {
         })
         .setOrigin(0.5)
         .setDepth(352);
-      if (i > 0) glyph.setAlpha(0.4);
+      if (locked) glyph.setAlpha(0.4);
       const num = this.add
-        .text(ox, oy + 20, `${i + 1}`, {
+        .text(ox, oy + 20, locked ? '🔒' : `${i + 1}`, {
           fontFamily: '"SproutLands", "Courier New", monospace',
-          fontSize: '11px',
+          fontSize: locked ? '12px' : '11px',
           color: '#9B9389'
         })
         .setOrigin(0.5)
         .setDepth(352);
-      this._radialNodes.push({ box, glyph, ang });
+      this._radialNodes.push({ box, glyph, ang, locked });
       this._radialObjects.push(box, glyph, num);
     }
     this.highlightRadial();

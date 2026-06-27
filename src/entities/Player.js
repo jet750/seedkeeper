@@ -136,8 +136,11 @@ export default class Player extends Phaser.Physics.Arcade.Sprite {
     // SELECTORS. Defaults to slot 1.
     this.activeSecondary = 1;
     // Hold-to-strafe (Shift): while true, movement no longer rotates `facing`, so the
-    // player can move sideways while keeping their aim/swing direction.
+    // player can move sideways while keeping their aim/swing direction. _strafeTarget is
+    // the specific enemy locked on the rising edge of Shift — facing re-points at its
+    // live position every frame while held (persistent tracking lock).
     this._strafing = false;
+    this._strafeTarget = null;
 
     // --- Mana scaffold (Sprint control-scheme-combat-input; DORMANT) ---
     // No spells exist yet, so mana stays at 0 and `manaUnlocked` false — the HUD bar
@@ -346,8 +349,30 @@ export default class Player extends Phaser.Physics.Arcade.Sprite {
     // Passive HP regen (red_berry healthRegen tree), paused briefly after a hit.
     this.tickRegen(dtMs);
 
-    // Hold-to-strafe (Shift): lock facing this frame so movement doesn't rotate aim.
-    this._strafing = this.keys.strafe.isDown;
+    // Hold-to-strafe (Shift): persistent enemy-tracking lock (Sprint combat-input-mobile-
+    // consolidated). On the rising edge, lock the specific current/nearest enemy; while
+    // held, re-point facing at THAT same target's live position every frame so circling
+    // or walking past it keeps the aim on it. The lock holds until Shift release or the
+    // target's death — it never re-picks a different enemy mid-hold. updateFacing()
+    // early-returns while strafing, so movement can't rotate the aim out from under it.
+    // Desktop-only in practice: mobile has no Shift and uses forced auto-target instead.
+    // TUNE: strafe lock mode — this is a TARGET lock (tracks the enemy). For a fixed
+    // directional lock (freeze facing at press) instead, drop the acquire + per-frame
+    // faceTowardAngle below and just hold _strafing.
+    const strafeDown = this.keys.strafe.isDown;
+    if (strafeDown && !this._strafing) this._strafeTarget = this.acquireStrafeTarget();
+    this._strafing = strafeDown;
+    if (!strafeDown) {
+      this._strafeTarget = null;
+    } else if (this._strafeTarget) {
+      if (this._strafeTarget.active && !this._strafeTarget.isDead) {
+        this.faceTowardAngle(
+          Phaser.Math.Angle.Between(this.x, this.y, this._strafeTarget.x, this._strafeTarget.y)
+        );
+      } else {
+        this._strafeTarget = null; // target died — lock ends, facing freezes where it is
+      }
+    }
 
     // Melee with input buffering (Sprint 12): if the cooldown is still running the
     // press is held briefly and fired the instant it clears.
@@ -438,6 +463,40 @@ export default class Player extends Phaser.Physics.Arcade.Sprite {
     } else {
       this.facing = dy < 0 ? 'up' : 'down';
     }
+  }
+
+  // Snap `facing` to the nearest cardinal for an arbitrary aim angle (radians). Used by
+  // mouse-led ranged fire, melee click-to-face, and the strafe tracking lock so the
+  // sprite, the melee arc and the auto-target cone all orient to where the player aimed.
+  faceTowardAngle(angle) {
+    const a = Phaser.Math.Angle.Wrap(angle);
+    const q = Math.PI / 4;
+    if (a >= -q && a < q) this.facing = 'right';
+    else if (a >= q && a < 3 * q) this.facing = 'down';
+    else if (a >= -3 * q && a < -q) this.facing = 'up';
+    else this.facing = 'left';
+  }
+
+  // The enemy a Shift-strafe locks onto: prefer the current reticle/auto target (so the
+  // lock matches what's highlighted), else the nearest live enemy. Picked ONCE on the
+  // rising edge of Shift — the hold never re-picks (see update()).
+  acquireStrafeTarget() {
+    const scene = this.scene;
+    const ts = scene.targetingSystem;
+    if (ts && ts.activeTarget && ts.activeTarget.active && !ts.activeTarget.isDead) {
+      return ts.activeTarget;
+    }
+    let best = null;
+    let bestD = Infinity;
+    for (const e of scene.enemies || []) {
+      if (!e || e.isDead || !e.active) continue;
+      const d = Phaser.Math.Distance.Between(this.x, this.y, e.x, e.y);
+      if (d < bestD) {
+        bestD = d;
+        best = e;
+      }
+    }
+    return best;
   }
 
   playMove() {
@@ -726,9 +785,19 @@ export default class Player extends Phaser.Physics.Arcade.Sprite {
 
   // --- Ranged attack (Sprint 4) ---------------------------------------------
 
+  // Single source of truth for "can the ranged shot fire right now" (Sprint combat-input-
+  // mobile-consolidated). The fire path reads ONLY this, so the clip count and the
+  // cooldown can never diverge into a cached cannot-fire state.
+  canFireRanged() {
+    return (
+      this.equippedGear.ranged !== null &&
+      this.rangedAmmo > 0 &&
+      this.rangedCooldownRemaining <= 0
+    );
+  }
+
   fireRanged() {
-    if (this.equippedGear.ranged === null) return;
-    if (this.rangedAmmo <= 0 || this.rangedCooldownRemaining > 0) return;
+    if (!this.canFireRanged()) return;
 
     this.rangedAmmo--;
     this.rangedCooldownRemaining = RANGED_COOLDOWN_MS;
@@ -753,6 +822,11 @@ export default class Player extends Phaser.Physics.Arcade.Sprite {
   restoreAmmo() {
     if (this.equippedGear.ranged === null) return;
     this.rangedAmmo = this.rangedAmmoMax;
+    // Clear the cooldown too so firing re-enables the instant ammo is restored — the
+    // fire gate (canFireRanged) also checks rangedCooldownRemaining, so a leftover
+    // cooldown was the cached "cannot fire" state after a refill (Sprint combat-input-
+    // mobile-consolidated).
+    this.rangedCooldownRemaining = 0;
     EventBus.emit('ranged:fired', { ammo: this.rangedAmmo, max: this.rangedAmmoMax });
   }
 

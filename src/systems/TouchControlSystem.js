@@ -19,8 +19,16 @@ import {
   TOUCH_BUTTON_LABEL_PX,
   TOUCH_BUTTON_LOCKED_ALPHA,
   TOUCH_PORTRAIT_SCALE,
+  TOUCH_DIAMOND_SPREAD,
+  TOUCH_DIAMOND_CENTER_X,
+  TOUCH_DIAMOND_CENTER_Y,
   RADIAL_LONGPRESS_MS
 } from '../core/Constants.js';
+
+// Bow glyph (ranged) vs spell glyph — the diamond's ability button swaps between these
+// to reflect which secondary is loaded (Sprint combat-input-mobile-consolidated).
+const RANGED_GLYPH = '\u{1f3f9}';
+const SPELL_GLYPH = '✦'; // ✦
 
 export default class TouchControlSystem {
   constructor(scene) {
@@ -196,38 +204,31 @@ export default class TouchControlSystem {
   createActionButtons() {
     const W = this.scene.scale.width;
     const H = this.scene.scale.height;
-    const safeBottom = this.safe.bottom;
-    const safeRight = this.safe.right;
     const BTN_RADIUS = TOUCH_BUTTON_RADIUS;
     const BTN_ALPHA = 0.75;
     this.buttonRadius = BTN_RADIUS;
 
-    // Offsets from the bottom-right corner (dx from the right edge, dy from the
-    // bottom). Stored so layout() can re-seat each button against the live screen
-    // size + insets on resize. Staggered for thumb reach. Sprint mobile-playability:
-    // all four render from game start (dash is a base ability; ranged unlocks early).
-    // ranged starts `lockedInitially` — visible but dimmed + inert until a ranged
-    // weapon is acquired (ranged:equipped), so the 2x2 cluster reads complete without
-    // letting the player fire before they can. 2x2 layout is unchanged (the
-    // rearrange is a later sprint); only the per-button size shrank.
-    // Sprint control-scheme-combat-input: the ranged button is now the generic
-    // "Ranged-Magic" control — tap = fire active secondary, long-press = radial select
-    // (Phase D). It is ALWAYS active (no longer locked until a ranged weapon is
-    // acquired): firing simply no-ops until something castable is selected, and the
-    // long-press radial must work from the start. Interact shows 'E' (F is a legacy
-    // alias). The 2x2 layout is unchanged.
+    // Diamond face-button cluster (Sprint combat-input-mobile-consolidated). The old 2x2
+    // grid's POSITIONS were rotated 45° into a diamond (the icons are NOT rotated) so the
+    // right thumb falls onto a console-style face cross:
+    //   TOP = interact · MIDDLE-LEFT (inner) = melee · MIDDLE-RIGHT (outer) = ranged/
+    //   ability (long-press → radial) · BOTTOM = dash.
+    // Each button's screen position is derived from the cluster centre + TOUCH_DIAMOND_
+    // SPREAD via _diamondXY(); raise the spread tunable to space the four apart with no
+    // re-layout. The ranged button is the generic "Ranged-Magic" control — tap = fire the
+    // loaded ability, long-press = radial select — and is ALWAYS active (firing no-ops
+    // until something castable is loaded); its icon reflects the loaded ability.
     this._buttonDefs = [
-      { id: 'attack', dx: 90, dy: 190, color: 0xcc2222, label: '⚔', event: 'touch:attack' },
-      { id: 'interact', dx: 185, dy: 105, color: 0x228822, label: 'E', event: 'touch:interact' },
-      { id: 'dash', dx: 90, dy: 105, color: 0x2244cc, label: '⚡', event: 'touch:dash' },
-      { id: 'ranged', dx: 185, dy: 190, color: 0xcc8822, label: '\u{1f3f9}', event: 'touch:ranged' }
+      { id: 'interact', pos: 'top', color: 0x228822, label: 'E', event: 'touch:interact' },
+      { id: 'attack', pos: 'left', color: 0xcc2222, label: '⚔', event: 'touch:attack' },
+      { id: 'ranged', pos: 'right', color: 0xcc8822, label: RANGED_GLYPH, event: 'touch:ranged' },
+      { id: 'dash', pos: 'bottom', color: 0x2244cc, label: '⚡', event: 'touch:dash' }
     ];
 
     this.touchButtons = {};
 
     this._buttonDefs.forEach((btn) => {
-      const x = W - btn.dx - safeRight;
-      const y = H - btn.dy - safeBottom;
+      const { x, y } = this._diamondXY(btn.pos, W, H, this.safe, 1);
       const bg = this.scene.add.circle(x, y, BTN_RADIUS, btn.color, BTN_ALPHA).setScrollFactor(0).setDepth(100);
 
       const ring = this.scene.add.graphics().setScrollFactor(0).setDepth(100);
@@ -295,6 +296,35 @@ export default class TouchControlSystem {
     };
     this._onScene('pointerup', endRanged);
     this._onScene('pointerupoutside', endRanged);
+
+    // The Ranged-Magic button's icon reflects the currently loaded ability (slot 1 =
+    // ranged bow; slots 2-5 = spell glyph). The radial is now the SOLE mobile switcher
+    // (the 1-5 strip was removed on mobile), so this is the only on-HUD cue of what's
+    // loaded. Default slot 1 already shows the bow, so no initial emit is needed.
+    this._onBus('secondary:changed', ({ slot } = {}) => this._setRangedIcon(slot));
+  }
+
+  // Diamond cluster geometry: each button sits TOUCH_DIAMOND_SPREAD from the cluster
+  // centre along an up/down/left/right axis. The centre is inset from the bottom-right
+  // corner past the safe insets; portrait scales the inset + spread by `cs` so the whole
+  // diamond shrinks to fit a narrow width without a separate layout branch.
+  _diamondXY(pos, width, height, safe, cs) {
+    const spread = TOUCH_DIAMOND_SPREAD * cs;
+    const cx = width - TOUCH_DIAMOND_CENTER_X * cs - safe.right;
+    const cy = height - TOUCH_DIAMOND_CENTER_Y * cs - safe.bottom;
+    switch (pos) {
+      case 'top': return { x: cx, y: cy - spread };
+      case 'bottom': return { x: cx, y: cy + spread };
+      case 'left': return { x: cx - spread, y: cy };
+      case 'right': return { x: cx + spread, y: cy };
+      default: return { x: cx, y: cy };
+    }
+  }
+
+  _setRangedIcon(slot) {
+    const r = this.touchButtons && this.touchButtons.ranged;
+    if (!r) return;
+    r.label.setText(slot === 1 ? RANGED_GLYPH : SPELL_GLYPH);
   }
 
   // Ranged-Magic press begins: start the long-press timer. A release before it elapses
@@ -433,15 +463,16 @@ export default class TouchControlSystem {
       this.joystickDot.setPosition(jx, jy);
     }
 
-    // Action buttons (bottom-right, inset past a right notch + the home indicator).
+    // Action buttons — diamond cluster (bottom-right, inset past a right notch + the home
+    // indicator). Positions come from the shared _diamondXY() so create() and every
+    // resize/rotation agree; portrait shrinks the diamond via `cs`.
     const btnR = TOUCH_BUTTON_RADIUS * cs;
     this.buttonRadius = btnR;
     const labelPx = `${Math.round(parseInt(TOUCH_BUTTON_LABEL_PX, 10) * cs)}px`;
     this._buttonDefs.forEach((btn) => {
       const b = this.touchButtons[btn.id];
       if (!b) return;
-      const x = width - btn.dx - safe.right;
-      const y = height - btn.dy - safe.bottom;
+      const { x, y } = this._diamondXY(btn.pos, width, height, safe, cs);
       b.bg.setPosition(x, y).setRadius(btnR);
       b.label.setPosition(x, y).setFontSize(labelPx);
       b.hitZone.setPosition(x, y).setRadius(btnR + 10);

@@ -66,6 +66,9 @@ import economyData from '../data/economy.json';
 import DynamicNature from '../world/DynamicNature.js';
 
 const INTERACT_RANGE = 48; // px — F-key reach for beds, well, sleep
+// px — a desktop click within this of a live enemy hard-locks it as the ranged target
+// (Sprint combat-input-mobile-consolidated). // TUNE
+const HARD_TARGET_CLICK_RADIUS = 48;
 const SEED_COLLECT_RANGE = 26; // px — player must be this close to pick up a seed
 const DEMO_WIN_PER_PLANT = 10; // grow this many of EVERY plant type to trigger the demo win
 const PROXIMITY_LABEL_DIST = 80; // px — interactive-structure labels reveal within this range
@@ -3199,7 +3202,9 @@ export default class GameScene extends Phaser.Scene {
   }
 
   onPlayerSlept() {
-    this.player.restoreAmmo(); // refill ranged ammo each new day
+    // Ammo refill now rides on day:advanced (onDayAdvanced) so EVERY new-day path —
+    // sleep, death day-loss, dev day change — refills from one trigger. Sleeping just
+    // saves here (Sprint combat-input-mobile-consolidated).
     this.autoSave();
   }
 
@@ -3229,6 +3234,10 @@ export default class GameScene extends Phaser.Scene {
   }
 
   onDayAdvanced(d) {
+    // Single new-day refill trigger (Sprint combat-input-mobile-consolidated): restores
+    // the ranged clip AND clears the cooldown, so an empty clip can fire immediately on
+    // any day rollover — sleep, death day-loss, or a dev day change.
+    this.player.restoreAmmo();
     // A fresh day clears the post-timer slime buffs.
     if (this._postTimerApplied) {
       this.enemies.forEach((e) => {
@@ -3958,17 +3967,27 @@ export default class GameScene extends Phaser.Scene {
   firePooledProjectile({ x, y, facing, damage, range, speed }) {
     const p = this.projectiles.find((pr) => !pr.active);
     if (!p) return; // pool exhausted — drop the shot
-    // Auto-target (Sprint control-scheme-combat-input): lock the current target for
-    // THIS shot and aim the projectile at it (any angle) with slight homing — the fix
-    // for cardinal-only "near-perfect axis alignment" aiming. With no target (assist
-    // off / nothing in cone) it falls back to the cardinal facing shot.
+    // Aim priority (Sprint combat-input-mobile-consolidated):
+    //   1) a locked target — manual click-lock, or the auto/weak pick when the assist is
+    //      ON — fire AT it at any angle with slight homing;
+    //   2) desktop with no lock — MOUSE-LED: fire at the cursor's world position at an
+    //      arbitrary angle (no cardinal fallback; that was the X/Y-only aiming bug);
+    //   3) mobile with no lock (forced auto, shouldn't happen) — cardinal facing shot.
+    // Facing then snaps to the shot direction so the sprite, melee arc and cone follow
+    // where the player actually aimed.
     const target = this.targetingSystem ? this.targetingSystem.lockTarget() : null;
+    let angle = null;
     if (target) {
-      const angle = Phaser.Math.Angle.Between(x, y, target.x, target.y);
+      angle = Phaser.Math.Angle.Between(x, y, target.x, target.y);
       p.fire(x, y, facing, damage, range, speed, { angle, target });
+    } else if (!this._mobile) {
+      const ptr = this.input.activePointer;
+      angle = Phaser.Math.Angle.Between(x, y, ptr.worldX, ptr.worldY);
+      p.fire(x, y, facing, damage, range, speed, { angle });
     } else {
-      p.fire(x, y, facing, damage, range, speed);
+      p.fire(x, y, facing, damage, range, speed); // cardinal fallback
     }
+    if (angle != null && this.player) this.player.faceTowardAngle(angle);
   }
 
   // --- Combat input helpers (Sprint control-scheme-combat-input) ------------
@@ -3996,8 +4015,39 @@ export default class GameScene extends Phaser.Scene {
   onCombatPointer(pointer) {
     if (!GameState.is('PLAYING')) return;
     if (this._anyCombatModalOpen()) return;
-    if (pointer.rightButtonDown()) this.player.fireSecondary();
-    else if (pointer.leftButtonDown()) this.player.meleePressed();
+    // Click-to-target: a click on an enemy hard-locks it; a click on empty space clears
+    // the lock (reverts to mouse-led / auto). Applies to both buttons.
+    this.updateHardTargetFromPointer(pointer);
+    if (pointer.rightButtonDown()) {
+      // Fire the loaded ability. Ranged facing is set in firePooledProjectile (aim dir).
+      this.player.fireSecondary();
+    } else if (pointer.leftButtonDown()) {
+      // Melee click-to-face: face the cursor, then swing that way. Keyboard Q keeps the
+      // movement facing (handled in Player.update — it never calls this).
+      this.player.faceTowardAngle(
+        Phaser.Math.Angle.Between(this.player.x, this.player.y, pointer.worldX, pointer.worldY)
+      );
+      this.player.meleePressed();
+    }
+  }
+
+  // Click-to-target hard lock (Sprint combat-input-mobile-consolidated). If the click
+  // lands within HARD_TARGET_CLICK_RADIUS world px of a live enemy, pin it as the ranged
+  // target; otherwise clear any existing lock so the next shot reverts to mouse-led/auto.
+  updateHardTargetFromPointer(pointer) {
+    if (!this.targetingSystem) return;
+    let hit = null;
+    let bestD = HARD_TARGET_CLICK_RADIUS;
+    for (const e of this.enemies) {
+      if (!e || e.isDead || !e.active) continue;
+      const d = Phaser.Math.Distance.Between(pointer.worldX, pointer.worldY, e.x, e.y);
+      if (d <= bestD) {
+        bestD = d;
+        hit = e;
+      }
+    }
+    if (hit) this.targetingSystem.setHardTarget(hit);
+    else this.targetingSystem.clearHardTarget();
   }
 
   // T key — flip the desktop auto-target preference (mobile ignores it, forced on).
