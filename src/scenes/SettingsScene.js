@@ -27,15 +27,17 @@ const PANEL_H = 700; // taller to fit the Footsteps slider (Sprint 10c fix)
 const TRACK_W = 320;
 const TRACK_H = 10;
 
+// Concise current-scheme summary (Sprint devmenu-controls-tutorials — retooled off the
+// stale SPACE/F/SHIFT labels). The full two-page reference lives in Pause → Controls.
 const CONTROLS = [
   ['WASD / Arrows', 'Move'],
-  ['SPACE', 'Attack'],
-  ['F', 'Interact'],
-  ['R', 'Ranged (once unlocked)'],
-  ['SHIFT', 'Dash (once unlocked)'],
-  ['~', 'Dev Menu (dev builds only)'],
+  ['Q / L-click', 'Melee attack'],
+  ['R / R-click', 'Fire ability'],
+  ['SPACE', 'Dash'],
+  ['SHIFT', 'Strafe (lock facing)'],
+  ['E', 'Interact / plant'],
   ['ESC', 'Pause / Close'],
-  ['M', 'Open map (pauses)']
+  ['~', 'Dev menu (dev builds only)']
 ];
 
 export default class SettingsScene extends Phaser.Scene {

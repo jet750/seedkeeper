@@ -290,6 +290,7 @@ export default class GameScene extends Phaser.Scene {
     this._mapTapCount = 0; // rapid-tap counter for the MAP-button dev-menu cheat
     this._mapLastTap = 0;
     this._paused = false; // Sprint 12 — pause menu open
+    this._devMenuOpen = false; // Sprint devmenu-controls-tutorials — dev menu pauses the world
     // Sprint 12 first-run tutorial trigger latches (once-per-run derivations).
     this._nearGateEmitted = false;
     this._firstEnemyContactEmitted = false;
@@ -301,6 +302,11 @@ export default class GameScene extends Phaser.Scene {
     // screenShakeEnabled is honoured by shake(); the throttle fields drive the
     // every-Nth-frame enemy update in update(). All inert on desktop.
     this._mobile = MobileDetect.isMobile();
+    // Interact-control tag (Sprint devmenu-controls-tutorials): every HUD prompt +
+    // structure label authors the key as the sentinel `[F]`; it is substituted here so
+    // desktop shows the real key `[E]` (F stays a legacy alias) and mobile shows the
+    // interact-button glyph (the diamond's top "use" button) — no stale F anywhere.
+    this._interactTag = this._mobile ? '🌱' : '[E]';
     this.screenShakeEnabled = true;
     this.slimeUpdateInterval = 1;
     this.slimeUpdateFrame = 0;
@@ -1823,7 +1829,8 @@ export default class GameScene extends Phaser.Scene {
       this._worldDetailOpen ||
       this._swapPickerOpen ||
       this._plantPickerOpen ||
-      this._mapOpen
+      this._mapOpen ||
+      this._devMenuOpen
     ) {
       return;
     }
@@ -2344,6 +2351,8 @@ export default class GameScene extends Phaser.Scene {
   // Register a structure label (hidden by default; revealed within
   // PROXIMITY_LABEL_DIST of the structure at (sx, sy)).
   addStructureLabel(sx, sy, lx, ly, text, color) {
+    // `[F]` is the interact-control sentinel — render the per-platform tag instead.
+    text = text.replace('[F]', this._interactTag);
     const t = this.add
       .text(lx, ly, text, {
         fontFamily: '"SproutLands", "Courier New", monospace',
@@ -2412,9 +2421,11 @@ export default class GameScene extends Phaser.Scene {
     }
 
     if (best) {
-      if (best.text !== this._lastPromptText) {
-        this._lastPromptText = best.text;
-        EventBus.emit('interact:nearObject', { text: best.text, actionable: best.actionable });
+      // Substitute the `[F]` interact sentinel with the per-platform tag ([E] / 🌱).
+      const text = best.text.replace('[F]', this._interactTag);
+      if (text !== this._lastPromptText) {
+        this._lastPromptText = text;
+        EventBus.emit('interact:nearObject', { text, actionable: best.actionable });
       }
     } else if (this._lastPromptText !== null) {
       this._lastPromptText = null;
@@ -4108,6 +4119,22 @@ export default class GameScene extends Phaser.Scene {
     this.subscribe('dev:toggleSpeed', (d) => this.devToggleSpeed(d));
     this.subscribe('dev:toggleNoclip', (d) => this.devToggleNoclip(d));
     this.subscribe('dev:maxCapacity', () => this.devMaxCapacity());
+    // The dev menu is a full-screen, game-paused overlay (Sprint devmenu-controls-
+    // tutorials): freeze the world + physics while it's open, like the map / pause.
+    this.subscribe('dev:menuOpened', () => this.onDevMenuOpened());
+    this.subscribe('dev:menuClosed', () => this.onDevMenuClosed());
+  }
+
+  onDevMenuOpened() {
+    this._devMenuOpen = true;
+    if (this.player) this.player.setVelocity(0, 0);
+    this.physics.pause();
+  }
+
+  onDevMenuClosed() {
+    this._devMenuOpen = false;
+    // Only resume if no other overlay still owns the freeze (pause menu / map).
+    if (!this._paused && !this._mapOpen) this.physics.resume();
   }
 
   devFillBank() {
@@ -4237,7 +4264,7 @@ export default class GameScene extends Phaser.Scene {
     // Freeze the world (but keep rendering) while a modal overlay (workshop,
     // market, win, achievement log, or seed dictionary) is open. The world-detail
     // popup is non-modal, so it deliberately does NOT freeze the world.
-    if (this._upgradeOpen || this._marketOpen || this._winOpen || this._signpostOpen || this._dictionaryOpen) return;
+    if (this._upgradeOpen || this._marketOpen || this._winOpen || this._signpostOpen || this._dictionaryOpen || this._devMenuOpen) return;
 
     // Slow-mo (mobile radial) scales gameplay dt + system deltas together; physics is
     // scaled via world.timeScale in setTimeScale(). Real playtime stays on raw delta.

@@ -12,6 +12,7 @@ import { fitCameraToVirtual } from '../core/ViewportFit.js';
 import GameState from '../core/GameState.js';
 import SaveSystem from '../core/SaveSystem.js';
 import { VIRTUAL_WIDTH, VIRTUAL_HEIGHT, FONT_FAMILY, UI_ACCENT_GOLD } from '../core/Constants.js';
+import MobileDetect from '../core/MobileDetect.js';
 import entitiesData from '../data/entities.json';
 
 // v3 (Sprint 6/3d): derive the plant set from the catalog so the menu always
@@ -258,8 +259,13 @@ export default class MenuScene extends Phaser.Scene {
   // --- Footer (controls hint, settings, credits) ----------------------------
 
   buildFooter(cx) {
+    // Control hint retooled to the current scheme (Sprint devmenu-controls-tutorials);
+    // mobile gets a touch-appropriate line instead of keys that don't exist on a phone.
+    const hint = MobileDetect.isMobile()
+      ? 'Tap a slot to begin  ·  joystick + on-screen buttons'
+      : 'Click a slot to begin  ·  WASD move  ·  Q attack  ·  E interact  ·  Space dash  ·  Esc pause';
     this.add
-      .text(cx, VIRTUAL_HEIGHT - 40, 'Click a slot to begin  ·  WASD move  ·  Space attack  ·  F interact  ·  Esc pause', {
+      .text(cx, VIRTUAL_HEIGHT - 40, hint, {
         fontFamily: FONT_FAMILY,
         fontSize: '16px',
         color: '#6d675f'
