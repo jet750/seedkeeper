@@ -1,8 +1,9 @@
 // TouchControlSystem.js
 //
 // The entire mobile control layer: a fixed virtual joystick (left thumb), a
-// cluster of action buttons (right thumb), mobile-only HUD buttons (MAP / pause),
-// and the portrait "rotate your phone" gate. Instantiated by UIScene ONLY when
+// cluster of action buttons (right thumb), and mobile-only HUD buttons (MAP /
+// pause). Both orientations are supported (no rotate gate); layout() branches on
+// aspect so the controls reflow live on rotation. Instantiated by UIScene ONLY when
 // MobileDetect.isMobile() is true, so desktop never builds a single object here.
 //
 // It is pure output: every control EMITS an EventBus event (touch:move,
@@ -11,6 +12,15 @@
 
 import EventBus from '../core/EventBus.js';
 import MobileDetect from '../core/MobileDetect.js';
+import {
+  TOUCH_JOYSTICK_BASE_RADIUS,
+  TOUCH_JOYSTICK_HANDLE_RADIUS,
+  TOUCH_BUTTON_RADIUS,
+  TOUCH_BUTTON_LABEL_PX,
+  TOUCH_BUTTON_LOCKED_ALPHA,
+  MAP_CHEAT_TAP_COUNT,
+  MAP_CHEAT_RESET_MS
+} from '../core/Constants.js';
 
 export default class TouchControlSystem {
   constructor(scene) {
@@ -31,7 +41,6 @@ export default class TouchControlSystem {
     this.createJoystick();
     this.createActionButtons();
     this.createMobileHUDAdjustments();
-    this.setupOrientationHandler();
 
     // Seat every control at the current viewport. UIScene also calls layout() right
     // after constructing us (and on every Scale 'resize'), but doing it here keeps
@@ -67,8 +76,8 @@ export default class TouchControlSystem {
   // --- Virtual joystick (bottom-left, fixed base) ---------------------------
 
   createJoystick() {
-    const BASE_RADIUS = 70;
-    const HANDLE_RADIUS = 30;
+    const BASE_RADIUS = TOUCH_JOYSTICK_BASE_RADIUS;
+    const HANDLE_RADIUS = TOUCH_JOYSTICK_HANDLE_RADIUS;
     this.joystickBaseRadius = BASE_RADIUS;
     // Bottom-left, inset past a left notch and the home indicator. layout()
     // recomputes these on resize; this is just the initial seat.
@@ -189,19 +198,23 @@ export default class TouchControlSystem {
     const H = this.scene.scale.height;
     const safeBottom = this.safe.bottom;
     const safeRight = this.safe.right;
-    const BTN_RADIUS = 38;
+    const BTN_RADIUS = TOUCH_BUTTON_RADIUS;
     const BTN_ALPHA = 0.75;
     this.buttonRadius = BTN_RADIUS;
 
     // Offsets from the bottom-right corner (dx from the right edge, dy from the
     // bottom). Stored so layout() can re-seat each button against the live screen
-    // size + insets on resize. Staggered for thumb reach; dash + ranged stay hidden
-    // until unlocked.
+    // size + insets on resize. Staggered for thumb reach. Sprint mobile-playability:
+    // all four render from game start (dash is a base ability; ranged unlocks early).
+    // ranged starts `lockedInitially` — visible but dimmed + inert until a ranged
+    // weapon is acquired (ranged:equipped), so the 2x2 cluster reads complete without
+    // letting the player fire before they can. 2x2 layout is unchanged (the
+    // rearrange is a later sprint); only the per-button size shrank.
     this._buttonDefs = [
-      { id: 'attack', dx: 90, dy: 190, color: 0xcc2222, label: '⚔', event: 'touch:attack', alwaysVisible: true },
-      { id: 'interact', dx: 185, dy: 105, color: 0x228822, label: 'F', event: 'touch:interact', alwaysVisible: true },
-      { id: 'dash', dx: 90, dy: 105, color: 0x2244cc, label: '⚡', event: 'touch:dash', alwaysVisible: false },
-      { id: 'ranged', dx: 185, dy: 190, color: 0xcc8822, label: '\u{1f3f9}', event: 'touch:ranged', alwaysVisible: false }
+      { id: 'attack', dx: 90, dy: 190, color: 0xcc2222, label: '⚔', event: 'touch:attack' },
+      { id: 'interact', dx: 185, dy: 105, color: 0x228822, label: 'F', event: 'touch:interact' },
+      { id: 'dash', dx: 90, dy: 105, color: 0x2244cc, label: '⚡', event: 'touch:dash' },
+      { id: 'ranged', dx: 185, dy: 190, color: 0xcc8822, label: '\u{1f3f9}', event: 'touch:ranged', lockedInitially: true }
     ];
 
     this.touchButtons = {};
@@ -209,36 +222,39 @@ export default class TouchControlSystem {
     this._buttonDefs.forEach((btn) => {
       const x = W - btn.dx - safeRight;
       const y = H - btn.dy - safeBottom;
-      const bg = this.scene.add
-        .circle(x, y, BTN_RADIUS, btn.color, BTN_ALPHA)
-        .setScrollFactor(0)
-        .setDepth(100)
-        .setVisible(btn.alwaysVisible);
+      const bg = this.scene.add.circle(x, y, BTN_RADIUS, btn.color, BTN_ALPHA).setScrollFactor(0).setDepth(100);
 
       const ring = this.scene.add.graphics().setScrollFactor(0).setDepth(100);
       ring.lineStyle(2, 0xffffff, 0.5);
       ring.strokeCircle(x, y, BTN_RADIUS);
-      ring.setVisible(btn.alwaysVisible);
 
       const label = this.scene.add
-        .text(x, y, btn.label, { fontSize: '24px', color: '#ffffff' })
+        .text(x, y, btn.label, { fontSize: TOUCH_BUTTON_LABEL_PX, color: '#ffffff' })
         .setOrigin(0.5)
         .setScrollFactor(0)
-        .setDepth(101)
-        .setVisible(btn.alwaysVisible);
+        .setDepth(101);
 
       // Hit zone is larger than the visual for forgiving thumb taps.
       const hitZone = this.scene.add
         .circle(x, y, BTN_RADIUS + 10, 0x000000, 0.001)
         .setScrollFactor(0)
         .setDepth(99)
-        .setInteractive()
-        .setVisible(btn.alwaysVisible);
+        .setInteractive();
+
+      const entry = { bg, ring, label, hitZone, locked: !!btn.lockedInitially };
+      this.touchButtons[btn.id] = entry;
+
+      // A locked button renders dimmed and swallows taps until unlocked.
+      if (entry.locked) {
+        bg.setAlpha(TOUCH_BUTTON_LOCKED_ALPHA);
+        ring.setAlpha(TOUCH_BUTTON_LOCKED_ALPHA);
+        label.setAlpha(TOUCH_BUTTON_LOCKED_ALPHA);
+      }
 
       hitZone.on('pointerdown', (pointer) => {
         // Never let the stick's pointer double as a button press.
         if (pointer.id === this.joystickPointer) return;
-        if (!hitZone.visible) return;
+        if (entry.locked) return; // inert until unlocked (e.g. ranged before pickup)
         bg.setScale(0.85);
         label.setScale(0.85);
         EventBus.emit(btn.event, {});
@@ -249,24 +265,22 @@ export default class TouchControlSystem {
       };
       hitZone.on('pointerup', relax);
       hitZone.on('pointerout', relax);
-
-      this.touchButtons[btn.id] = { bg, ring, label, hitZone };
     });
 
-    // Reveal dash / ranged when the player gains them. dash:enabled fires from
-    // Player.equipBoots and from GameScene.syncHud on load; ranged:equipped is
-    // the existing equip/load signal. Both reach an already-subscribed UIScene.
-    this._onBus('dash:enabled', () => this.showButton('dash'));
-    this._onBus('ranged:equipped', () => this.showButton('ranged'));
+    // Ranged starts locked; activate it (full alpha + live taps) once a ranged weapon
+    // is acquired. ranged:equipped is the existing equip/load signal. Dash needs no
+    // such gate — it is a base ability, active from the start.
+    this._onBus('ranged:equipped', () => this.unlockButton('ranged'));
   }
 
-  showButton(id) {
+  // Promote a locked button to active: full opacity and its taps now emit.
+  unlockButton(id) {
     const b = this.touchButtons && this.touchButtons[id];
-    if (!b) return;
-    b.bg.setVisible(true);
-    b.ring.setVisible(true);
-    b.label.setVisible(true);
-    b.hitZone.setVisible(true);
+    if (!b || !b.locked) return;
+    b.locked = false;
+    b.bg.setAlpha(1);
+    b.ring.setAlpha(1);
+    b.label.setAlpha(1);
   }
 
   // --- Mobile-only HUD buttons (MAP toggle + pause) -------------------------
@@ -292,7 +306,23 @@ export default class TouchControlSystem {
       .setScrollFactor(0)
       .setDepth(100)
       .setInteractive();
-    mapBtn.on('pointerdown', () => EventBus.emit('minimap:toggle'));
+    // Single tap toggles the minimap. There is no tilde key on a phone, so the dev
+    // cheat menu is unreachable on device — open it via MAP_CHEAT_TAP_COUNT rapid taps
+    // here (each tap must land within MAP_CHEAT_RESET_MS of the last, so ordinary
+    // map-toggling never trips it). The toggle still fires on every tap, so normal
+    // use is unaffected.
+    this._mapTapCount = 0;
+    this._mapLastTap = 0;
+    mapBtn.on('pointerdown', () => {
+      EventBus.emit('minimap:toggle');
+      const now = Date.now();
+      this._mapTapCount = now - this._mapLastTap > MAP_CHEAT_RESET_MS ? 1 : this._mapTapCount + 1;
+      this._mapLastTap = now;
+      if (this._mapTapCount >= MAP_CHEAT_TAP_COUNT) {
+        this._mapTapCount = 0;
+        EventBus.emit('dev:toggleMenu');
+      }
+    });
 
     const pauseBtn = this.scene.add
       .text(20 + safeLeft, safeTop + 18, '⏸', {
@@ -312,63 +342,23 @@ export default class TouchControlSystem {
     this.pauseBtn = pauseBtn;
   }
 
-  // --- Orientation gate -----------------------------------------------------
-  // Portrait is unplayable for a landscape action game — block it with a prompt.
-
-  setupOrientationHandler() {
-    this._checkOrientation = () => {
-      const isPortrait = window.innerHeight > window.innerWidth;
-      if (isPortrait) this.showRotatePrompt();
-      else this.hideRotatePrompt();
-    };
-    // orientationchange fires before the dimensions settle, so re-check after.
-    this._onWin('orientationchange', () => setTimeout(this._checkOrientation, 300));
-    this._onWin('resize', this._checkOrientation);
-    this._checkOrientation();
-  }
-
-  showRotatePrompt() {
-    if (this.rotatePrompt) return;
-    // Size to the live viewport (full-bleed under RESIZE), not the 1600x900 base.
-    const w = this.scene.scale.width;
-    const h = this.scene.scale.height;
-    this.rotatePrompt = this.scene.add
-      .rectangle(w / 2, h / 2, w, h, 0x000000, 0.95)
-      .setScrollFactor(0)
-      .setDepth(400);
-    this.rotateText = this.scene.add
-      .text(w / 2, h / 2, '↻\nRotate your phone\nto landscape to play', {
-        fontFamily: '"SproutLands", "Courier New", monospace',
-        fontSize: '36px',
-        color: '#88cc44',
-        align: 'center',
-        lineSpacing: 12
-      })
-      .setOrigin(0.5)
-      .setScrollFactor(0)
-      .setDepth(401);
-  }
-
-  hideRotatePrompt() {
-    if (this.rotatePrompt) {
-      this.rotatePrompt.destroy();
-      this.rotateText.destroy();
-      this.rotatePrompt = null;
-      this.rotateText = null;
-    }
-  }
-
   // --- Live reflow ----------------------------------------------------------
   // Re-seat every control against the current viewport size + safe insets. Called by
   // UIScene on each Scale 'resize' (rotation / toolbar collapse) so the joystick,
-  // action buttons, MAP/pause buttons and the rotate overlay reflow with no reload.
-  // Repositions existing objects only — never re-binds input or re-emits events.
+  // action buttons and MAP/pause buttons reflow with no reload. Repositions existing
+  // objects only — never re-binds input or re-emits events. Sprint mobile-playability:
+  // both orientations are supported (no rotate gate); in portrait the joystick hugs
+  // the left edge so it doesn't collide with the right-hand button cluster on a narrow
+  // width. The 2x2 cluster keeps the same offsets in both orientations.
   layout(width, height, safe) {
     if (!this.active) return;
     this.safe = safe;
+    const portrait = width < height;
 
-    // Joystick (bottom-left, inset past a left notch + the home indicator).
-    const jx = 150 + safe.left;
+    // Joystick (bottom-left). Landscape keeps the original 150px inset; portrait hugs
+    // the left edge (radius + a small margin) so the narrow width still fits both the
+    // stick and the bottom-right action cluster without overlap.
+    const jx = (portrait ? this.joystickBaseRadius + 24 : 150) + safe.left;
     const jy = height - 150 - safe.bottom;
     this.joystick.baseX = jx;
     this.joystick.baseY = jy;
@@ -397,12 +387,6 @@ export default class TouchControlSystem {
     // MAP (top-right) + pause (top-left) buttons.
     if (this.mapBtn) this.mapBtn.setPosition(width - 20 - safe.right, safe.top + 18);
     if (this.pauseBtn) this.pauseBtn.setPosition(20 + safe.left, safe.top + 18);
-
-    // Rotate overlay — keep it full-screen + centred if it's currently up.
-    if (this.rotatePrompt) {
-      this.rotatePrompt.setPosition(width / 2, height / 2).setSize(width, height);
-      this.rotateText.setPosition(width / 2, height / 2);
-    }
   }
 
   // Reserved for UIScene's update loop — everything here is event-driven, so
@@ -416,6 +400,5 @@ export default class TouchControlSystem {
     this._busHandlers = [];
     this._winHandlers.forEach(([event, fn]) => window.removeEventListener(event, fn));
     this._winHandlers = [];
-    this.hideRotatePrompt();
   }
 }

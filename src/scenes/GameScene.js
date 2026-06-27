@@ -30,6 +30,7 @@ import {
   USE_TILED_WORLD,
   TILED_WORLD_KEY,
   CAMERA_ZOOM,
+  MOBILE_CAMERA_ZOOM,
   CAMERA_LERP,
   GARDEN_PROP_SCALE,
   GARDEN_LAYOUT_SCALE,
@@ -370,7 +371,10 @@ export default class GameScene extends Phaser.Scene {
     // massive world, so the camera zooms further in (CAMERA_ZOOM, was a hard-coded
     // 2.5) to bring the sprite back to a comfortable on-screen size. UI lives on the
     // separate UIScene camera, so it is unaffected by this world-camera zoom.
-    this.cameras.main.setZoom(CAMERA_ZOOM);
+    // Sprint mobile-playability: on a phone CAMERA_ZOOM=4 is far too tight (the sprite
+    // fills the screen), so touch devices pull back to MOBILE_CAMERA_ZOOM. Desktop
+    // unchanged.
+    this.cameras.main.setZoom(this._mobile ? MOBILE_CAMERA_ZOOM : CAMERA_ZOOM);
     // Menu → game transition: reveal the world with a smooth fade-in (Sprint 12).
     this.cameras.main.fadeIn(700, 0, 0, 0);
 

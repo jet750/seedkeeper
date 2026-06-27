@@ -1159,7 +1159,11 @@ export default class UIScene extends Phaser.Scene {
     // whole minimap moves by a single setPosition() on resize (the zone Graphics
     // bakes its rects, so it can't be re-anchored any other way without a redraw).
     // layoutHUD positions the container's top-left to the current top-right corner.
-    const container = this.add.container(0, 0).setScrollFactor(0).setDepth(50);
+    // Depth 150 keeps it ABOVE the mobile touch controls (action buttons sit at depth
+    // 100): the bottom-right cluster used to render over the minimap's corner, hiding
+    // it. The minimap is non-interactive, so taps still pass through to the button
+    // hit zones beneath when (rarely) they overlap. Harmless on desktop (no buttons).
+    const container = this.add.container(0, 0).setScrollFactor(0).setDepth(150);
     this.minimapContainer = container;
     this.minimapW = MAP_W;
     this.minimapH = MAP_H;
@@ -1252,6 +1256,14 @@ export default class UIScene extends Phaser.Scene {
     const sl = safe.left;
     const sr = safe.right;
 
+    // Sprint mobile-playability: portrait is now supported (no rotate gate). The touch
+    // controls seat in a bottom band, so in portrait the bottom HUD clusters (seed
+    // slots, interact prompt, bank/ammo) lift above that band instead of sharing the
+    // bottom row. Landscape + desktop keep their existing positions exactly.
+    const portrait = isMobile && width < height;
+    const PORTRAIT_BAND = 230; // reserved bottom control band (joystick + buttons)
+    const bandTop = height - sb - PORTRAIT_BAND;
+
     // Dark backing bars span the full width; the bottom one re-seats to the height.
     if (this.topBar) this.topBar.setPosition(0, 0).setSize(width, 80);
     if (this.bottomBar) this.bottomBar.setPosition(0, height - 80).setSize(width, 80);
@@ -1279,11 +1291,16 @@ export default class UIScene extends Phaser.Scene {
     if (this.muteIndicator) this.muteIndicator.setPosition(width - 40 - sr, 112 + st);
     if (this.overtimeText) this.overtimeText.setPosition(width - 40 - sr, 78 + st);
 
-    // BOTTOM LEFT / CENTER — seed slots. On touch, shift them out of the joystick's
-    // corner into the central-bottom gap and above the home indicator; on desktop
-    // they keep the original bottom-left anchor. Re-anchoring _slotBaseX/Y means
-    // later satchel-driven rebuilds land in the same place.
-    if (isMobile) {
+    // BOTTOM — seed slots. Portrait: centred just above the control band. Landscape
+    // touch: shifted out of the joystick's corner into the central-bottom gap, above
+    // the home indicator. Desktop: original bottom-left anchor. Re-anchoring
+    // _slotBaseX/Y means later satchel-driven rebuilds land in the same place.
+    if (portrait) {
+      const count = this.seedSlots ? this.seedSlots.length : 3;
+      const rowW = count * this._slotSize + (count - 1) * this._slotGap;
+      this._slotBaseX = Math.max(pad + sl, (width - rowW) / 2);
+      this._slotBaseY = bandTop - 28;
+    } else if (isMobile) {
       this._slotBaseX = 270;
       this._slotBaseY = height - 64 - sb;
     } else {
@@ -1296,12 +1313,19 @@ export default class UIScene extends Phaser.Scene {
       this.seedsLabel.setVisible(!isMobile); // on mobile the frames are self-evident
     }
 
-    // BOTTOM CENTER — interaction prompt.
-    if (this.interactPrompt) this.interactPrompt.setPosition(width / 2, height - 112);
+    // BOTTOM CENTER — interaction prompt (above the control band in portrait).
+    if (this.interactPrompt) {
+      this.interactPrompt.setPosition(width / 2, portrait ? bandTop - 64 : height - 112);
+    }
 
-    // BOTTOM RIGHT — bank + ammo (clear a right notch and the home indicator).
-    if (this.bankText) this.bankText.setPosition(width - pad - sr, height - 40 - sb);
-    if (this.ammoText) this.ammoText.setPosition(width - pad - sr, height - 72 - sb);
+    // BOTTOM RIGHT — bank + ammo. Portrait lifts them above the right-hand button
+    // cluster; landscape/desktop keep the bottom-right corner (clear of insets).
+    if (this.bankText) {
+      this.bankText.setPosition(width - pad - sr, portrait ? bandTop - 8 : height - 40 - sb);
+    }
+    if (this.ammoText) {
+      this.ammoText.setPosition(width - pad - sr, portrait ? bandTop - 36 : height - 72 - sb);
+    }
 
     // CENTER RIGHT — combo counter.
     if (this.comboText) this.comboText.setPosition(width * 0.72, height / 2);

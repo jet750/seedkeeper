@@ -12,9 +12,20 @@
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <meta name="apple-mobile-web-app-title" content="Seedkeeper">
+  <link rel="apple-touch-icon" href="./icon.svg">
   <!-- Android home-screen app -->
   <meta name="mobile-web-app-capable" content="yes">
   <meta name="theme-color" content="#1a2410">
+  <!-- Installable PWA (Add to Home Screen → full-screen, chrome-free) -->
+  <link rel="manifest" href="./manifest.json">
+  <link rel="icon" type="image/svg+xml" href="./icon.svg">
+  <!-- TODO (icons): iOS ignores SVG apple-touch-icons, and some older Android wants a
+       raster icon. For a crisp home-screen icon everywhere, supply PNGs and switch to
+       them: public/apple-touch-icon-180.png (180x180) for the apple-touch-icon href,
+       and public/icon-192.png + public/icon-512.png added to public/manifest.json
+       icons[]. SVG is used for now because this environment had no raster image tool
+       to generate PNGs. Full-screen standalone launch already works via the meta tags
+       + SVG icon above; the PNGs only upgrade the icon fidelity. -->
   <!-- Stop phone-number autodetection turning HUD numbers into tap-to-call links -->
   <meta name="format-detection" content="telephone=no">
 

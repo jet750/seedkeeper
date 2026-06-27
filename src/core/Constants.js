@@ -50,6 +50,12 @@ export const GARDEN_BOTTOM = GARDEN_Y + GARDEN_HEIGHT;
 // and are NOT affected by this. Higher = closer in.
 export const CAMERA_ZOOM = 4.0;
 
+// Mobile-only world-camera zoom (Sprint mobile-playability). The desktop 4.0 is far
+// too tight on a phone — the sprite fills the screen and the world isn't navigable —
+// so on touch devices the camera pulls back to show enough world to move around.
+// Desktop is untouched (still CAMERA_ZOOM). Starting point; dial in during feel-test.
+export const MOBILE_CAMERA_ZOOM = 2.25;
+
 // Camera-follow smoothing (Sprint pre-control). Lerp applied on BOTH axes in
 // startFollow so the camera eases toward the player instead of hard-locking. Paired
 // with per-camera roundPixels=false: at CAMERA_ZOOM=4 a hard integer-snapped follow
@@ -96,9 +102,13 @@ export const DAY_TIMER_MS = 180000; // 3 minutes
 
 // Player
 // Sprint 16: slowed 160 -> 120 so the 6400² world reads as appropriately large to
-// traverse and a chase is a committed run. Live value is entities.json player.speed
-// (what Player reads); this mirror is kept in sync as the canonical reference.
-export const PLAYER_SPEED = 120;
+// traverse and a chase is a committed run. Sprint mobile-playability: 120 -> 108
+// (~10% cut) so the large world feels fuller at the new mobile zoom; applies to both
+// platforms. Live value is entities.json player.speed (what Player reads); this
+// mirror is kept in sync as the canonical reference. NOTE: cutting the player alone
+// raises the enemy-to-player chase ratio (enemies unchanged this sprint) — the enemy
+// move-speed constants below stay exposed so the ratio can be held during tuning.
+export const PLAYER_SPEED = 108;
 
 // Slimes — Sprint 16 slowed (mirror of entities.json enemies.green_slime; enemy
 // chase cut slightly more than the player so a fresh player can still outrun one).
@@ -106,6 +116,24 @@ export const SLIME_WANDER_SPEED = 28;
 export const SLIME_CHASE_SPEED = 64;
 export const SLIME_DETECT_RANGE = 80;
 export const SLIME_LOSE_RANGE = 200;
+
+// --- Mobile touch controls (Sprint mobile-playability) --------------------
+// Sizes for the on-screen joystick + action buttons. They were oversized — the
+// cluster crowded the minimap and made the interact/market target hard to hit — so
+// every control scaled down. All tunable during device feel-test.
+export const TOUCH_JOYSTICK_BASE_RADIUS = 56; // was 70
+export const TOUCH_JOYSTICK_HANDLE_RADIUS = 24; // was 30
+export const TOUCH_BUTTON_RADIUS = 30; // was 38
+export const TOUCH_BUTTON_LABEL_PX = '20px'; // was 24px
+// Dim factor for an action button that renders from the start but is not yet usable
+// (e.g. ranged before a ranged weapon is acquired). Full-alpha once unlocked.
+export const TOUCH_BUTTON_LOCKED_ALPHA = 0.3;
+
+// Mobile dev-menu cheat: N rapid taps on the MAP button opens DevMenuScene (there is
+// no tilde key on a phone). Taps must land within the reset window of each other, so
+// ordinary single-tap map toggling never trips it.
+export const MAP_CHEAT_TAP_COUNT = 10;
+export const MAP_CHEAT_RESET_MS = 600;
 
 // --- Shared UI styling (Sprint 12 visual-consistency pass) ---
 // Every text object in the game already renders with this family; referencing the

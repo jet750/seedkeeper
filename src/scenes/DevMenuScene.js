@@ -1,6 +1,7 @@
 // DevMenuScene.js
 //
-// In-game developer cheat menu (toggle with the ~ key). Launched as a parallel
+// In-game developer cheat menu (toggle with the ~ key, or 10 rapid taps on the
+// mobile MAP button via the dev:toggleMenu event). Launched as a parallel
 // scene alongside GameScene/UIScene; it is completely inert unless the dev menu
 // is active (DEV_MODE === true in Constants.js, or the page URL contains
 // ?dev=true). When inactive it renders nothing, captures no input, and emits no
@@ -60,6 +61,12 @@ export default class DevMenuScene extends Phaser.Scene {
 
     // Toggle key (~). Polled in update() so it works regardless of focus order.
     this.toggleKey = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.BACKTICK);
+
+    // Mobile has no tilde key, so the touch HUD opens the menu via this event
+    // (10 rapid taps on MAP — see TouchControlSystem). Only wired while the menu is
+    // active, so a shipped (DEV_MODE=false) build ignores the taps entirely.
+    this._onMobileToggle = () => this.setMenuVisible(!this.menuOpen);
+    EventBus.on('dev:toggleMenu', this._onMobileToggle);
 
     // Keep the day readout / gear tiers fresh when day changes from any source.
     this._onExternalChange = () => {
@@ -346,5 +353,6 @@ export default class DevMenuScene extends Phaser.Scene {
   teardown() {
     EventBus.off('day:advanced', this._onExternalChange);
     EventBus.off('day:dayChanged', this._onExternalChange);
+    EventBus.off('dev:toggleMenu', this._onMobileToggle);
   }
 }

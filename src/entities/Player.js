@@ -19,10 +19,12 @@ const IDLE_BOB_MS = 600;
 const STEP_INTERVAL_BASE_MS = 320; // footstep cadence at base speed
 const STEP_VOLUME = 0.3;
 
-// Walk-cycle playback speed (Sprint 13). Lowered from 8 — playtest showed the
-// 4-frame walk cycling faster than the movement reads, so the sprite looked like
-// it was "fighting itself." Tunable: raise for a brisker step, lower for slower.
-const WALK_FRAME_RATE = 6;
+// Walk-cycle playback speed. Lowered 8 -> 6 (Sprint 13), then 6 -> 4 (Sprint mobile-
+// playability) — the cycle still read as nauseously fast on both desktop and mobile,
+// so the leg alternation is slowed for a more natural step. Animation cadence is
+// independent of travel speed (it is NOT tied to move speed). Tunable: raise for a
+// brisker step, lower for slower.
+const WALK_FRAME_RATE = 4;
 
 // Drawn at 1x (Sprint 13: halved from 2x — the doubled sprite read oversized
 // against the hand-built world's trees and props). Visual scale only; the physics

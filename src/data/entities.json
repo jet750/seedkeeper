@@ -1,8 +1,8 @@
 {
   "player": {
     "maxHP": 100,
-    "_speedNote": "Sprint 16: base move speed cut 160 -> 120 (75%) so the 6400x6400 world reads as appropriately large to traverse and a chase is a committed run, not a stroll. Enemy chase speeds were cut slightly more (see each enemy's chaseSpeed) so a fresh player still edges out a chaser; the slime LUNGE (unchanged) stays the close-range punish, and the post-timer 1.5x overtime can outpace the player (get-home tension). speedMult upgrades + boots stack on this. TUNE for feel.",
-    "speed": 120,
+    "_speedNote": "Sprint 16: base move speed cut 160 -> 120 (75%) so the 6400x6400 world reads as appropriately large to traverse and a chase is a committed run, not a stroll. Enemy chase speeds were cut slightly more (see each enemy's chaseSpeed) so a fresh player still edges out a chaser; the slime LUNGE (unchanged) stays the close-range punish, and the post-timer 1.5x overtime can outpace the player (get-home tension). speedMult upgrades + boots stack on this. Sprint mobile-playability: 120 -> 108 (~10% modest cut) so the world feels fuller at the new mobile zoom (both platforms). Enemy chase speeds were left as-is this sprint, so the enemy/player ratio tightened slightly — hold it by scaling each enemy chaseSpeed by ~0.9 if chases feel too sticky. TUNE for feel.",
+    "speed": 108,
     "attackDamage": 10,
     "attackCooldown": 600,
     "critChance": 0.05,
