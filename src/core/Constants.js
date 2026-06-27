@@ -142,9 +142,18 @@ export const TOUCH_BUTTON_LOCKED_ALPHA = 0.3;
 // centre along the up/down/left/right axes. Raise the spread to space the four
 // buttons further apart with NO re-layout (the whole diamond just grows). Portrait
 // scales all three by TOUCH_PORTRAIT_SCALE. // TUNE
-export const TOUCH_DIAMOND_SPREAD = 70; // centre→button distance (button gaps grow with this)
+// Sprint mobile-control-feel: spread cut 70 -> 50 so the four buttons read as ONE
+// connected face-cross (Xbox ABXY), not a sparse cross. Neighbour centre-to-centre is
+// spread*√2 ≈ 70.7px ≈ 1.18× the 60px button diameter (target band 1.1–1.25×). // TUNE
+export const TOUCH_DIAMOND_SPREAD = 50; // centre→button distance (button gaps grow with this)
 export const TOUCH_DIAMOND_CENTER_X = 120; // diamond centre inset from the right edge
 export const TOUCH_DIAMOND_CENTER_Y = 150; // diamond centre inset from the bottom edge
+// Minimum bottom inset for the touch controls (Sprint mobile-control-feel). env(safe-
+// area-inset-bottom) reports 0 in a non-PWA Android Chrome tab even though a bottom
+// nav/URL bar overlaps, so the dash button fell under the chrome. The control layer
+// never treats the bottom inset as less than this, guaranteeing clearance above the
+// browser chrome / home indicator in BOTH orientations. // TUNE
+export const TOUCH_BOTTOM_SAFE_MIN = 24;
 
 // Mobile dev-menu cheat: N rapid taps on the MAP button opens DevMenuScene (there is
 // no tilde key on a phone). Taps must land within the reset window of each other, so

@@ -22,6 +22,7 @@ import {
   TOUCH_DIAMOND_SPREAD,
   TOUCH_DIAMOND_CENTER_X,
   TOUCH_DIAMOND_CENTER_Y,
+  TOUCH_BOTTOM_SAFE_MIN,
   RADIAL_LONGPRESS_MS
 } from '../core/Constants.js';
 
@@ -29,6 +30,16 @@ import {
 // to reflect which secondary is loaded (Sprint combat-input-mobile-consolidated).
 const RANGED_GLYPH = '\u{1f3f9}';
 const SPELL_GLYPH = '✦'; // ✦
+
+// Interact-button icon (Sprint mobile-control-feel). Interact is used mostly on plants,
+// so a small sprout reads as the obvious "use" button — replacing the "E" glyph. Uses a
+// mid-growth frame of a plant growth-sheet (carrots = 112x16 = 7 frames of 16x16). If
+// the sheet didn't emit in this build (Vite glob emits only a subset — see memory note),
+// createActionButtons() falls back to the "E" text label. Frame/fill are easily swapped.
+const INTERACT_ICON_KEY = 'carrots';
+const INTERACT_ICON_FRAME = 4; // leafy growth stage — clear "plant" silhouette
+const INTERACT_ICON_SRC_PX = 16; // source frame size (square sheet)
+const INTERACT_ICON_FILL = 1.15; // icon height as a multiple of the button RADIUS
 
 export default class TouchControlSystem {
   constructor(scene) {
@@ -63,6 +74,15 @@ export default class TouchControlSystem {
     return MobileDetect.getRawInsets();
   }
 
+  // Effective bottom inset (Sprint mobile-control-feel). env(safe-area-inset-bottom) is
+  // 0 in a non-PWA Android Chrome tab even though a bottom nav/URL bar overlaps, so the
+  // raw inset alone let the bottom (dash) button fall under the chrome. Floor it at
+  // TOUCH_BOTTOM_SAFE_MIN so every bottom-anchored control clears the chrome / home
+  // indicator in BOTH orientations.
+  _bottomInset(safe) {
+    return Math.max(safe.bottom, TOUCH_BOTTOM_SAFE_MIN);
+  }
+
   // Track a scene-level pointer handler so destroy() can detach it.
   _onScene(event, fn) {
     this.scene.input.on(event, fn);
@@ -90,7 +110,7 @@ export default class TouchControlSystem {
     // Bottom-left, inset past a left notch and the home indicator. layout()
     // recomputes these on resize; this is just the initial seat.
     const JOYSTICK_X = 150 + this.safe.left;
-    const JOYSTICK_Y = this.scene.scale.height - 150 - this.safe.bottom;
+    const JOYSTICK_Y = this.scene.scale.height - 150 - this._bottomInset(this.safe);
 
     // Base disc + ring — static, semi-transparent. The ring + arrows are Graphics
     // (redrawn by _drawJoystickDecor on every layout); the disc/handle/dot just move.
@@ -241,6 +261,23 @@ export default class TouchControlSystem {
         .setScrollFactor(0)
         .setDepth(101);
 
+      // Interact gets a small plant sprite instead of the "E" glyph (Sprint mobile-
+      // control-feel) — interact is used mostly on plants, so a sprout is the obvious
+      // "use" icon. Guarded by textures.exists: if the growth-sheet didn't emit in this
+      // build, keep the "E" label (the sprite just isn't created). layout() rescales it.
+      let icon = null;
+      let iconBaseScale = 1;
+      if (btn.id === 'interact' && this.scene.textures.exists(INTERACT_ICON_KEY)) {
+        iconBaseScale = (BTN_RADIUS * INTERACT_ICON_FILL) / INTERACT_ICON_SRC_PX;
+        icon = this.scene.add
+          .image(x, y, INTERACT_ICON_KEY, INTERACT_ICON_FRAME)
+          .setOrigin(0.5)
+          .setScale(iconBaseScale)
+          .setScrollFactor(0)
+          .setDepth(102);
+        label.setText(''); // sprite replaces the glyph
+      }
+
       // Hit zone is larger than the visual for forgiving thumb taps.
       const hitZone = this.scene.add
         .circle(x, y, BTN_RADIUS + 10, 0x000000, 0.001)
@@ -248,7 +285,7 @@ export default class TouchControlSystem {
         .setDepth(99)
         .setInteractive();
 
-      const entry = { bg, ring, label, hitZone, locked: !!btn.lockedInitially };
+      const entry = { bg, ring, label, icon, iconBaseScale, hitZone, locked: !!btn.lockedInitially };
       this.touchButtons[btn.id] = entry;
 
       // A locked button renders dimmed and swallows taps until unlocked.
@@ -264,6 +301,7 @@ export default class TouchControlSystem {
         if (entry.locked) return; // inert until unlocked (e.g. ranged before pickup)
         bg.setScale(0.85);
         label.setScale(0.85);
+        if (entry.icon) entry.icon.setScale(entry.iconBaseScale * 0.85);
         // The Ranged-Magic button is tap-to-fire / hold-to-radial, so it resolves on
         // RELEASE (see _beginRangedPress). Every other button fires immediately.
         if (btn.id === 'ranged') {
@@ -275,6 +313,7 @@ export default class TouchControlSystem {
       const relax = () => {
         bg.setScale(1);
         label.setScale(1);
+        if (entry.icon) entry.icon.setScale(entry.iconBaseScale);
       };
       hitZone.on('pointerup', relax);
       hitZone.on('pointerout', relax);
@@ -310,8 +349,14 @@ export default class TouchControlSystem {
   // diamond shrinks to fit a narrow width without a separate layout branch.
   _diamondXY(pos, width, height, safe, cs) {
     const spread = TOUCH_DIAMOND_SPREAD * cs;
+    const btnR = TOUCH_BUTTON_RADIUS * cs;
+    const sb = this._bottomInset(safe);
     const cx = width - TOUCH_DIAMOND_CENTER_X * cs - safe.right;
-    const cy = height - TOUCH_DIAMOND_CENTER_Y * cs - safe.bottom;
+    let cy = height - TOUCH_DIAMOND_CENTER_Y * cs - sb;
+    // Never let the BOTTOM (dash) button dip under the effective bottom inset: clamp the
+    // cluster centre up so cy + spread + btnR stays above it (Sprint mobile-control-feel).
+    const maxCy = height - sb - spread - btnR;
+    if (cy > maxCy) cy = maxCy;
     switch (pos) {
       case 'top': return { x: cx, y: cy - spread };
       case 'bottom': return { x: cx, y: cy + spread };
@@ -452,7 +497,7 @@ export default class TouchControlSystem {
     this.joystick.baseRadius = baseR;
     this.joystick.handleRadius = handleR;
     const jx = (portrait ? baseR + 24 : 150) + safe.left;
-    const jy = height - 150 - safe.bottom;
+    const jy = height - 150 - this._bottomInset(safe);
     this.joystick.baseX = jx;
     this.joystick.baseY = jy;
     this.joystickBase.setPosition(jx, jy).setRadius(baseR);
@@ -479,6 +524,12 @@ export default class TouchControlSystem {
       b.ring.clear();
       b.ring.lineStyle(2, 0xffffff, 0.5);
       b.ring.strokeCircle(x, y, btnR);
+      // Interact plant icon tracks the button: re-seat + rescale to the (portrait-scaled)
+      // radius so it stays centred and proportional across rotation.
+      if (b.icon) {
+        b.iconBaseScale = (btnR * INTERACT_ICON_FILL) / INTERACT_ICON_SRC_PX;
+        b.icon.setPosition(x, y).setScale(b.iconBaseScale);
+      }
     });
 
     // MAP (top-right) + pause (top-left) buttons.

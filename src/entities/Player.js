@@ -33,6 +33,16 @@ const STEP_VOLUME = 0.3;
 // brisker step, lower for slower.
 const WALK_FRAME_RATE = 4;
 
+// Facing-flip hysteresis (Sprint mobile-control-feel). The cardinal `facing` only
+// flips when one movement axis dominates the other by this ratio. The mobile joystick
+// feeds continuous analog dx/dy, so near a diagonal (|dx|≈|dy|) an un-thresholded
+// "abs(dx) > abs(dy)" test oscillated facing frame-to-frame — each flip swapped the
+// walk_<dir> anim key and reset the cycle to frame 0, so the sprite snapped direction
+// and never animated ("glitchy" mobile movement). With this margin an ambiguous
+// near-diagonal HOLDS the current facing instead of chattering. 1.0 = old behaviour;
+// higher = stickier (flips later). Tunable during device feel-test. // TUNE
+const FACING_FLIP_RATIO = 1.18;
+
 // Drawn at 1x (Sprint 13: halved from 2x — the doubled sprite read oversized
 // against the hand-built world's trees and props). Visual scale only; the physics
 // body is configured independently below. The idle squash + stopIdle reset use
@@ -218,6 +228,10 @@ export default class Player extends Phaser.Physics.Arcade.Sprite {
 
     // --- State ---
     this.facing = 'down';
+    // Last anim key actually issued (Sprint mobile-control-feel). playMove/playIdle only
+    // (re)issue anims.play on a real change, so a steady heading never restarts the walk
+    // cycle (the per-frame replay that, paired with facing chatter, caused the jank).
+    this._currentAnimKey = null;
     this.isDead = false;
     this.invincible = false;
     this._flashEvent = null;
@@ -458,11 +472,18 @@ export default class Player extends Phaser.Physics.Arcade.Sprite {
   updateFacing(dx, dy) {
     // Hold-to-strafe: keep the current facing/aim while moving (Shift held).
     if (this._strafing) return;
-    if (Math.abs(dx) > Math.abs(dy)) {
+    // Hysteresis (Sprint mobile-control-feel): only flip the cardinal facing when one
+    // axis dominates the other by FACING_FLIP_RATIO. Near a diagonal the analog stick
+    // would otherwise oscillate facing frame-to-frame, restarting the walk anim (the
+    // glitch). When neither axis clearly dominates, HOLD the current facing.
+    const ax = Math.abs(dx);
+    const ay = Math.abs(dy);
+    if (ax > ay * FACING_FLIP_RATIO) {
       this.facing = dx < 0 ? 'left' : 'right';
-    } else {
+    } else if (ay > ax * FACING_FLIP_RATIO) {
       this.facing = dy < 0 ? 'up' : 'down';
     }
+    // else: ambiguous near-diagonal — keep the last facing (no flip, no anim restart).
   }
 
   // Snap `facing` to the nearest cardinal for an arbitrary aim angle (radians). Used by
@@ -499,12 +520,22 @@ export default class Player extends Phaser.Physics.Arcade.Sprite {
     return best;
   }
 
+  // Issue a directional anim only when it actually changed (Sprint mobile-control-feel).
+  // anims.play(key, true) already no-ops a same-key replay, but tracking the last key
+  // makes the "steady heading never restarts the cycle" guarantee explicit and keeps the
+  // walk/idle transition in sync with the facing-flip hysteresis above.
+  _playAnim(key) {
+    if (!this.hasSheet || this._currentAnimKey === key || !this.anims.exists(key)) return;
+    this.anims.play(key, true);
+    this._currentAnimKey = key;
+  }
+
   playMove() {
-    if (this.hasSheet) this.anims.play(`walk_${this.facing}`, true);
+    this._playAnim(`walk_${this.facing}`);
   }
 
   playIdle() {
-    if (this.hasSheet) this.anims.play(`idle_${this.facing}`, true);
+    this._playAnim(`idle_${this.facing}`);
   }
 
   // --- Idle animation (Sprint 9) --------------------------------------------
@@ -513,7 +544,7 @@ export default class Player extends Phaser.Physics.Arcade.Sprite {
   startIdle() {
     this.isIdling = true;
     if (this.hasSheet && this.anims.exists(`idle_${this.facing}`)) {
-      this.anims.play(`idle_${this.facing}`, true);
+      this._playAnim(`idle_${this.facing}`);
       return;
     }
     this._idleTween = this.scene.tweens.add({
