@@ -137,7 +137,7 @@ export default class PauseScene extends Phaser.Scene {
     // PAUSED → MENU is a valid transition; MenuScene re-asserts MENU on create.
     GameState.transition('MENU');
 
-    ['SettingsScene', 'UpgradeScene', 'SignpostScene', 'SeedDictScene', 'UIScene', 'DevMenuScene', 'GameScene'].forEach(
+    ['SettingsScene', 'UpgradeScene', 'SignpostScene', 'SeedDictScene', 'MapScene', 'UIScene', 'DevMenuScene', 'GameScene'].forEach(
       (key) => {
         if (this.scene.get(key)) this.scene.stop(key);
       }

@@ -125,6 +125,11 @@ export const TOUCH_JOYSTICK_BASE_RADIUS = 56; // was 70
 export const TOUCH_JOYSTICK_HANDLE_RADIUS = 24; // was 30
 export const TOUCH_BUTTON_RADIUS = 30; // was 38
 export const TOUCH_BUTTON_LABEL_PX = '20px'; // was 24px
+// Sprint mobile-playability-2: in portrait the controls felt oversized (the same
+// landscape radii take a bigger share of the narrow width). Both the joystick and the
+// action buttons shrink by this factor in the portrait branch of layout(); landscape
+// keeps full size. Tunable during device feel-test.
+export const TOUCH_PORTRAIT_SCALE = 0.8;
 // Dim factor for an action button that renders from the start but is not yet usable
 // (e.g. ranged before a ranged weapon is acquired). Full-alpha once unlocked.
 export const TOUCH_BUTTON_LOCKED_ALPHA = 0.3;

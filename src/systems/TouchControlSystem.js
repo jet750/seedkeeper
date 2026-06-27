@@ -18,8 +18,7 @@ import {
   TOUCH_BUTTON_RADIUS,
   TOUCH_BUTTON_LABEL_PX,
   TOUCH_BUTTON_LOCKED_ALPHA,
-  MAP_CHEAT_TAP_COUNT,
-  MAP_CHEAT_RESET_MS
+  TOUCH_PORTRAIT_SCALE
 } from '../core/Constants.js';
 
 export default class TouchControlSystem {
@@ -286,10 +285,6 @@ export default class TouchControlSystem {
   // --- Mobile-only HUD buttons (MAP toggle + pause) -------------------------
 
   createMobileHUDAdjustments() {
-    // The 120x90 minimap is too small to read on a phone — hide it, and offer a
-    // MAP button to peek it. UIScene owns the minimap and these two events.
-    EventBus.emit('minimap:setVisible', false);
-
     const safeTop = this.safe.top;
     const safeRight = this.safe.right;
     const safeLeft = this.safe.left;
@@ -306,23 +301,15 @@ export default class TouchControlSystem {
       .setScrollFactor(0)
       .setDepth(100)
       .setInteractive();
-    // Single tap toggles the minimap. There is no tilde key on a phone, so the dev
-    // cheat menu is unreachable on device — open it via MAP_CHEAT_TAP_COUNT rapid taps
-    // here (each tap must land within MAP_CHEAT_RESET_MS of the last, so ordinary
-    // map-toggling never trips it). The toggle still fires on every tap, so normal
-    // use is unaffected.
-    this._mapTapCount = 0;
-    this._mapLastTap = 0;
-    mapBtn.on('pointerdown', () => {
-      EventBus.emit('minimap:toggle');
-      const now = Date.now();
-      this._mapTapCount = now - this._mapLastTap > MAP_CHEAT_RESET_MS ? 1 : this._mapTapCount + 1;
-      this._mapLastTap = now;
-      if (this._mapTapCount >= MAP_CHEAT_TAP_COUNT) {
-        this._mapTapCount = 0;
-        EventBus.emit('dev:toggleMenu');
-      }
-    });
+    // Single tap opens the full-screen pause map (Sprint mobile-playability-2 —
+    // replaced the persistent minimap). GameScene owns the toggle AND the rapid-tap dev
+    // cheat counter, so 10 rapid taps (whether they land on this button while closed or
+    // on the map backdrop while open) still reaches DevMenuScene — there is no tilde key
+    // on a phone. The button is disabled while the map is up (MapScene's backdrop then
+    // owns the close tap) so a single physical tap never double-fires across scenes.
+    mapBtn.on('pointerdown', () => EventBus.emit('game:mapRequested', {}));
+    this._onBus('map:opened', () => mapBtn.disableInteractive());
+    this._onBus('map:closed', () => mapBtn.setInteractive());
 
     const pauseBtn = this.scene.add
       .text(20 + safeLeft, safeTop + 18, '⏸', {
@@ -354,34 +341,47 @@ export default class TouchControlSystem {
     if (!this.active) return;
     this.safe = safe;
     const portrait = width < height;
+    // Portrait shrinks every control by TOUCH_PORTRAIT_SCALE (the landscape radii read
+    // oversized on a narrow width); landscape keeps full size. Applied to the actual
+    // radii/fonts here — not just position — so the shrink genuinely takes effect in
+    // BOTH orientation branches (previously the size was baked once at create()).
+    const cs = portrait ? TOUCH_PORTRAIT_SCALE : 1;
 
     // Joystick (bottom-left). Landscape keeps the original 150px inset; portrait hugs
     // the left edge (radius + a small margin) so the narrow width still fits both the
     // stick and the bottom-right action cluster without overlap.
-    const jx = (portrait ? this.joystickBaseRadius + 24 : 150) + safe.left;
+    const baseR = TOUCH_JOYSTICK_BASE_RADIUS * cs;
+    const handleR = TOUCH_JOYSTICK_HANDLE_RADIUS * cs;
+    this.joystickBaseRadius = baseR;
+    this.joystick.baseRadius = baseR;
+    this.joystick.handleRadius = handleR;
+    const jx = (portrait ? baseR + 24 : 150) + safe.left;
     const jy = height - 150 - safe.bottom;
     this.joystick.baseX = jx;
     this.joystick.baseY = jy;
-    this.joystickBase.setPosition(jx, jy);
-    this._drawJoystickDecor(jx, jy, this.joystickBaseRadius);
+    this.joystickBase.setPosition(jx, jy).setRadius(baseR);
+    this._drawJoystickDecor(jx, jy, baseR);
     // Don't yank the handle out from under an active thumb mid-drag.
     if (!this.joystickActive) {
-      this.joystickHandle.setPosition(jx, jy);
+      this.joystickHandle.setPosition(jx, jy).setRadius(handleR);
       this.joystickDot.setPosition(jx, jy);
     }
 
     // Action buttons (bottom-right, inset past a right notch + the home indicator).
+    const btnR = TOUCH_BUTTON_RADIUS * cs;
+    this.buttonRadius = btnR;
+    const labelPx = `${Math.round(parseInt(TOUCH_BUTTON_LABEL_PX, 10) * cs)}px`;
     this._buttonDefs.forEach((btn) => {
       const b = this.touchButtons[btn.id];
       if (!b) return;
       const x = width - btn.dx - safe.right;
       const y = height - btn.dy - safe.bottom;
-      b.bg.setPosition(x, y);
-      b.label.setPosition(x, y);
-      b.hitZone.setPosition(x, y);
+      b.bg.setPosition(x, y).setRadius(btnR);
+      b.label.setPosition(x, y).setFontSize(labelPx);
+      b.hitZone.setPosition(x, y).setRadius(btnR + 10);
       b.ring.clear();
       b.ring.lineStyle(2, 0xffffff, 0.5);
-      b.ring.strokeCircle(x, y, this.buttonRadius);
+      b.ring.strokeCircle(x, y, btnR);
     });
 
     // MAP (top-right) + pause (top-left) buttons.

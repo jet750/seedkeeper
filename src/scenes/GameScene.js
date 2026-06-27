@@ -36,6 +36,8 @@ import {
   GARDEN_LAYOUT_SCALE,
   GARDEN_CENTER_X,
   GARDEN_CENTER_Y,
+  MAP_CHEAT_TAP_COUNT,
+  MAP_CHEAT_RESET_MS,
   isDevModeActive
 } from '../core/Constants.js';
 import WorldZoneSystem, { RIVER_WIDTH, CREEK_WIDTH } from '../systems/WorldZoneSystem.js';
@@ -275,7 +277,10 @@ export default class GameScene extends Phaser.Scene {
     this._worldDetailOpen = false;
     this._plantPickerOpen = false; // Sprint 10c — planting seed picker open
     this._plantPickerBed = null; // bed the open picker is planting into
-    this._playerMovedAccum = 0; // throttle accumulator for minimap player:moved
+    this._playerMovedAccum = 0; // throttle accumulator for player:moved broadcast
+    this._mapOpen = false; // Sprint mobile-playability-2 — full-screen pause map open
+    this._mapTapCount = 0; // rapid-tap counter for the MAP-button dev-menu cheat
+    this._mapLastTap = 0;
     this._paused = false; // Sprint 12 — pause menu open
     // Sprint 12 first-run tutorial trigger latches (once-per-run derivations).
     this._nearGateEmitted = false;
@@ -565,6 +570,10 @@ export default class GameScene extends Phaser.Scene {
     // emits these). Registered via subscribe() so shutdown() detaches them.
     this.subscribe('touch:interact', () => this.handleInteract());
     this.subscribe('game:pauseRequested', () => this.tryOpenPause());
+    // Full-screen pause map (Sprint mobile-playability-2). M key (UIScene) / MAP button
+    // (TouchControlSystem) / map backdrop + close (MapScene) all funnel here so one
+    // counter drives both the open/close toggle and the 10-rapid-tap dev-menu cheat.
+    this.subscribe('game:mapRequested', () => this.onMapRequested());
 
     // --- Screenshake on melee impact (Sprint 13) ---
     this.subscribe('combat:meleeLanded', (d) => this.onMeleeLanded(d));
@@ -1760,7 +1769,8 @@ export default class GameScene extends Phaser.Scene {
       this._dictionaryOpen ||
       this._worldDetailOpen ||
       this._swapPickerOpen ||
-      this._plantPickerOpen
+      this._plantPickerOpen ||
+      this._mapOpen
     ) {
       return;
     }
@@ -1782,6 +1792,62 @@ export default class GameScene extends Phaser.Scene {
       GameState.transition('PLAYING');
       this.physics.resume();
     }
+  }
+
+  // --- Full-screen pause map (Sprint mobile-playability-2) -------------------
+  // Replaces the persistent minimap. One funnel for every entry point (M key, MAP
+  // button, map backdrop/close): it drives the open/close toggle AND the 10-rapid-tap
+  // dev-menu cheat (there is no tilde key on a phone). A cheat tap doesn't also toggle
+  // the map, so reaching the dev menu doesn't leave a stray map open/closed.
+  onMapRequested() {
+    const now = Date.now();
+    this._mapTapCount = now - this._mapLastTap > MAP_CHEAT_RESET_MS ? 1 : this._mapTapCount + 1;
+    this._mapLastTap = now;
+    if (this._mapTapCount >= MAP_CHEAT_TAP_COUNT) {
+      this._mapTapCount = 0;
+      EventBus.emit('dev:toggleMenu');
+      return;
+    }
+    if (this._mapOpen) this.closeMap();
+    else this.openMap();
+  }
+
+  openMap() {
+    if (this._mapOpen) return;
+    // Never open over another modal or while already paused / not actively playing.
+    if (
+      this._paused ||
+      this._upgradeOpen ||
+      this._marketOpen ||
+      this._winOpen ||
+      this._signpostOpen ||
+      this._dictionaryOpen ||
+      this._worldDetailOpen ||
+      this._swapPickerOpen ||
+      this._plantPickerOpen ||
+      !GameState.is('PLAYING')
+    ) {
+      return;
+    }
+    this._mapOpen = true;
+    this.player.setVelocity(0, 0);
+    GameState.transition('PAUSED'); // PLAYING → PAUSED
+    this.physics.pause();
+    this.scene.launch('MapScene', { playerX: this.player.x, playerY: this.player.y });
+    this.scene.bringToTop('MapScene');
+    // Lets the MAP button disable itself so MapScene's backdrop owns the close tap.
+    EventBus.emit('map:opened', {});
+  }
+
+  closeMap() {
+    if (!this._mapOpen) return;
+    this._mapOpen = false;
+    if (this.scene.get('MapScene')) this.scene.stop('MapScene');
+    if (GameState.is('PAUSED')) {
+      GameState.transition('PLAYING');
+      this.physics.resume();
+    }
+    EventBus.emit('map:closed', {});
   }
 
   // First-day-only nudge toward the gate: fires once when the player gets close

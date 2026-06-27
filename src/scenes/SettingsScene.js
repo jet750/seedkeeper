@@ -35,7 +35,7 @@ const CONTROLS = [
   ['SHIFT', 'Dash (once unlocked)'],
   ['~', 'Dev Menu (dev builds only)'],
   ['ESC', 'Pause / Close'],
-  ['M', 'Toggle minimap']
+  ['M', 'Open map (pauses)']
 ];
 
 export default class SettingsScene extends Phaser.Scene {

@@ -21,6 +21,7 @@ import SeedDictScene from './scenes/SeedDictScene.js';
 import PauseScene from './scenes/PauseScene.js';
 import SettingsScene from './scenes/SettingsScene.js';
 import CreditsScene from './scenes/CreditsScene.js';
+import MapScene from './scenes/MapScene.js';
 import DevMenuScene from './scenes/DevMenuScene.js';
 
 // Vercel Web Analytics (vanilla JS — not the React/Next component form). Injects the
@@ -82,6 +83,7 @@ const config = {
     PauseScene,
     SettingsScene,
     CreditsScene,
+    MapScene,
     DevMenuScene
   ]
 };

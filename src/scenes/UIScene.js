@@ -6,18 +6,7 @@
 
 import Phaser from 'phaser';
 import EventBus from '../core/EventBus.js';
-import {
-  VIRTUAL_WIDTH,
-  VIRTUAL_HEIGHT,
-  WORLD_WIDTH,
-  WORLD_HEIGHT,
-  GARDEN_X,
-  GARDEN_Y,
-  GARDEN_WIDTH,
-  GARDEN_HEIGHT,
-  FONT_FAMILY
-} from '../core/Constants.js';
-import WorldZoneSystem from '../systems/WorldZoneSystem.js';
+import { VIRTUAL_WIDTH, VIRTUAL_HEIGHT } from '../core/Constants.js';
 import MobileDetect from '../core/MobileDetect.js';
 import TouchControlSystem from '../systems/TouchControlSystem.js';
 import entitiesData from '../data/entities.json';
@@ -41,6 +30,26 @@ const UI_SLOT_FRAME = 4; // frame index into ui_slot_frame.png (3x3 of 48px slot
 // Weather id → frame in the small Sprout Lands weather sheet (32px, top row is a
 // sun→cloud→rain→…→swirl sequence). Best-fit indices — tune if an icon mismatches.
 const WEATHER_FRAMES = { clear: 0, sunny: 0, cloudy: 2, rain: 3, fog: 1, wind: 6 };
+
+// --- In-scene overlay layout (Sprint mobile-playability-2) -----------------
+// The plant/swap pickers and transient popups were authored at fixed 1600x900
+// virtual coords, so under the mobile RESIZE scale mode (UIScene's coord space ==
+// live screen px) they rendered off-screen — the planting blocker. They now lay out
+// from the LIVE viewport via _vp() + these named metrics, so they sit on-screen in
+// either orientation and reflow on rotation. On desktop (FIT, 1600x900, zero insets)
+// the panel simply centres in the larger space — still fully usable, just not pinned
+// to the old hardcoded pixel. All sizes are tunable.
+const CHOICE_PANEL_MAX_W = 460; // widest the picker panel grows (desktop cap)
+const CHOICE_MARGIN = 18; // gap kept from the screen edges / safe insets
+const CHOICE_HEADER_H = 70; // title + subtitle zone at the panel top
+const CHOICE_FOOTER_H = 64; // Cancel-button zone at the panel bottom
+const CHOICE_NOTE_H = 28; // extra note line (e.g. golden-can) above the footer
+const CHOICE_ROW_H = 56; // natural per-option row height
+const CHOICE_ROW_H_MIN = 36; // floor when shrinking rows to fit a short screen
+const CHOICE_ROW_GAP = 10; // gap between option rows
+const CHOICE_ROW_PAD = 16; // inset of a row inside the panel
+const ACCENT_GOLD = 0xd4a83f;
+const ACCENT_BOTANICAL = 0x8ab87e;
 
 function formatTime(ms) {
   const totalSec = Math.max(0, Math.ceil(ms / 1000));
@@ -86,16 +95,10 @@ export default class UIScene extends Phaser.Scene {
     this._plantObjects = [];
     this._plantSlots = [];
     this._plantBedIndex = null;
-    // Minimap (Sprint 10c) — its own copy of the deterministic zone system so the
-    // HUD can sample the same organic layout GameScene builds.
-    this._minimapVisible = true;
-    this._minimapObjects = [];
-    this.worldZoneSystem = new WorldZoneSystem();
   }
 
   create() {
     this.buildHud();
-    this.createMinimap();
     this.subscribeAll();
     this.refreshHP();
     this.refreshZone();
@@ -105,8 +108,9 @@ export default class UIScene extends Phaser.Scene {
     // (Sprint 10c) — each only responds while its own picker is open.
     this.input.keyboard.on('keydown', (e) => this.onSwapKey(e));
     this.input.keyboard.on('keydown', (e) => this.onPlantKey(e));
-    // M toggles the minimap (Sprint 10c).
-    this.input.keyboard.on('keydown-M', () => this.toggleMinimap());
+    // M opens the full-screen pause map (Sprint mobile-playability-2 — replaced the
+    // persistent minimap). GameScene owns the open/pause; mobile uses the MAP button.
+    this.input.keyboard.on('keydown-M', () => EventBus.emit('game:mapRequested', {}));
     // Esc also closes an open world-detail popup (Sprint 11).
     this.input.keyboard.on('keydown-ESC', () => {
       if (this._worldDetailObjs) this.closeWorldDetail();
@@ -145,6 +149,30 @@ export default class UIScene extends Phaser.Scene {
       : { top: 0, bottom: 0, left: 0, right: 0 };
     this.layoutHUD(width, height, safe);
     if (this.touchControls) this.touchControls.layout(width, height, safe);
+
+    // In-scene overlays are drawn from the live viewport (not baked at create), so a
+    // rotation/toolbar resize must rebuild any open picker at the new dimensions —
+    // otherwise it would keep last orientation's geometry. Rebuilt from stored state.
+    if (this._plantOpen) {
+      this.openPlantPicker({
+        bedIndex: this._plantBedIndex,
+        slots: this._plantSlots,
+        hasGoldenCan: this._plantHasGoldenCan
+      });
+    }
+    if (this._swapOpen) this.openSwapPicker(this._swapSlots, this._swapNewType);
+  }
+
+  // Live viewport + safe insets. Under the mobile RESIZE scale mode this scene's
+  // coordinate space IS the on-screen px, so width/height track the real device and
+  // the insets apply 1:1. On desktop (FIT) it resolves to 1600x900 with zero insets.
+  _vp() {
+    const w = this.scale.width;
+    const h = this.scale.height;
+    const safe = MobileDetect.isMobile()
+      ? MobileDetect.getRawInsets()
+      : { top: 0, bottom: 0, left: 0, right: 0 };
+    return { w, h, cx: w / 2, cy: h / 2, safe };
   }
 
   // --- HUD construction -----------------------------------------------------
@@ -152,16 +180,13 @@ export default class UIScene extends Phaser.Scene {
   buildHud() {
     const pad = 32;
 
-    // Semi-transparent dark bars behind the top and bottom HUD clusters so the
-    // text reads clearly over any garden/forest background (Sprint 8 polish).
-    // Created first so every HUD element draws on top of them. Stored so layoutHUD
-    // can re-span them to the current width and re-seat the bottom one on resize.
+    // Semi-transparent dark bar behind the TOP HUD cluster so the text reads clearly
+    // over any garden/forest background (Sprint 8 polish). Created first so every HUD
+    // element draws on top of it; layoutHUD re-spans it to the current width. The old
+    // bottom grey bar was removed (Sprint mobile-playability-2 — it conveyed nothing;
+    // the seed inventory now sits in its own bottom strip/tray).
     this.topBar = this.add
       .rectangle(0, 0, VIRTUAL_WIDTH, 80, 0x000000, 0.42)
-      .setOrigin(0, 0)
-      .setDepth(-1);
-    this.bottomBar = this.add
-      .rectangle(0, VIRTUAL_HEIGHT - 80, VIRTUAL_WIDTH, 80, 0x000000, 0.42)
       .setOrigin(0, 0)
       .setDepth(-1);
 
@@ -282,11 +307,19 @@ export default class UIScene extends Phaser.Scene {
       })
       .setOrigin(0, 0.5);
 
-    // BOTTOM LEFT — seed slot row (real plant-color circles in Sprint 2).
+    // BOTTOM — seed slot row (real plant-color circles in Sprint 2). Relocated to a
+    // clean, centred bottom strip in Sprint mobile-playability-2 (was floating
+    // bottom-left / mid-playfield in portrait). A contained tray sits behind the row
+    // so it reads as an intentional inventory strip, not stray slots; layoutHUD sizes
+    // and seats both the tray and the slots from the live viewport.
     this._slotSize = 40;
     this._slotGap = 12;
     this._slotBaseX = pad;
     this._slotBaseY = VIRTUAL_HEIGHT - 48;
+    this.seedTray = this.add
+      .rectangle(0, 0, 10, 10, 0x000000, 0.42)
+      .setOrigin(0.5, 0.5)
+      .setDepth(-1);
     this.slotCount = entitiesData.player.seedSlots;
     this.buildSeedSlots(this.slotCount);
 
@@ -315,17 +348,8 @@ export default class UIScene extends Phaser.Scene {
       .setAlpha(0)
       .setDepth(200);
 
-    // BOTTOM RIGHT — plant bank readout (chest UI proper arrives in Sprint 4).
-    this.bankText = this.add
-      .text(VIRTUAL_WIDTH - pad, VIRTUAL_HEIGHT - 40, 'Bank: empty', {
-        fontFamily: '"SproutLands", "Courier New", monospace',
-        fontSize: '16px',
-        color: '#9B9389',
-        align: 'right'
-      })
-      .setOrigin(1, 1);
-
-    // BOTTOM RIGHT (above bank) — ranged ammo counter, hidden until equipped.
+    // BOTTOM RIGHT — ranged ammo counter, hidden until equipped. (The plant-bank
+    // readout that used to live here was removed in Sprint mobile-playability-2.)
     this.ammoText = this.add
       .text(VIRTUAL_WIDTH - pad, VIRTUAL_HEIGHT - 72, '', {
         fontFamily: '"SproutLands", "Courier New", monospace',
@@ -392,8 +416,9 @@ export default class UIScene extends Phaser.Scene {
   }
 
   flashCombo() {
+    const { w, h } = this._vp();
     const f = this.add
-      .rectangle(0, 0, VIRTUAL_WIDTH, VIRTUAL_HEIGHT, 0xffffff, 0.18)
+      .rectangle(0, 0, w, h, 0xffffff, 0.18)
       .setOrigin(0, 0)
       .setDepth(239);
     this.tweens.add({ targets: f, alpha: 0, duration: 200, onComplete: () => f.destroy() });
@@ -527,7 +552,9 @@ export default class UIScene extends Phaser.Scene {
     this.subscribe('player:waterFilled', (d) => this.refreshWater(d.charges, d.capacity));
     this.subscribe('player:waterUsed', (d) => this.refreshWater(d.charges, d.capacity));
     this.subscribe('player:waterChanged', (d) => this.refreshWater(d.charges, d.capacity));
-    this.subscribe('bank:updated', (d) => this.refreshBank(d.bank));
+    // TODO: surface bank on a garden sign/chest — the BANK readout was removed from
+    // active play (Sprint mobile-playability-2); it only matters once the
+    // sortie/extraction economy exists. MarketplaceScene still listens to bank:updated.
     this.subscribe('coins:changed', (d) => this.refreshCoins(d.coins));
 
     // --- Sprint 4 ---
@@ -552,14 +579,9 @@ export default class UIScene extends Phaser.Scene {
     this.subscribe('inventory:swapClosed', () => this.closeSwapPicker());
     this.subscribe('player:died', () => this.showDeathMessage());
 
-    // --- Sprint 10c — planting picker + minimap ---
+    // --- Sprint 10c — planting picker ---
     this.subscribe('bed:plantPrompt', (d) => this.openPlantPicker(d));
     this.subscribe('bed:plantPromptClose', () => this.closePlantPicker());
-    this.subscribe('player:moved', (d) => this.updateMinimapPlayer(d.x, d.y));
-
-    // --- Sprint Mobile — minimap toggled/forced from the touch HUD ---
-    this.subscribe('minimap:toggle', () => this.toggleMinimap());
-    this.subscribe('minimap:setVisible', (visible) => this.setMinimapVisible(visible));
 
     // --- Sprint 9 — contextual interaction prompt ---
     this.subscribe('interact:nearObject', (d) => this.showInteractPrompt(d.text, d.actionable));
@@ -609,8 +631,9 @@ export default class UIScene extends Phaser.Scene {
       this._bannerEvent.remove(false);
       this._bannerEvent = null;
     }
+    const { w, safe } = this._vp();
     const t = this.add
-      .text(VIRTUAL_WIDTH / 2, 150, text, {
+      .text(w / 2, 150 + safe.top, text, {
         fontFamily: '"SproutLands", "Courier New", monospace',
         fontSize: '20px',
         color: color || COLOR_NORMAL,
@@ -640,9 +663,10 @@ export default class UIScene extends Phaser.Scene {
 
   showWorldDetail({ title, text }) {
     this.closeWorldDetail();
-    const cx = VIRTUAL_WIDTH / 2;
-    const cy = VIRTUAL_HEIGHT / 2;
-    const w = 640;
+    const vp = this._vp();
+    const cx = vp.cx;
+    const cy = vp.cy;
+    const w = Math.min(640, vp.w - 2 * CHOICE_MARGIN);
     const h = 250;
     const bg = this.add
       .rectangle(cx, cy, w, h, 0x221e1b, 0.97)
@@ -715,12 +739,13 @@ export default class UIScene extends Phaser.Scene {
   }
 
   buildToast(a) {
+    const vp = this._vp();
     const w = 380;
     const h = 96;
     const pad = 24;
-    const y = 160; // below the timer / mute / NG+ indicators
-    const xHidden = VIRTUAL_WIDTH + w;
-    const xShown = VIRTUAL_WIDTH - pad - w / 2;
+    const y = 160 + vp.safe.top; // below the timer / mute / NG+ indicators (clear a notch)
+    const xHidden = vp.w + w;
+    const xShown = vp.w - pad - vp.safe.right - w / 2;
 
     const container = this.add.container(xHidden, y).setDepth(300);
     const bg = this.add
@@ -790,14 +815,15 @@ export default class UIScene extends Phaser.Scene {
   }
 
   tutorialPosition(position) {
+    const { w, h, safe } = this._vp();
     switch (position) {
       case 'center':
-        return { x: VIRTUAL_WIDTH / 2, y: VIRTUAL_HEIGHT / 2 - 90 };
+        return { x: w / 2, y: h / 2 - 90 };
       case 'bottom_center':
-        return { x: VIRTUAL_WIDTH / 2, y: VIRTUAL_HEIGHT - 150 };
+        return { x: w / 2, y: h - 150 - safe.bottom };
       case 'top_center':
       default:
-        return { x: VIRTUAL_WIDTH / 2, y: 210 };
+        return { x: w / 2, y: 200 + safe.top };
     }
   }
 
@@ -850,93 +876,30 @@ export default class UIScene extends Phaser.Scene {
     });
     if (filled.length === 0) return;
     this._swapOpen = true;
-    // The picker occupies the bottom-center; hide the contextual prompt under it.
     if (this.interactPrompt) this.interactPrompt.setAlpha(0);
-
-    const cx = VIRTUAL_WIDTH / 2;
-    const panelY = VIRTUAL_HEIGHT - 200;
-    const btnW = 150;
-    const btnH = 48;
-    const gap = 14;
-    const totalW = filled.length * btnW + (filled.length - 1) * gap;
-    const panelW = Math.max(totalW + 60, 420);
-    const panelH = 150;
-
-    const bg = this.add
-      .rectangle(cx, panelY, panelW, panelH, 0x221e1b, 0.97)
-      .setStrokeStyle(2, 0xd4a83f)
-      .setDepth(250);
-    this._swapObjects.push(bg);
-
-    this._swapObjects.push(
-      this.add
-        .text(cx, panelY - panelH / 2 + 16, 'Swap which seed?', {
-          fontFamily: '"SproutLands", "Courier New", monospace',
-          fontSize: '18px',
-          fontStyle: 'bold',
-          color: '#EDD49A'
-        })
-        .setOrigin(0.5, 0)
-        .setDepth(251)
-    );
 
     const newName = entitiesData.plants[newPlantType]
       ? entitiesData.plants[newPlantType].name
       : newPlantType;
-    this._swapObjects.push(
-      this.add
-        .text(cx, panelY - panelH / 2 + 44, `Picking up: ${newName}`, {
-          fontFamily: '"SproutLands", "Courier New", monospace',
-          fontSize: '14px',
-          color: '#D1CCC6'
-        })
-        .setOrigin(0.5, 0)
-        .setDepth(251)
-    );
 
-    const startX = cx - totalW / 2 + btnW / 2;
-    const rowY = panelY + 6;
-    filled.forEach((f, n) => {
-      const x = startX + n * (btnW + gap);
-      const color = parseInt(entitiesData.plants[f.pt].color.replace('#', ''), 16);
-      const name = entitiesData.plants[f.pt].name;
-      const rect = this.add
-        .rectangle(x, rowY, btnW, btnH, 0x2d2926)
-        .setStrokeStyle(2, 0x57514b)
-        .setDepth(251)
-        .setInteractive({ useHandCursor: true });
-      const dot = this.add.circle(x - btnW / 2 + 18, rowY, 9, color).setDepth(252);
-      const label = this.add
-        .text(x - btnW / 2 + 34, rowY, `${f.i + 1}. ${name}`, {
-          fontFamily: '"SproutLands", "Courier New", monospace',
-          fontSize: '13px',
-          color: '#F5EFE6'
-        })
-        .setOrigin(0, 0.5)
-        .setDepth(252);
-      rect.on('pointerover', () => rect.setStrokeStyle(2, 0xeac34f));
-      rect.on('pointerout', () => rect.setStrokeStyle(2, 0x57514b));
-      rect.on('pointerup', () => this.confirmSwap(f.i));
-      this._swapObjects.push(rect, dot, label);
+    // Live-viewport centred list (Sprint mobile-playability-2) — was a fixed
+    // bottom-anchored 1600x900 strip that rendered off-screen on a phone.
+    this._buildChoicePanel({
+      accent: ACCENT_GOLD,
+      title: 'Swap which seed?',
+      subtitle: `Picking up: ${newName}`,
+      rows: filled.map((f) => {
+        const plant = entitiesData.plants[f.pt];
+        return {
+          color: parseInt(plant.color.replace('#', ''), 16),
+          label: plant.name,
+          right: `[${f.i + 1}]`,
+          onPick: () => this.confirmSwap(f.i)
+        };
+      }),
+      onCancel: () => this.cancelSwap(),
+      store: this._swapObjects
     });
-
-    const cancelY = panelY + panelH / 2 - 22;
-    const cancel = this.add
-      .rectangle(cx, cancelY, 170, 34, 0x8a3a3a)
-      .setStrokeStyle(2, 0x000000)
-      .setDepth(251)
-      .setInteractive({ useHandCursor: true });
-    const cancelLabel = this.add
-      .text(cx, cancelY, 'Cancel (Esc)', {
-        fontFamily: '"SproutLands", "Courier New", monospace',
-        fontSize: '14px',
-        fontStyle: 'bold',
-        color: '#F5EFE6'
-      })
-      .setOrigin(0.5)
-      .setDepth(252);
-    cancel.on('pointerup', () => this.cancelSwap());
-    this._swapObjects.push(cancel, cancelLabel);
   }
 
   closeSwapPicker() {
@@ -980,6 +943,7 @@ export default class UIScene extends Phaser.Scene {
     this.closePlantPicker();
     this._plantSlots = slots;
     this._plantBedIndex = bedIndex;
+    this._plantHasGoldenCan = hasGoldenCan;
 
     const filled = [];
     slots.forEach((pt, i) => {
@@ -989,120 +953,159 @@ export default class UIScene extends Phaser.Scene {
     this._plantOpen = true;
     if (this.interactPrompt) this.interactPrompt.setAlpha(0);
 
-    const cx = VIRTUAL_WIDTH / 2;
-    const cy = VIRTUAL_HEIGHT / 2;
-    const cardW = 150;
-    const cardH = 150;
-    const gap = 16;
-    const totalW = filled.length * cardW + (filled.length - 1) * gap;
-    const panelW = Math.max(totalW + 80, 460);
-    const panelH = 300;
+    // Live-viewport centred list (Sprint mobile-playability-2) — was a fixed
+    // 1600x900 card row centred at (800,450), i.e. off-screen on a phone (THE
+    // planting blocker). Grow days stay on each row as the strategic info.
+    this._buildChoicePanel({
+      accent: ACCENT_BOTANICAL,
+      title: 'Choose a seed to plant',
+      rows: filled.map((f) => {
+        const plant = entitiesData.plants[f.pt];
+        const days = plant.growthDays;
+        return {
+          color: parseInt(plant.color.replace('#', ''), 16),
+          label: plant.name,
+          right: `${days} ${days === 1 ? 'day' : 'days'}  ·  [${f.i + 1}]`,
+          onPick: () => this.confirmPlant(f.i)
+        };
+      }),
+      note: hasGoldenCan ? 'Golden Can: waters all beds after planting' : null,
+      onCancel: () => this.cancelPlant(),
+      store: this._plantObjects
+    });
+  }
 
-    // Light dim so the choice reads as the focus, but the world stays visible.
-    this._plantObjects.push(
-      this.add
-        .rectangle(0, 0, VIRTUAL_WIDTH, VIRTUAL_HEIGHT, 0x000000, 0.35)
-        .setOrigin(0, 0)
-        .setDepth(263)
+  // Shared centred modal panel for the plant + swap pickers (Sprint mobile-playability-2).
+  // Draws a dim full-screen backdrop, a panel sized to the LIVE viewport (so it fits a
+  // phone in either orientation and reflows on rotation), a title (+ optional subtitle),
+  // a vertical list of selectable rows, an optional note, and a Cancel button that clears
+  // the bottom safe-area inset. Every object is pushed into `store` so the caller's
+  // close() tears them all down. Rows: { color, label, right, onPick }.
+  _buildChoicePanel({ accent, title, subtitle, rows, note, onCancel, store }) {
+    const { w, h, cx, safe } = this._vp();
+    const n = rows.length;
+
+    // Vertical budget between the safe insets; shrink row height to fit a short screen.
+    const availTop = safe.top + CHOICE_MARGIN;
+    const availBottom = h - safe.bottom - CHOICE_MARGIN;
+    const availH = availBottom - availTop;
+    const noteH = note ? CHOICE_NOTE_H : 0;
+    const chromeH = CHOICE_HEADER_H + noteH + CHOICE_FOOTER_H;
+    let rowH = CHOICE_ROW_H;
+    if (n * rowH + (n - 1) * CHOICE_ROW_GAP > availH - chromeH) {
+      rowH = Math.max(CHOICE_ROW_H_MIN, (availH - chromeH - (n - 1) * CHOICE_ROW_GAP) / n);
+    }
+    const rowsH = n * rowH + (n - 1) * CHOICE_ROW_GAP;
+
+    const panelW = Math.min(w - 2 * CHOICE_MARGIN, CHOICE_PANEL_MAX_W);
+    const panelH = CHOICE_HEADER_H + noteH + rowsH + CHOICE_FOOTER_H;
+    const panelTop = Math.max(availTop, (h - panelH) / 2);
+    const panelLeft = cx - panelW / 2;
+    const rowW = panelW - 2 * CHOICE_ROW_PAD;
+
+    // Dim backdrop — deliberately NON-interactive. The picker is opened synchronously
+    // from the touch-interact button's pointerdown, so an interactive backdrop would
+    // catch that very tap's pointerup and cancel the picker the instant it opened. Dim
+    // only; dismissal is the Cancel button / Esc / walking away from the bed.
+    store.push(
+      this.add.rectangle(0, 0, w, h, 0x000000, 0.5).setOrigin(0, 0).setDepth(260)
     );
-    this._plantObjects.push(
+
+    store.push(
       this.add
-        .rectangle(cx, cy, panelW, panelH, 0x221e1b, 0.97)
-        .setStrokeStyle(2, 0x8ab87e)
+        .rectangle(cx, panelTop + panelH / 2, panelW, panelH, 0x221e1b, 0.98)
+        .setStrokeStyle(2, accent)
         .setDepth(264)
     );
-    this._plantObjects.push(
+    store.push(
       this.add
-        .text(cx, cy - panelH / 2 + 22, 'Choose a seed to plant', {
+        .text(cx, panelTop + 18, title, {
           fontFamily: '"SproutLands", "Courier New", monospace',
-          fontSize: '22px',
+          fontSize: '20px',
           fontStyle: 'bold',
-          color: '#EDD49A'
+          color: '#EDD49A',
+          align: 'center'
         })
         .setOrigin(0.5, 0)
-        .setDepth(265)
+        .setDepth(266)
     );
-
-    const startX = cx - totalW / 2 + cardW / 2;
-    const rowY = cy - 4;
-    filled.forEach((f, n) => {
-      const x = startX + n * (cardW + gap);
-      const plant = entitiesData.plants[f.pt];
-      const color = parseInt(plant.color.replace('#', ''), 16);
-      const days = plant.growthDays;
-
-      const card = this.add
-        .rectangle(x, rowY, cardW, cardH, 0x2d2926)
-        .setStrokeStyle(2, 0x57514b)
-        .setDepth(264)
-        .setInteractive({ useHandCursor: true });
-      const dot = this.add.circle(x, rowY - cardH / 2 + 34, 16, color).setDepth(265);
-      const name = this.add
-        .text(x, rowY - 4, plant.name, {
-          fontFamily: '"SproutLands", "Courier New", monospace',
-          fontSize: '15px',
-          fontStyle: 'bold',
-          color: '#F5EFE6',
-          align: 'center',
-          wordWrap: { width: cardW - 16 }
-        })
-        .setOrigin(0.5)
-        .setDepth(265);
-      const daysT = this.add
-        .text(x, rowY + 34, `${days} ${days === 1 ? 'day' : 'days'}`, {
-          fontFamily: '"SproutLands", "Courier New", monospace',
-          fontSize: '16px',
-          color: '#8AB87E'
-        })
-        .setOrigin(0.5)
-        .setDepth(265);
-      const keyT = this.add
-        .text(x, rowY + cardH / 2 - 16, `[${f.i + 1}]`, {
-          fontFamily: '"SproutLands", "Courier New", monospace',
-          fontSize: '15px',
-          fontStyle: 'bold',
-          color: '#9B9389'
-        })
-        .setOrigin(0.5)
-        .setDepth(265);
-
-      card.on('pointerover', () => card.setStrokeStyle(2, 0xeac34f));
-      card.on('pointerout', () => card.setStrokeStyle(2, 0x57514b));
-      card.on('pointerup', () => this.confirmPlant(f.i));
-      this._plantObjects.push(card, dot, name, daysT, keyT);
-    });
-
-    // Golden-can note: it soaks every bed after planting, so the choice matters.
-    if (hasGoldenCan) {
-      this._plantObjects.push(
+    if (subtitle) {
+      store.push(
         this.add
-          .text(cx, cy + panelH / 2 - 58, 'Golden Can: waters all beds after planting', {
+          .text(cx, panelTop + 46, subtitle, {
             fontFamily: '"SproutLands", "Courier New", monospace',
-            fontSize: '13px',
-            color: '#EDD49A'
+            fontSize: '14px',
+            color: '#D1CCC6',
+            align: 'center'
           })
-          .setOrigin(0.5)
-          .setDepth(265)
+          .setOrigin(0.5, 0)
+          .setDepth(266)
       );
     }
 
-    const cancelY = cy + panelH / 2 - 26;
+    const rowTop = panelTop + CHOICE_HEADER_H;
+    rows.forEach((row, i) => {
+      const ry = rowTop + i * (rowH + CHOICE_ROW_GAP) + rowH / 2;
+      const rect = this.add
+        .rectangle(cx, ry, rowW, rowH, 0x2d2926)
+        .setStrokeStyle(2, 0x57514b)
+        .setDepth(265)
+        .setInteractive({ useHandCursor: true });
+      const dot = this.add.circle(panelLeft + CHOICE_ROW_PAD + 18, ry, 11, row.color).setDepth(266);
+      const label = this.add
+        .text(panelLeft + CHOICE_ROW_PAD + 40, ry, row.label, {
+          fontFamily: '"SproutLands", "Courier New", monospace',
+          fontSize: '17px',
+          fontStyle: 'bold',
+          color: '#F5EFE6'
+        })
+        .setOrigin(0, 0.5)
+        .setDepth(266);
+      const right = this.add
+        .text(panelLeft + panelW - CHOICE_ROW_PAD, ry, row.right || '', {
+          fontFamily: '"SproutLands", "Courier New", monospace',
+          fontSize: '15px',
+          color: '#8AB87E'
+        })
+        .setOrigin(1, 0.5)
+        .setDepth(266);
+      rect.on('pointerover', () => rect.setStrokeStyle(2, 0xeac34f));
+      rect.on('pointerout', () => rect.setStrokeStyle(2, 0x57514b));
+      rect.on('pointerup', () => row.onPick());
+      store.push(rect, dot, label, right);
+    });
+
+    if (note) {
+      store.push(
+        this.add
+          .text(cx, rowTop + rowsH + 6, note, {
+            fontFamily: '"SproutLands", "Courier New", monospace',
+            fontSize: '13px',
+            color: '#EDD49A',
+            align: 'center'
+          })
+          .setOrigin(0.5, 0)
+          .setDepth(266)
+      );
+    }
+
+    const cancelY = panelTop + panelH - CHOICE_FOOTER_H / 2;
     const cancel = this.add
-      .rectangle(cx, cancelY, 180, 34, 0x8a3a3a)
+      .rectangle(cx, cancelY, Math.min(220, rowW), 38, 0x8a3a3a)
       .setStrokeStyle(2, 0x000000)
-      .setDepth(264)
+      .setDepth(265)
       .setInteractive({ useHandCursor: true });
     const cancelLabel = this.add
-      .text(cx, cancelY, 'Cancel (Esc)', {
+      .text(cx, cancelY, 'Cancel', {
         fontFamily: '"SproutLands", "Courier New", monospace',
-        fontSize: '14px',
+        fontSize: '15px',
         fontStyle: 'bold',
         color: '#F5EFE6'
       })
       .setOrigin(0.5)
-      .setDepth(265);
-    cancel.on('pointerup', () => this.cancelPlant());
-    this._plantObjects.push(cancel, cancelLabel);
+      .setDepth(266);
+    cancel.on('pointerup', () => onCancel());
+    store.push(cancel, cancelLabel);
   }
 
   closePlantPicker() {
@@ -1139,105 +1142,6 @@ export default class UIScene extends Phaser.Scene {
     this.closePlantPicker();
   }
 
-  // --- Minimap (Sprint 10c revised) -----------------------------------------
-  // Top-right minimap that samples the organic WorldZoneSystem (irregular zones +
-  // the winding river/creeks) rather than flat horizontal bands. A static HOME
-  // marker sits at the garden centre; the live cyan player dot updates on the
-  // throttled 'player:moved' event (every 300ms). M toggles it.
-
-  createMinimap() {
-    const MAP_W = 120;
-    const MAP_H = 90;
-    const SCALE_X = MAP_W / WORLD_WIDTH;
-    const SCALE_Y = MAP_H / WORLD_HEIGHT;
-    const SAMPLE = 3; // minimap px per sampled cell
-    // River reach for sampling: thickens the thin water enough to read as a
-    // connected line at this coarse scale.
-    const RIVER_MARGIN = 50;
-
-    // Everything lives in one container drawn at relative (0,0)-based coords so the
-    // whole minimap moves by a single setPosition() on resize (the zone Graphics
-    // bakes its rects, so it can't be re-anchored any other way without a redraw).
-    // layoutHUD positions the container's top-left to the current top-right corner.
-    // Depth 150 keeps it ABOVE the mobile touch controls (action buttons sit at depth
-    // 100): the bottom-right cluster used to render over the minimap's corner, hiding
-    // it. The minimap is non-interactive, so taps still pass through to the button
-    // hit zones beneath when (rarely) they overlap. Harmless on desktop (no buttons).
-    const container = this.add.container(0, 0).setScrollFactor(0).setDepth(150);
-    this.minimapContainer = container;
-    this.minimapW = MAP_W;
-    this.minimapH = MAP_H;
-
-    const bg = this.add.rectangle(0, 0, MAP_W, MAP_H, 0x000000, 0.6).setOrigin(0, 0);
-    container.add(bg);
-
-    // Sampled zone + river map, batched into one Graphics (relative coords).
-    const zoneGfx = this.add.graphics();
-    for (let mx = 0; mx < MAP_W; mx += SAMPLE) {
-      for (let my = 0; my < MAP_H; my += SAMPLE) {
-        const wx = mx / SCALE_X;
-        const wy = my / SCALE_Y;
-        const color = this.worldZoneSystem.isNearRiver(wx, wy, RIVER_MARGIN)
-          ? this.worldZoneSystem.getZoneColor('river')
-          : this.worldZoneSystem.getZoneColor(this.worldZoneSystem.getZoneAt(wx, wy));
-        zoneGfx.fillStyle(color, 0.85);
-        zoneGfx.fillRect(mx, my, SAMPLE, SAMPLE);
-      }
-    }
-    container.add(zoneGfx);
-
-    // Player dot (updated by player:moved) — relative to the container.
-    this.minimapPlayer = this.add.circle(0, 0, 3, 0x00ffff);
-    container.add(this.minimapPlayer);
-
-    // Border.
-    container.add(
-      this.add
-        .rectangle(0, 0, MAP_W, MAP_H, 0xffffff, 0)
-        .setOrigin(0, 0)
-        .setStrokeStyle(1, 0x888888)
-    );
-
-    // Home marker at the garden centre — a yellow flag (rect + orange pennant)
-    // with a tiny "HOME" label. Static, so it's always shown while the minimap is.
-    const homeX = (GARDEN_X + GARDEN_WIDTH / 2) * SCALE_X;
-    const homeY = (GARDEN_Y + GARDEN_HEIGHT / 2) * SCALE_Y;
-    container.add([
-      this.add.rectangle(homeX, homeY, 8, 6, 0xffd23f),
-      this.add.triangle(homeX, homeY - 7, 0, -4, -5, 3, 5, 3, 0xff7a1a),
-      this.add
-        .text(homeX, homeY + 5, 'HOME', {
-          fontFamily: FONT_FAMILY,
-          fontSize: '6px',
-          color: '#ffd23f'
-        })
-        .setOrigin(0.5, 0)
-    ]);
-
-    this.minimapScaleX = SCALE_X;
-    this.minimapScaleY = SCALE_Y;
-    // Toggle helpers operate on this list; one container hides/shows every child.
-    this._minimapObjects = [container];
-  }
-
-  updateMinimapPlayer(x, y) {
-    if (!this.minimapPlayer) return;
-    // Container-relative: the container itself carries the screen offset.
-    this.minimapPlayer.setPosition(x * this.minimapScaleX, y * this.minimapScaleY);
-  }
-
-  toggleMinimap() {
-    this._minimapVisible = !this._minimapVisible;
-    this._minimapObjects.forEach((o) => o.setVisible(this._minimapVisible));
-  }
-
-  // Forced show/hide (mobile starts hidden; MAP button toggles). Event payload is
-  // the bare boolean, not an object.
-  setMinimapVisible(visible) {
-    this._minimapVisible = !!visible;
-    this._minimapObjects.forEach((o) => o.setVisible(this._minimapVisible));
-  }
-
   // --- HUD layout / live reflow (Sprint Mobile viewport scaling) -------------
   // Positions EVERY persistent HUD element as a function of the current viewport
   // (width/height) and the safe-area insets, rather than baking 1600x900 coords at
@@ -1264,9 +1168,9 @@ export default class UIScene extends Phaser.Scene {
     const PORTRAIT_BAND = 230; // reserved bottom control band (joystick + buttons)
     const bandTop = height - sb - PORTRAIT_BAND;
 
-    // Dark backing bars span the full width; the bottom one re-seats to the height.
+    // Dark backing bar spans the full width behind the top cluster (the bottom grey
+    // bar was removed in Sprint mobile-playability-2).
     if (this.topBar) this.topBar.setPosition(0, 0).setSize(width, 80);
-    if (this.bottomBar) this.bottomBar.setPosition(0, height - 80).setSize(width, 80);
 
     // TOP LEFT — HP + water + coins (clear a left notch and the top bar).
     if (this.hpFill) this.hpFill.setPosition(pad + sl, 40 + st);
@@ -1291,23 +1195,30 @@ export default class UIScene extends Phaser.Scene {
     if (this.muteIndicator) this.muteIndicator.setPosition(width - 40 - sr, 112 + st);
     if (this.overtimeText) this.overtimeText.setPosition(width - 40 - sr, 78 + st);
 
-    // BOTTOM — seed slots. Portrait: centred just above the control band. Landscape
-    // touch: shifted out of the joystick's corner into the central-bottom gap, above
-    // the home indicator. Desktop: original bottom-left anchor. Re-anchoring
-    // _slotBaseX/Y means later satchel-driven rebuilds land in the same place.
+    // BOTTOM — seed inventory strip (Sprint mobile-playability-2). A contained tray
+    // backs the slot row so it reads as one clean strip. Mobile centres the row clear
+    // of the joystick/buttons and the home indicator (portrait lifts it above the
+    // control band); desktop keeps the bottom-left anchor so the desktop HUD is
+    // unchanged. Re-anchoring _slotBaseX/Y means later satchel rebuilds land in place.
+    const slotCount = this.seedSlots ? this.seedSlots.length : 3;
+    const rowW = slotCount * this._slotSize + (slotCount - 1) * this._slotGap;
     if (portrait) {
-      const count = this.seedSlots ? this.seedSlots.length : 3;
-      const rowW = count * this._slotSize + (count - 1) * this._slotGap;
       this._slotBaseX = Math.max(pad + sl, (width - rowW) / 2);
       this._slotBaseY = bandTop - 28;
     } else if (isMobile) {
-      this._slotBaseX = 270;
-      this._slotBaseY = height - 64 - sb;
+      this._slotBaseX = Math.max(pad + sl, (width - rowW) / 2);
+      this._slotBaseY = height - 48 - sb;
     } else {
       this._slotBaseX = pad;
       this._slotBaseY = height - 48;
     }
     this.repositionSeedSlots();
+    if (this.seedTray) {
+      const trayPad = 12;
+      this.seedTray
+        .setPosition(this._slotBaseX + rowW / 2, this._slotBaseY)
+        .setSize(rowW + trayPad * 2, this._slotSize + trayPad * 2);
+    }
     if (this.seedsLabel) {
       this.seedsLabel.setPosition(this._slotBaseX, this._slotBaseY + 28);
       this.seedsLabel.setVisible(!isMobile); // on mobile the frames are self-evident
@@ -1318,22 +1229,14 @@ export default class UIScene extends Phaser.Scene {
       this.interactPrompt.setPosition(width / 2, portrait ? bandTop - 64 : height - 112);
     }
 
-    // BOTTOM RIGHT — bank + ammo. Portrait lifts them above the right-hand button
-    // cluster; landscape/desktop keep the bottom-right corner (clear of insets).
-    if (this.bankText) {
-      this.bankText.setPosition(width - pad - sr, portrait ? bandTop - 8 : height - 40 - sb);
-    }
+    // BOTTOM RIGHT — ammo. Portrait lifts it above the right-hand button cluster;
+    // landscape/desktop keep the bottom-right corner (clear of insets).
     if (this.ammoText) {
       this.ammoText.setPosition(width - pad - sr, portrait ? bandTop - 36 : height - 72 - sb);
     }
 
     // CENTER RIGHT — combo counter.
     if (this.comboText) this.comboText.setPosition(width * 0.72, height / 2);
-
-    // Minimap — top-right, below the top HUD bar, clear of a right notch.
-    if (this.minimapContainer) {
-      this.minimapContainer.setPosition(width - this.minimapW - 16 - sr, 96 + st);
-    }
   }
 
   // Move existing seed-slot graphics to the current _slotBaseX/_slotBaseY without a
@@ -1355,8 +1258,7 @@ export default class UIScene extends Phaser.Scene {
   // window as a secondary line. Both fade out together with the respawn fade.
 
   showDeathMessage() {
-    const cx = VIRTUAL_WIDTH / 2;
-    const cy = VIRTUAL_HEIGHT / 2;
+    const { cx, cy } = this._vp();
     const headline = this.add
       .text(cx, cy - 52, 'Day lost.', {
         fontFamily: '"SproutLands", "Courier New", monospace',
@@ -1388,16 +1290,6 @@ export default class UIScene extends Phaser.Scene {
         sub.destroy();
       }
     });
-  }
-
-  refreshBank(bank) {
-    const parts = Object.entries(bank)
-      .filter(([, count]) => count > 0)
-      .map(([type, count]) => {
-        const name = entitiesData.plants[type] ? entitiesData.plants[type].name : type;
-        return `${name}: ${count}`;
-      });
-    this.bankText.setText(parts.length ? `Bank — ${parts.join('  ·  ')}` : 'Bank: empty');
   }
 
   refreshCoins(coins) {
