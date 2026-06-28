@@ -5,22 +5,23 @@
 //   SELL — turn harvested plants into coins (price scales with grow time).
 //   BUY  — spend coins on gear (by slot) and capacity (seed bag / beds / watering).
 //
-// Sprint mobile-playability-2 — readability redesign (unified desktop + mobile):
-// the scene used to be authored in the fixed 1600x900 space and letterboxed onto the
-// screen via fitCameraToVirtual, so on a phone every row scaled down to unreadable and
-// the backdrop didn't full-bleed (the game peeked around the edges). It now lays out
-// from the LIVE viewport: a full-bleed backdrop, larger rows sized for a phone, fewer
-// rows per page with ◀ ▶ / dots / swipe pagination for the overflow, and bottom
-// controls lifted clear of the iOS home-indicator safe-area inset. A narrow-width
-// breakpoint collapses each BUY row's tier-chip strip into a compact "current → next"
-// row so it stays tappable on a phone; desktop keeps the full strip, just larger and
-// full-bleed. All prices/values still come from economy.json via GameScene; this scene
-// only renders + dispatches, and every coin change flows through GameScene so the HUD
-// stays in sync.
+// Sprint shared-menu-component — this scene now consumes the shared PaginatedMenu
+// controller (src/ui/PaginatedMenu.js) for its full-screen / paginated / safe-inset
+// layout, replacing the one-off responsive code it previously owned. The controller
+// provides the full-bleed backdrop, the frame math, the page model (◀ ▶ / dots /
+// swipe), and the footer; this scene supplies the content. Marketplace behaviour is
+// unchanged: a full-bleed backdrop, live-viewport rows sized for a phone, fewer rows
+// per page with pagination for the overflow, SELL/BUY tabs with a per-tab page index,
+// a NARROW_W breakpoint that collapses each BUY row's tier-chip strip into a compact
+// "current → next" row on a phone, and bottom controls lifted clear of the iOS
+// home-indicator inset. All prices/values still come from economy.json via GameScene;
+// this scene only renders + dispatches, and every coin change flows through GameScene
+// so the HUD stays in sync.
 
 import Phaser from 'phaser';
 import EventBus from '../core/EventBus.js';
 import MobileDetect from '../core/MobileDetect.js';
+import PaginatedMenu from '../ui/PaginatedMenu.js';
 
 const GEAR_SLOTS = [
   ['weapon', 'Weapon'],
@@ -57,6 +58,7 @@ const MARKET_MARGIN = 20; // gap from screen edges (added to safe insets)
 const HEADER_H = 52; // title row height
 const TAB_H = 46;
 const TAB_GAP = 12;
+const TAB_PAD = 14; // gap below the tab row before content begins
 const FOOTER_H = 78; // close button + paging dots zone (above the bottom inset)
 const SELL_ROW_H = 72;
 const BUY_ROW_H = 76;
@@ -83,112 +85,107 @@ export default class MarketplaceScene extends Phaser.Scene {
     this.economy = this.gameScene.economyData;
 
     this.tab = 'sell';
-    this.page = { sell: 0, buy: 0 };
-    this._objs = [];
+    this.page = { sell: 0, buy: 0 }; // per-tab page index, owned here, read by the menu
 
-    this.render();
+    // Shared full-screen paginated menu. The controller owns the backdrop, frame
+    // math, page model, navigation and footer; this scene supplies the content
+    // (header + tabs, the paginated row list, and the row renderers). Footer/header
+    // metrics here are the marketplace's originals so the layout is pixel-identical
+    // to before. The header band reserves room for the title row AND the tab row.
+    this.menu = new PaginatedMenu(this, {
+      margin: MARKET_MARGIN,
+      headerH: HEADER_H + TAB_H + TAB_PAD,
+      footerH: FOOTER_H,
+      depth: 100,
+      backdropColor: COLOR_PAGE,
+      backdropAlpha: 0.97,
+      closeW: 220,
+      closeColor: COLOR_CLOSE,
+      closeLabelMobile: 'Close',
+      closeLabelDesktop: 'Close   ·   Esc',
+      arrowW: 52,
+      arrowColor: COLOR_ARROW,
+      arrowDisabledColor: COLOR_ARROW_DISABLED,
+      arrowOffsetMax: 200,
+      arrowOffsetPad: 40,
+      dotGap: 24,
+      closeOnEsc: true,
+      dismissOnSwipeDown: true,
+      swipeEnabled: () => MobileDetect.isMobile(), // desktop has no swipe paging here
+      onClose: () => this.close(),
+      getPageIndex: () => this.page[this.tab] || 0,
+      setPageIndex: (n) => {
+        this.page[this.tab] = n;
+      },
+      getPages: (frame) => this.buildPages(frame),
+      renderHeader: (frame) => this.renderHeader(frame),
+      renderBody: (frame, items) => this.renderBody(frame, items),
+      button: (cx, cy, w, h, label, fill, onClick, enabled, textColor) =>
+        this.track(this.makeButton(cx, cy, w, h, label, fill, enabled, onClick, textColor))
+    });
+    this.menu.attachInput();
+    this.menu.render();
 
     // Reflow on rotation / toolbar collapse (live viewport changed).
     this.scale.on('resize', this.onResize, this);
 
-    this.input.keyboard.on('keydown-ESC', () => this.close());
-    this.input.keyboard.on('keydown-LEFT', () => this.changePage(-1));
-    this.input.keyboard.on('keydown-RIGHT', () => this.changePage(1));
-
-    // Mobile gestures: swipe down to dismiss (no Esc key); horizontal swipe pages.
-    if (MobileDetect.isMobile()) {
-      let startX = 0;
-      let startY = 0;
-      this.input.on('pointerdown', (p) => {
-        startX = p.x;
-        startY = p.y;
-      });
-      this.input.on('pointerup', (p) => {
-        const dx = p.x - startX;
-        const dy = p.y - startY;
-        if (dy > 120 && Math.abs(dx) < 90) {
-          this.close();
-        } else if (Math.abs(dx) > 120 && Math.abs(dy) < 90) {
-          this.changePage(dx < 0 ? 1 : -1);
-        }
-      });
-    }
-
     // Live refresh when coins or the bank change (any purchase/sale emits these).
-    this._refresh = () => this.render();
+    this._refresh = () => this.menu.render();
     EventBus.on('coins:changed', this._refresh);
     EventBus.on('bank:updated', this._refresh);
     this.events.once('shutdown', () => {
       this.scale.off('resize', this.onResize, this);
       EventBus.off('coins:changed', this._refresh);
       EventBus.off('bank:updated', this._refresh);
-      this.input.keyboard.removeAllListeners();
+      this.menu.destroy();
     });
   }
 
   onResize() {
-    this.render();
+    this.menu.render();
   }
 
   coins() {
     return this.gameScene.coins || 0;
   }
 
+  // Route all tracked objects through the shared menu's single _objs list so the
+  // controller tears the whole scene down and rebuilds it on each render.
   track(objs) {
-    (Array.isArray(objs) ? objs : [objs]).forEach((o) => this._objs.push(o));
+    this.menu.track(...(Array.isArray(objs) ? objs : [objs]));
     return objs;
   }
 
   switchTab(tab) {
     if (this.tab === tab) return;
     this.tab = tab;
-    this.render();
+    this.menu.render();
   }
 
-  changePage(delta) {
-    const count = this._pageCount || 1;
-    const next = Phaser.Math.Clamp((this.page[this.tab] || 0) + delta, 0, count - 1);
-    if (next === this.page[this.tab]) return;
-    this.page[this.tab] = next;
-    this.render();
+  // --- Page model: slice the active tab's flat list into rows-that-fit pages ---
+
+  buildPages(frame) {
+    const rowH = this.tab === 'sell' ? SELL_ROW_H : BUY_ROW_H;
+    const rowsPerPage = Math.max(1, Math.floor((frame.bandH + ROW_GAP) / (rowH + ROW_GAP)));
+    const list = this.tab === 'sell' ? this.sellList() : this.buyList();
+    const pages = [];
+    for (let i = 0; i < list.length; i += rowsPerPage) pages.push(list.slice(i, i + rowsPerPage));
+    return pages.length ? pages : [[]];
   }
 
-  // --- Full re-render (create + every resize / refresh) ----------------------
-  // Rebuilds the whole scene from the live viewport. A modal rebuild is cheap and
-  // keeps a single layout path for desktop, mobile, rotation, and data changes.
-  render() {
-    this._objs.forEach((o) => o.destroy());
-    this._objs = [];
+  // --- Header: title + live coin balance + SELL/BUY tabs ---------------------
 
-    const W = this.scale.width;
-    const H = this.scale.height;
-    const safe = MobileDetect.isMobile()
-      ? MobileDetect.getRawInsets()
-      : { top: 0, bottom: 0, left: 0, right: 0 };
-
-    const left = safe.left + MARKET_MARGIN;
-    const right = W - safe.right - MARKET_MARGIN;
-    const innerW = Math.max(120, right - left);
-    const cx = (left + right) / 2;
-    const narrow = W < NARROW_W;
-
-    // Full-bleed page fill — also resolves the old modal-not-full-bleed cosmetic
-    // (game peeking around the letterbox), and swallows taps to the world behind.
-    this.track(
-      this.add.rectangle(0, 0, W, H, COLOR_PAGE, 0.97).setOrigin(0, 0).setDepth(100).setInteractive()
-    );
-
-    // Header: title (left) + live coin balance (right).
-    const titleY = safe.top + MARKET_MARGIN;
+  renderHeader(frame) {
+    const { left, right, headerTop, innerW, cx } = frame;
     this.track(
       this.add
-        .text(left, titleY, 'MARKET', { fontFamily: FONT, fontSize: '30px', fontStyle: 'bold', color: '#E5B69A' })
+        .text(left, headerTop, 'MARKET', { fontFamily: FONT, fontSize: '30px', fontStyle: 'bold', color: '#E5B69A' })
         .setOrigin(0, 0)
         .setDepth(101)
     );
     this.track(
       this.add
-        .text(right, titleY + 4, `🪙 ${this.coins()}`, {
+        .text(right, headerTop + 4, `🪙 ${this.coins()}`, {
           fontFamily: FONT,
           fontSize: '24px',
           fontStyle: 'bold',
@@ -198,40 +195,24 @@ export default class MarketplaceScene extends Phaser.Scene {
         .setDepth(101)
     );
 
-    // Tabs, centred under the header.
     const tabW = Math.min(170, innerW / 2 - TAB_GAP);
-    const tabCY = titleY + HEADER_H + TAB_H / 2;
+    const tabCY = headerTop + HEADER_H + TAB_H / 2;
     this.makeTab(cx - tabW / 2 - TAB_GAP / 2, tabCY, tabW, TAB_H, 'SELL', this.tab === 'sell', () => this.switchTab('sell'));
     this.makeTab(cx + tabW / 2 + TAB_GAP / 2, tabCY, tabW, TAB_H, 'BUY', this.tab === 'buy', () => this.switchTab('buy'));
+  }
 
-    // Footer: Close button lifted clear of the bottom safe-area inset, with paging
-    // arrows flanking it and page dots just above (2f — home-indicator clearance).
-    const closeCY = H - safe.bottom - MARKET_MARGIN - 16;
-    const dotsY = closeCY - 34;
+  // --- Body: the active page's rows, laid out from the content band top -------
 
-    // Content band between the tabs and the footer.
-    const contentTop = tabCY + TAB_H / 2 + 14;
-    const contentBottom = H - safe.bottom - MARKET_MARGIN - FOOTER_H;
-    const contentH = Math.max(60, contentBottom - contentTop);
-
+  renderBody(frame, items) {
+    const { left, innerW, contentTop } = frame;
+    const narrow = frame.W < NARROW_W;
     const rowH = this.tab === 'sell' ? SELL_ROW_H : BUY_ROW_H;
-    const rowsPerPage = Math.max(1, Math.floor((contentH + ROW_GAP) / (rowH + ROW_GAP)));
-
-    const list = this.tab === 'sell' ? this.sellList() : this.buyList();
-    const pageCount = Math.max(1, Math.ceil(list.length / rowsPerPage));
-    this._pageCount = pageCount;
-    const page = Phaser.Math.Clamp(this.page[this.tab] || 0, 0, pageCount - 1);
-    this.page[this.tab] = page;
-
-    const pageItems = list.slice(page * rowsPerPage, page * rowsPerPage + rowsPerPage);
-    pageItems.forEach((item, i) => {
+    items.forEach((item, i) => {
       const y = contentTop + i * (rowH + ROW_GAP);
       if (this.tab === 'sell') this.buildSellRow(item, left, y, innerW, rowH);
       else if (narrow) this.buildBuyRowCompact(item, left, y, innerW, rowH);
       else this.buildBuyRowWide(item, left, y, innerW, rowH);
     });
-
-    this.buildFooter(cx, closeCY, dotsY, innerW, pageCount, page);
   }
 
   // --- Tabs ------------------------------------------------------------------
@@ -312,7 +293,7 @@ export default class MarketplaceScene extends Phaser.Scene {
 
   doSell(pt, qty) {
     this.gameScene.sellPlant(pt, qty);
-    this.render(); // also rebuilt by the coins/bank events; render now in case ordering shifts
+    this.menu.render(); // also rebuilt by the coins/bank events; render now in case ordering shifts
   }
 
   // --- BUY -------------------------------------------------------------------
@@ -429,32 +410,12 @@ export default class MarketplaceScene extends Phaser.Scene {
 
   doBuyGear(slot, tierId) {
     this.gameScene.purchaseGear(slot, tierId);
-    this.render();
+    this.menu.render();
   }
 
   doBuyCapacity(tree) {
     this.gameScene.purchaseCapacity(tree);
-    this.render();
-  }
-
-  // --- Footer (close + pagination) ------------------------------------------
-
-  buildFooter(cx, closeCY, dotsY, innerW, pageCount, page) {
-    this.makeButton(cx, closeCY, 220, 44, MobileDetect.isMobile() ? 'Close' : 'Close   ·   Esc', COLOR_CLOSE, true, () => this.close(), '#F5EFE6');
-
-    if (pageCount <= 1) return;
-
-    const arrowOffset = Math.min(200, innerW / 2 - 40);
-    const prevOn = page > 0;
-    const nextOn = page < pageCount - 1;
-    this.makeButton(cx - arrowOffset, closeCY, 52, 44, '◀', prevOn ? COLOR_ARROW : COLOR_ARROW_DISABLED, prevOn, () => this.changePage(-1), '#F5EFE6');
-    this.makeButton(cx + arrowOffset, closeCY, 52, 44, '▶', nextOn ? COLOR_ARROW : COLOR_ARROW_DISABLED, nextOn, () => this.changePage(1), '#F5EFE6');
-
-    const dotGap = 24;
-    const startX = cx - (dotGap * (pageCount - 1)) / 2;
-    for (let i = 0; i < pageCount; i++) {
-      this.track(this.add.circle(startX + i * dotGap, dotsY, 6, i === page ? 0xeac34f : 0x4d4843).setDepth(102));
-    }
+    this.menu.render();
   }
 
   // --- Shared UI -------------------------------------------------------------

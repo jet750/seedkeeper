@@ -7,13 +7,15 @@
 // inactive it renders nothing, captures no input, and emits no events — flipping
 // DEV_MODE to false disables it entirely.
 //
-// Sprint devmenu-controls-tutorials — readability rewrite (unified desktop + mobile):
-// the menu used to be authored in the fixed 1600x900 space (a 388px panel pinned to
-// the right edge, letterboxed via fitCameraToVirtual), so on a phone every button
-// scaled down to unreadable. It now follows the Marketplace pattern: a full-bleed,
-// game-PAUSED, live-viewport menu that splits the cheats across logical PAGES with
-// ◀ ▶ / dots / swipe, sized for a phone thumb and lifted clear of the safe insets.
-// The same paginated layout is used on desktop. Entry points are unchanged.
+// Sprint shared-menu-component — this scene now consumes the shared PaginatedMenu
+// controller (src/ui/PaginatedMenu.js) instead of owning a private copy of the
+// full-screen / paginated / safe-inset layout machinery. It was the reference
+// implementation for that layout (a full-bleed, game-PAUSED, live-viewport menu
+// that splits the cheats across logical PAGES with ◀ ▶ / dots / swipe, sized for a
+// phone thumb and lifted clear of the safe insets), so the controller's defaults
+// and footer metrics are this scene's. Behaviour is identical to before; the scene
+// now only supplies its content (getPages) and how to draw the header + body rows
+// (the scale-to-fit layout that keeps every cheat readable at any screen size).
 //
 // Architecture: this scene is presentation-only. Every cheat is dispatched as a
 // `dev:*` EventBus event that GameScene (the owner of game state) executes; the menu
@@ -24,6 +26,7 @@ import Phaser from 'phaser';
 import EventBus from '../core/EventBus.js';
 import MobileDetect from '../core/MobileDetect.js';
 import { isDevModeActive } from '../core/Constants.js';
+import PaginatedMenu from '../ui/PaginatedMenu.js';
 
 const FONT = '"SproutLands", "Courier New", monospace';
 
@@ -58,42 +61,47 @@ export default class DevMenuScene extends Phaser.Scene {
     this.gameData = this.gameScene.gameData;
 
     this.menuOpen = false;
-    this.page = 0;
-    this._pageCount = 1;
-    this._objs = [];
     this._speedOn = false; // dev 2x-speed toggle state (Sprint 7)
     this._noclipOn = false; // dev no-clip toggle state (Sprint 7)
+
+    // Shared full-screen paginated menu. This scene owns its content (getPages) and
+    // how each page draws (header + the scale-to-fit body); the controller owns the
+    // backdrop, frame math, page model, navigation and footer. Footer metrics here
+    // are the dev-menu's originals so the layout is pixel-identical to before.
+    this.menu = new PaginatedMenu(this, {
+      margin: MARGIN,
+      headerH: HEADER_H,
+      footerH: FOOTER_H,
+      depth: 200,
+      backdropColor: PANEL_BG,
+      backdropAlpha: 0.97,
+      closeW: 200,
+      closeColor: COLOR_CLOSE,
+      closeLabelMobile: 'Close',
+      closeLabelDesktop: 'Close   ·   ~',
+      arrowW: 50,
+      arrowColor: COLOR_ARROW,
+      arrowDisabledColor: COLOR_ARROW_DISABLED,
+      arrowOffsetMax: 190,
+      arrowOffsetPad: 36,
+      dotGap: 22,
+      isOpen: () => this.menuOpen,
+      swipeEnabled: () => true,
+      dismissOnSwipeDown: true,
+      onClose: () => this.setMenuVisible(false),
+      getPages: () => this.getPages(),
+      renderHeader: (frame, page, ctx) => this.renderHeader(frame, page, ctx),
+      renderBody: (frame, page) => this.renderBody(frame, page),
+      button: (cx, cy, w, h, label, fill, onClick, _enabled, textColor) =>
+        this.makeButton(cx, cy, w, h, label, fill, onClick, textColor)
+    });
+    this.menu.attachInput();
 
     // Toggle key (~). Polled in update() so it works regardless of focus order.
     this.toggleKey = this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.BACKTICK);
 
     // Reflow on rotation / toolbar collapse (live viewport changed).
     this.scale.on('resize', this.onResize, this);
-
-    // Keyboard paging (desktop) — guarded by menuOpen so arrows never affect gameplay.
-    this.input.keyboard.on('keydown-LEFT', () => {
-      if (this.menuOpen) this.changePage(-1);
-    });
-    this.input.keyboard.on('keydown-RIGHT', () => {
-      if (this.menuOpen) this.changePage(1);
-    });
-
-    // Mobile gestures (no tilde key): swipe down to dismiss, horizontal swipe pages.
-    // Guarded by menuOpen so taps to the game HUD are never intercepted when closed.
-    let startX = 0;
-    let startY = 0;
-    this.input.on('pointerdown', (p) => {
-      if (!this.menuOpen) return;
-      startX = p.x;
-      startY = p.y;
-    });
-    this.input.on('pointerup', (p) => {
-      if (!this.menuOpen) return;
-      const dx = p.x - startX;
-      const dy = p.y - startY;
-      if (dy > 120 && Math.abs(dx) < 90) this.setMenuVisible(false);
-      else if (Math.abs(dx) > 120 && Math.abs(dy) < 90) this.changePage(dx < 0 ? 1 : -1);
-    });
 
     // Mobile has no tilde key, so the touch HUD opens the menu via this event
     // (10 rapid taps on MAP — see GameScene.onMapRequested). Only wired while the menu
@@ -113,7 +121,7 @@ export default class DevMenuScene extends Phaser.Scene {
   }
 
   onResize() {
-    if (this.menuOpen) this.render();
+    if (this.menuOpen) this.menu.render();
   }
 
   // --- Open / close ----------------------------------------------------------
@@ -124,27 +132,18 @@ export default class DevMenuScene extends Phaser.Scene {
     if (open) {
       this.scene.bringToTop(); // sit above the HUD and anything else on screen
       EventBus.emit('dev:menuOpened', {});
-      this.render();
+      this.menu.render();
     } else {
       EventBus.emit('dev:menuClosed', {});
-      this._objs.forEach((o) => o.destroy());
-      this._objs = [];
+      this.menu.clear();
     }
-  }
-
-  changePage(delta) {
-    const count = this._pageCount || 1;
-    const next = Phaser.Math.Clamp(this.page + delta, 0, count - 1);
-    if (next === this.page) return;
-    this.page = next;
-    this.render();
   }
 
   // Emit a cheat intent, then re-render so live readouts (coins/day) and toggle
   // states refresh — the same "mutate then re-render" path the Marketplace uses.
   dispatch(event, data = {}) {
     EventBus.emit(event, data);
-    if (this.menuOpen) this.render();
+    if (this.menuOpen) this.menu.render();
   }
 
   // --- Page content (data-driven; rebuilt each render so readouts stay live) --
@@ -270,66 +269,40 @@ export default class DevMenuScene extends Phaser.Scene {
     ];
   }
 
-  // --- Full re-render (open + every resize / cheat) --------------------------
-  // Rebuilds the whole menu from the live viewport — a modal rebuild keeps a single
-  // layout path for desktop, mobile, rotation, and the live readouts.
-  render() {
-    this._objs.forEach((o) => o.destroy());
-    this._objs = [];
-    if (!this.menuOpen) return;
+  // --- Header: DEV MODE flag (left) + page title (right) + counter / hint -----
 
-    const W = this.scale.width;
-    const H = this.scale.height;
-    const safe = MobileDetect.isMobile()
-      ? MobileDetect.getRawInsets()
-      : { top: 0, bottom: 0, left: 0, right: 0 };
-
-    const left = safe.left + MARGIN;
-    const right = W - safe.right - MARGIN;
-    const innerW = Math.max(120, right - left);
-    const cx = (left + right) / 2;
-
-    // Full-bleed page fill (swallows taps to the world behind).
-    this.track(
-      this.add.rectangle(0, 0, W, H, PANEL_BG, 0.97).setOrigin(0, 0).setDepth(200).setInteractive()
-    );
-
-    const pages = this.getPages();
-    this._pageCount = pages.length;
-    const page = Phaser.Math.Clamp(this.page, 0, pages.length - 1);
-    this.page = page;
-    const pg = pages[page];
-
-    // Header: DEV MODE flag (left) + page title (right) + page counter / hint (below).
-    const topY = safe.top + MARGIN;
+  renderHeader(frame, page, ctx) {
+    const { left, right, headerTop, isMobile } = frame;
     this.track(
       this.add
-        .text(left, topY, '⚠ DEV MODE', { fontFamily: FONT, fontSize: '17px', fontStyle: 'bold', color: '#ff4d4d' })
+        .text(left, headerTop, '⚠ DEV MODE', { fontFamily: FONT, fontSize: '17px', fontStyle: 'bold', color: '#ff4d4d' })
         .setOrigin(0, 0)
         .setDepth(202)
     );
     this.track(
       this.add
-        .text(right, topY, pg.title, { fontFamily: FONT, fontSize: '20px', fontStyle: 'bold', color: '#EDD49A' })
+        .text(right, headerTop, page.title, { fontFamily: FONT, fontSize: '20px', fontStyle: 'bold', color: '#EDD49A' })
         .setOrigin(1, 0)
         .setDepth(202)
     );
-    const counter = `Page ${page + 1}/${pages.length}` + (MobileDetect.isMobile() ? '   ·   swipe / arrows' : '   ·   ~ toggle  ·  ◀ ▶');
+    const counter =
+      `Page ${ctx.pageIndex + 1}/${ctx.pageCount}` +
+      (isMobile ? '   ·   swipe / arrows' : '   ·   ~ toggle  ·  ◀ ▶');
     this.track(
       this.add
-        .text(left, topY + 26, counter, { fontFamily: FONT, fontSize: '12px', color: '#9B9389' })
+        .text(left, headerTop + 26, counter, { fontFamily: FONT, fontSize: '12px', color: '#9B9389' })
         .setOrigin(0, 0)
         .setDepth(202)
     );
+  }
 
-    // Footer anchors (close + dots), lifted clear of the bottom safe-area inset.
-    const closeCY = H - safe.bottom - MARGIN - 16;
-    const dotsY = closeCY - 34;
+  // --- Body: the cheat rows, scaled to fit the content band on any screen -----
+  // The defining "readable at any size" quality: when a page's rows are taller than
+  // the band, every row shrinks by a single factor `f` rather than scrolling.
 
-    // Content band between the header and the footer; rows scale to fit a short screen.
-    const contentTop = topY + HEADER_H;
-    const contentBottom = H - safe.bottom - MARGIN - FOOTER_H;
-    const bandH = Math.max(60, contentBottom - contentTop);
+  renderBody(frame, page) {
+    const { left, innerW, cx, contentTop, bandH } = frame;
+    const rows = page.rows;
 
     const rowH = (r) =>
       r.type === 'section'
@@ -339,7 +312,6 @@ export default class DevMenuScene extends Phaser.Scene {
         : r.type === 'grid'
         ? Math.ceil(r.buttons.length / r.cols) * (BTN_H + GAP)
         : BTN_H + GAP;
-    const rows = pg.rows;
     let total = 0;
     rows.forEach((r) => {
       total += r.type === 'section' ? SECTION_H + GAP : r.type === 'note' ? NOTE_H + GAP : rowH(r);
@@ -398,30 +370,6 @@ export default class DevMenuScene extends Phaser.Scene {
         y += Math.ceil(r.buttons.length / cols) * (bH + g);
       }
     });
-
-    this.buildFooter(cx, closeCY, dotsY, innerW, pages.length, page);
-  }
-
-  // --- Footer (close + pagination) ------------------------------------------
-
-  buildFooter(cx, closeCY, dotsY, innerW, pageCount, page) {
-    this.makeButton(cx, closeCY, 200, 44, MobileDetect.isMobile() ? 'Close' : 'Close   ·   ~', COLOR_CLOSE, () =>
-      this.setMenuVisible(false)
-    );
-
-    if (pageCount > 1) {
-      const off = Math.min(190, innerW / 2 - 36);
-      const prevOn = page > 0;
-      const nextOn = page < pageCount - 1;
-      this.makeButton(cx - off, closeCY, 50, 44, '◀', prevOn ? COLOR_ARROW : COLOR_ARROW_DISABLED, () => this.changePage(-1));
-      this.makeButton(cx + off, closeCY, 50, 44, '▶', nextOn ? COLOR_ARROW : COLOR_ARROW_DISABLED, () => this.changePage(1));
-
-      const dotGap = 22;
-      const startX = cx - (dotGap * (pageCount - 1)) / 2;
-      for (let i = 0; i < pageCount; i++) {
-        this.track(this.add.circle(startX + i * dotGap, dotsY, 6, i === page ? 0xeac34f : 0x4d4843).setDepth(202));
-      }
-    }
   }
 
   // --- Shared UI -------------------------------------------------------------
@@ -448,12 +396,15 @@ export default class DevMenuScene extends Phaser.Scene {
     return { rect, text };
   }
 
+  // Route all tracked objects through the shared menu's single _objs list so the
+  // controller tears the whole menu down and rebuilds it on each render.
   track(...objs) {
-    objs.forEach((o) => this._objs.push(o));
+    this.menu.track(...objs);
   }
 
   teardown() {
     this.scale.off('resize', this.onResize, this);
     EventBus.off('dev:toggleMenu', this._onMobileToggle);
+    if (this.menu) this.menu.destroy();
   }
 }
