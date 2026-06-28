@@ -4655,6 +4655,9 @@ export default class GameScene extends Phaser.Scene {
     } else {
       this.enemies.forEach((e) => e.update(dt, this.player));
     }
+    // Spell ground-fields + enemy slows (Sprint magic-3) — ticked right after the
+    // enemy AI loop so the slow velocity-damp lands on the velocity the AI just set.
+    if (this.spellSystem) this.spellSystem.update(sdelta);
     // Region spawning (Sprint 15) — populate cells around the player, despawn the
     // ones they've left. Runs after the enemy update so any despawn this frame
     // can't race the loop above (which iterated a snapshot of this.enemies).

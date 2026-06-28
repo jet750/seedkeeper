@@ -1,7 +1,8 @@
 // Spell.js — base class / interface for a castable spell EFFECT (Sprint magic-2).
 //
 // ════════════════════════════════════════════════════════════════════════════
-// THE SPELL TEMPLATE SEAM — to add the next spell (Thornlash, Bramble Ward, …):
+// THE SPELL TEMPLATE SEAM — to add the next spell (e.g. Sprout Sentinel, the last
+// unbuilt one — Arc/Frost/Thornfield/Bulwark already followed this seam in magic-3):
 //   1. economy.json → spells.list: add/confirm its catalog entry (id, name, flavor,
 //      unlock + upgrades in souls, manaCost). This already exists for all six.
 //   2. Create src/systems/spells/<Name>Spell.js extending this class; implement

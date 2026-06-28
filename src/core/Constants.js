@@ -238,6 +238,66 @@ export const EMBER_TIERS = [
   { damage: 24, aoeRadius: 112, aoeDamageMult: 0.7 }   // L4 — wide "diameter nuke" AoE
 ];
 
+// ════════════════════════════════════════════════════════════════════════════
+// Sprint magic-3 — the four combat spells (Arc · Frost · Thornfield · Bulwark).
+// EVERY number below is a FIRST-PASS, EXPLICITLY UNBALANCED value (// TUNE). The
+// magic-3 sprint's job was to make each effect WORK and read distinctly tier-to-
+// tier, NOT to balance damage/radius/mana — do not treat these as tuned. Each
+// table is index = level-1 (L1 = unlock, +1 per Mage Mart upgrade). blue_flower
+// spellPower scales damage + radii per-spell (mirrors Ember).
+// ════════════════════════════════════════════════════════════════════════════
+
+// --- Arc (chain lightning) — "thin this pack" --------------------------------
+// Instant strike to the nearest enemy, then chains to the nearest un-hit enemy
+// within chainRange, with per-jump damage falloff. Ladder: L2 +jump, L3 +range,
+// L4 +per-jump damage (higher falloff = less lost per jump). chainCount = jumps
+// AFTER the first strike (so total targets = 1 + chainCount). // TUNE (all)
+export const ARC_TIERS = [
+  { damage: 10, chainCount: 2, chainRange: 170, falloff: 0.55 }, // L1 — strike + chain to 2
+  { damage: 10, chainCount: 3, chainRange: 170, falloff: 0.55 }, // L2 — +1 jump
+  { damage: 10, chainCount: 3, chainRange: 260, falloff: 0.55 }, // L3 — +chain range
+  { damage: 14, chainCount: 3, chainRange: 260, falloff: 0.85 }  // L4 — +per-jump damage
+];
+export const ARC_STRIKE_RANGE = 360; // px the initial auto-lock strike can reach // TUNE
+
+// --- Frost (slow / freeze / field) — "stop them so I can move" ---------------
+// L1 slow+root one target. L2 adds a self/target-centred freeze NOVA. L3 adds a
+// lingering ground-ice FIELD (persistent slow zone w/ floor decal). L4 +radius.
+// slowMult = velocity multiplier while chilled (lower = slower; ~0.3 reads as a
+// near-root). novaRadius 0 = single-target; fieldMs 0 = no lingering field. // TUNE
+export const FROST_TIERS = [
+  { damage: 6, slowMult: 0.30, slowMs: 1600, novaRadius: 0,   fieldRadius: 0,   fieldMs: 0    }, // L1 — slow+root one
+  { damage: 6, slowMult: 0.30, slowMs: 1600, novaRadius: 120, fieldRadius: 0,   fieldMs: 0    }, // L2 — nova freeze
+  { damage: 6, slowMult: 0.35, slowMs: 1600, novaRadius: 120, fieldRadius: 130, fieldMs: 4000 }, // L3 — lingering field
+  { damage: 6, slowMult: 0.35, slowMs: 1600, novaRadius: 140, fieldRadius: 190, fieldMs: 4500 }  // L4 — +field radius
+];
+
+// --- Thornfield (ground denial) — "deny this ground" -------------------------
+// A vine patch placed on the ground (at the locked target, else ahead of the
+// player). Slows + DoT-damages enemies pathing through; NEVER touches the player
+// (fields only iterate scene.enemies). Ladder: L2 +size, L3 +DoT (more/faster
+// ticks), L4 dense enough to BLOCK pathing (a static collider barrier). // TUNE
+export const THORNFIELD_TIERS = [
+  { fieldRadius: 90,  fieldMs: 5000, dmgPerTick: 3, tickMs: 700, slowMult: 0.55, blocks: false }, // L1 — vine patch
+  { fieldRadius: 130, fieldMs: 5000, dmgPerTick: 3, tickMs: 700, slowMult: 0.55, blocks: false }, // L2 — +size
+  { fieldRadius: 130, fieldMs: 6000, dmgPerTick: 6, tickMs: 480, slowMult: 0.50, blocks: false }, // L3 — +DoT
+  { fieldRadius: 150, fieldMs: 6000, dmgPerTick: 6, tickMs: 480, slowMult: 0.40, blocks: true  }  // L4 — dense barrier
+];
+export const THORNFIELD_AHEAD_DIST = 110; // px ahead of the player to plant when no target is locked // TUNE
+
+// --- Bulwark (self-cast block / dome) — "survive this burst" -----------------
+// L1/L2 are REACTIVE: a guard goes up for armMs during which the player CANNOT
+// attack; the first hit taken is negated and grants negateMs of full invuln, then
+// the guard ends. L3/L4 are a STATIC invulnerability DOME (cast-and-forget): full
+// invuln for durationMs, attacking locked the whole time. domeRadius drives the
+// pulsing-ring VFX size. // TUNE (all)
+export const BULWARK_TIERS = [
+  { mode: 'reactive', armMs: 1400, negateMs: 700,  domeRadius: 46 }, // L1 — reactive block
+  { mode: 'reactive', armMs: 1800, negateMs: 1100, domeRadius: 50 }, // L2 — longer block
+  { mode: 'dome',     durationMs: 3000, domeRadius: 62 },            // L3 — invuln dome
+  { mode: 'dome',     durationMs: 4500, domeRadius: 74 }             // L4 — +dome duration
+];
+
 // --- Corrupted souls currency (Sprint magic-1) ----------------------------
 // Souls = corrupted forest spirits, the third currency (alongside plants → stat
 // trees and coins → gear/capacity). They drop from slain enemies and are spent at

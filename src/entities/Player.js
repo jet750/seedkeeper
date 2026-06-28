@@ -171,6 +171,16 @@ export default class Player extends Phaser.Physics.Arcade.Sprite {
     this.currentMana = 0;
     this._lastManaEmit = 0; // last whole-mana value broadcast (regen throttle, Sprint magic-2)
 
+    // --- Bulwark guard (Sprint magic-3) ---------------------------------------
+    // The self-cast block/dome. While a guard is up the player CANNOT attack (its
+    // cost) and (dome) / first-hit (reactive) incoming damage is negated. Pure
+    // timestamp state — isBulwarkUp() reads now vs _bulwarkUntil, so no per-frame
+    // tick is needed; BulwarkSpell drives this via activateBulwark().
+    this._bulwarkUntil = 0; // guard active while scene.time.now < this
+    this._bulwarkMode = null; // 'reactive' | 'dome'
+    this._bulwarkNegateMs = 0; // reactive: invuln granted on the first hit taken
+    this._bulwarkTriggered = false; // reactive: has the negation window fired yet
+
     // --- Upgrades & gear (Sprint 4; reconciled Sprint 10) ---
     // Stat multipliers/bonuses recomputed from scratch on each upgrade (no drift).
     // One plant feeds each key (entities.json upgrades). timerBonus is legacy — no
@@ -615,6 +625,7 @@ export default class Player extends Phaser.Physics.Arcade.Sprite {
   // melee button). Swings now if off cooldown, else buffers the press (Sprint 12) so
   // a tap landing just before the cooldown clears still lands.
   meleePressed() {
+    if (this.isBulwarkUp()) return; // guard up — attacking is locked (Bulwark's cost)
     if (this.attackCooldownRemaining <= 0) {
       this.attack();
     } else {
@@ -624,6 +635,7 @@ export default class Player extends Phaser.Physics.Arcade.Sprite {
   }
 
   attack() {
+    if (this.isBulwarkUp()) return; // guard up — no swing (also blocks a buffered swing)
     if (this.attackCooldownRemaining > 0) return;
     this.attackCooldownRemaining = this.attackCooldown;
     // Commit to the swing (Sprint 14b): can't dash-cancel for a brief window, and
@@ -822,6 +834,9 @@ export default class Player extends Phaser.Physics.Arcade.Sprite {
   // gated on MANA only and NEVER on ammo or bow-equip. A spell with no bow equipped
   // still casts as long as mana suffices.
   fireSecondary() {
+    // Guard up — attacking (ranged AND spells) is locked while Bulwark holds. The
+    // guard ends on its own timer, so the player can act again once it drops.
+    if (this.isBulwarkUp()) return;
     if (this.activeSecondary === 1) {
       this.fireRanged();
       return;
@@ -876,6 +891,47 @@ export default class Player extends Phaser.Physics.Arcade.Sprite {
       this._lastManaEmit = whole;
       EventBus.emit('mana:changed', { mana: this.currentMana, max: this.maxMana });
     }
+  }
+
+  // --- Bulwark guard (Sprint magic-3) ---------------------------------------
+
+  // Raise the guard. opts: { mode:'reactive', armMs, negateMs } puts a guard up for
+  // armMs during which the player can't attack; the first hit taken is negated and
+  // grants negateMs of full invuln, then the guard drops. { mode:'dome', durationMs }
+  // is cast-and-forget full invuln for durationMs (attacking locked the whole time).
+  activateBulwark({ mode, armMs, negateMs, durationMs }) {
+    const now = this.scene.time.now;
+    this._bulwarkMode = mode;
+    this._bulwarkTriggered = false;
+    if (mode === 'dome') {
+      this._bulwarkUntil = now + durationMs;
+      this._bulwarkNegateMs = 0;
+    } else {
+      this._bulwarkUntil = now + armMs; // armed window; a hit shortens/extends to negateMs
+      this._bulwarkNegateMs = negateMs;
+    }
+  }
+
+  // True while a guard is up — gates ALL attacks (melee + secondary) and tells the
+  // damage path to negate.
+  isBulwarkUp() {
+    return this.scene.time.now < this._bulwarkUntil;
+  }
+
+  // Resolve an incoming hit against the guard. Dome negates every hit. Reactive
+  // negates the FIRST hit and converts the remaining guard into a negateMs invuln
+  // window (the "negate for ~1s when struck" read), then lets it expire. Returns
+  // true if the hit was negated.
+  _bulwarkAbsorb() {
+    if (!this.isBulwarkUp()) return false;
+    if (this._bulwarkMode === 'reactive' && !this._bulwarkTriggered) {
+      this._bulwarkTriggered = true;
+      this._bulwarkUntil = this.scene.time.now + this._bulwarkNegateMs;
+      EventBus.emit('spell:bulwarkBlock', { mode: 'reactive' });
+    } else {
+      EventBus.emit('spell:bulwarkBlock', { mode: this._bulwarkMode });
+    }
+    return true;
   }
 
   // --- Ranged attack (Sprint 4) ---------------------------------------------
@@ -1016,7 +1072,11 @@ export default class Player extends Phaser.Physics.Arcade.Sprite {
     // UI-facing payloads — ignore them so this stays a pure request handler and
     // never loops.
     if (data.currentHP !== undefined) return;
-    if (this.isDead || this.invincible) return;
+    if (this.isDead) return;
+    // Bulwark guard (Sprint magic-3) negates the hit entirely — checked before the
+    // i-frame guard so a reactive block triggers its negation window on a real hit.
+    if (this._bulwarkAbsorb()) return;
+    if (this.invincible) return;
 
     const amount = data.amount || 0;
     if (amount <= 0) return;
