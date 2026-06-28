@@ -86,22 +86,23 @@ export default class SpellSystem {
   // Procedural impact blast — a double ring + a quick core flash that expand to the blast's
   // TRUE radius and fade, so the visual lands exactly on the hitbox. The growing-ring SHAPE
   // and the radius itself (52px L3 vs 112px L4) carry the read for colourblind players; the
-  // tier colour (warm L3 → blue L4, matching the bolt) is a secondary, redundant cue.
+  // tier colour (violet L3 → blue L4, matching the bolt via SpellBolt.tierColor) is a
+  // secondary, redundant cue. Thick stroke + a longer hold so the blast reads, not flickers.
   aoeRingVFX(x, y, radius, tier) {
-    const blue = (tier || 0) >= 4;
-    const stroke = blue ? 0x6cc4ff : 0xffd24a;
-    const fill = blue ? 0x2e7bff : 0xff8a3c;
+    const fx = SpellBolt.tierColor(tier);
+    const stroke = fx.trail;
+    const fill = fx.body;
     // Outer ring — grows from a tight core to the full blast radius.
     const outer = this.scene.add
-      .circle(x, y, radius, fill, 0.18)
-      .setStrokeStyle(4, stroke, 0.95)
+      .circle(x, y, radius, fill, 0.22)
+      .setStrokeStyle(6, stroke, 0.95)
       .setDepth(11)
       .setScale(0.22);
     this.scene.tweens.add({
       targets: outer,
       scale: 1,
       alpha: 0,
-      duration: 380,
+      duration: 480,
       ease: 'Quad.easeOut',
       onComplete: () => outer.destroy()
     });
