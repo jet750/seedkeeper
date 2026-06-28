@@ -118,6 +118,29 @@ export default class Seed extends Phaser.GameObjects.Image {
     });
   }
 
+  // Move this world seed to a fresh home spot (Sprint 14b daily reroll). Updates
+  // the home/respawn anchor, repositions the sprite + name tag, and rebuilds the
+  // bob tween around the new baseline so it sits and bobs correctly at the new
+  // place. A collected seed (invisible, waiting to respawn) still gets its home
+  // moved, so it reappears at the new spot next time.
+  relocate(x, y) {
+    this.homeX = x;
+    this.homeY = y;
+    this.baseY = y;
+    this.setPosition(x, y);
+    if (this.nameTag) this.nameTag.setPosition(x, y - 18);
+    if (this.bobTween) this.bobTween.remove();
+    this.bobTween = this.scene.tweens.add({
+      targets: this,
+      y: { from: y - 4, to: y + 4 },
+      duration: 1200,
+      ease: 'Sine.easeInOut',
+      yoyo: true,
+      repeat: -1
+    });
+    if (this.collected) this.bobTween.pause(); // stays paused until it respawns
+  }
+
   // Called each frame by GameScene to toggle the proximity name tag.
   updateProximity(player) {
     if (this.collected || !this.active) {
@@ -181,6 +204,13 @@ export default class Seed extends Phaser.GameObjects.Image {
       return;
     }
     if (this.isDailySpecial) {
+      this.destroy();
+      return;
+    }
+    // Region-managed wild seeds (Sprint 16) are owned by RegionSpawnSystem, which
+    // repopulates cells on entry / day rollover — a collected one is consumed, not
+    // respawned in place (that would re-seed the spot the player just cleared).
+    if (this._regionManaged) {
       this.destroy();
       return;
     }

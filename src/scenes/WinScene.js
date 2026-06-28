@@ -9,30 +9,22 @@
 // the GameState machine (PLAYING → WIN, then MenuScene settles WIN → MENU).
 
 import Phaser from 'phaser';
+import { fitCameraToVirtual } from '../core/ViewportFit.js';
 import EventBus from '../core/EventBus.js';
 import GameState from '../core/GameState.js';
 import { VIRTUAL_WIDTH, VIRTUAL_HEIGHT } from '../core/Constants.js';
 import entitiesData from '../data/entities.json';
 import { ACHIEVEMENT_COUNT } from '../data/achievements.js';
 
-// Rarest → commonest, for the run-summary "Rarest Find" line.
-const RARITY_ORDER = [
-  'glowshroom',
-  'green_herb',
-  'blue_flower',
-  'golden_wheat',
-  'red_mushroom',
-  'sunflower'
-];
+// v4 (Sprint 10): derive from the reconciled 12-plant catalog. 12 icons fit a
+// single centered row (gap 110 → ~1210px wide < 1600), so no layout change needed.
+const PLANT_ORDER = Object.keys(entitiesData.plants);
 
-const PLANT_ORDER = [
-  'red_mushroom',
-  'blue_flower',
-  'golden_wheat',
-  'green_herb',
-  'glowshroom',
-  'sunflower'
-];
+// Rarest → commonest, for the run-summary "Rarest Find" line: longer-growing
+// crops (magic / sell-only) are the rare ones.
+const RARITY_ORDER = [...PLANT_ORDER].sort(
+  (a, b) => entitiesData.plants[b].growthDays - entitiesData.plants[a].growthDays
+);
 
 const COLOR_GOLD = '#EDD49A';
 const COLOR_TEXT = '#F5EFE6';
@@ -54,6 +46,7 @@ export default class WinScene extends Phaser.Scene {
   }
 
   create() {
+    fitCameraToVirtual(this);
     const cx = VIRTUAL_WIDTH / 2;
     const isFull = this.winType === 'full';
 

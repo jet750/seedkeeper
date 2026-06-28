@@ -6,6 +6,7 @@
 // ESC or [Close] dismisses and emits 'credits:closed'.
 
 import Phaser from 'phaser';
+import { fitCameraToVirtual } from '../core/ViewportFit.js';
 import EventBus from '../core/EventBus.js';
 import {
   VIRTUAL_WIDTH,
@@ -26,6 +27,7 @@ export default class CreditsScene extends Phaser.Scene {
   }
 
   create() {
+    fitCameraToVirtual(this);
     const cx = VIRTUAL_WIDTH / 2;
 
     this.add

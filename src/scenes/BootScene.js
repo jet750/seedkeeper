@@ -8,17 +8,27 @@
 // file matching the manifest filename into /assets and it loads automatically.
 
 import Phaser from 'phaser';
+import { fitCameraToVirtual } from '../core/ViewportFit.js';
 import GameState from '../core/GameState.js';
-import { VIRTUAL_WIDTH, VIRTUAL_HEIGHT } from '../core/Constants.js';
+import { VIRTUAL_WIDTH, VIRTUAL_HEIGHT, USE_TILED_WORLD, TILED_WORLD_KEY } from '../core/Constants.js';
 import manifest from '../data/assetManifest.json';
+// Explicit (glob-proof) `?url` map of every manifest image (Sprint 10). The eager
+// import.meta.glob below drops most of /assets/images in the production build, so
+// images + spritesheets resolve through this generated map instead; audio still
+// uses the glob (it emits fine). See src/data/imageImports.js.
+import IMAGE_URLS from '../data/imageImports.js';
+// The baked, Phaser-ready Tiled world (Sprint 9): embedded tilesets, the heavy
+// nature_dynamic layer stripped. Built by scripts/bake_world.cjs. Imported as a URL
+// so Vite emits it as a static asset; its tileset images load via the manifest
+// (ts_* keys) and GameScene assembles the layers.
+import worldMapUrl from '../../assets/tilemaps/world_v1.json?url';
+// Explicit (glob-proof) tileset image URLs for the Tiled world.
+import TILESET_IMAGES, { tilesetKey } from '../world/tilesetImages.js';
 
-// Eager URL maps of whatever currently exists on disk. Empty objects when the
-// folders are empty (Sprint 1 state) — no network requests are made for them.
-const imageFiles = import.meta.glob('/assets/images/*.{png,jpg,jpeg}', {
-  eager: true,
-  query: '?url',
-  import: 'default'
-});
+// Eager URL map of audio that currently exists on disk. Empty object when the
+// folder is empty (Sprint 1 state) — no network requests are made for it. Images
+// no longer use a glob: they resolve through IMAGE_URLS (the glob silently drops a
+// subset in the prod build — see MEMORY: vite-glob-asset-emission).
 const audioFiles = import.meta.glob('/assets/audio/*.{mp3,wav,ogg}', {
   eager: true,
   query: '?url',
@@ -40,13 +50,15 @@ export default class BootScene extends Phaser.Scene {
   }
 
   preload() {
+    fitCameraToVirtual(this);
     this.drawLoadingUI();
 
     let queued = 0;
 
-    // Sprite sheets
+    // Sprite sheets — URLs come from the explicit ?url map so every sheet emits in
+    // the prod build (the glob dropped most plant sprites; see imageImports.js).
     manifest.spritesheets.forEach((entry) => {
-      const url = urlFor(imageFiles, basename(entry.path));
+      const url = IMAGE_URLS[entry.key];
       if (url) {
         this.load.spritesheet(entry.key, url, {
           frameWidth: entry.frameWidth,
@@ -54,19 +66,20 @@ export default class BootScene extends Phaser.Scene {
         });
         queued++;
       } else {
-        // TODO(asset): drop ${entry.path} into /assets/images to replace the
-        // generated placeholder texture for "${entry.key}".
+        // TODO(asset): add ${entry.path} to assetManifest.json + re-run
+        // scripts/gen_image_imports.cjs to wire "${entry.key}".
       }
     });
 
-    // Static images (tilesets)
+    // Static images (tilesets) — same explicit ?url map.
     manifest.images.forEach((entry) => {
-      const url = urlFor(imageFiles, basename(entry.path));
+      const url = IMAGE_URLS[entry.key];
       if (url) {
         this.load.image(entry.key, url);
         queued++;
       } else {
-        // TODO(asset): drop ${entry.path} into /assets/images.
+        // TODO(asset): add ${entry.path} to assetManifest.json + re-run
+        // scripts/gen_image_imports.cjs.
       }
     });
 
@@ -80,6 +93,21 @@ export default class BootScene extends Phaser.Scene {
         // TODO(asset): drop ${entry.path} into /assets/audio.
       }
     });
+
+    // Hand-built Tiled world (Sprint 9) as TILED_JSON, plus its 17 tileset images
+    // via explicit ?url imports (the glob pipeline above drops some in prod — see
+    // tilesetImages.js). GameScene builds the layers and falls back to the
+    // procedural world if the map is absent.
+    if (USE_TILED_WORLD) {
+      this.load.tilemapTiledJSON(TILED_WORLD_KEY, worldMapUrl);
+      queued++;
+      for (const [name, url] of Object.entries(TILESET_IMAGES)) {
+        if (url) {
+          this.load.image(tilesetKey(name), url);
+          queued++;
+        }
+      }
+    }
 
     this.load.on('progress', (value) => this.updateProgress(value));
     this.load.on('loaderror', (file) => {

@@ -11,19 +11,26 @@
 // an auto-save so a known player never sees the hint again, even after reload.
 
 import EventBus from '../core/EventBus.js';
+import MobileDetect from '../core/MobileDetect.js';
 
-// Each hint maps a concrete EventBus event to a pill. `day` is an optional gate
-// against the current day number. Order here is also the natural teaching order.
+// Each hint maps a concrete EventBus event to a pill. `day` is an optional gate against
+// the current day number. Order here is also the natural teaching order.
+//
+// `text` is the desktop (keyboard/mouse) copy; `mobileText` (when present) is shown on
+// touch devices so a mobile player is taught the actual on-screen controls — the
+// joystick and the diamond buttons (🌱 interact, ⚔ melee, 🏹 ability, ⚡ dash) — instead
+// of keys that don't exist on a phone. Bindings retooled to the current control scheme
+// in Sprint devmenu-controls-tutorials (interact F→E, attack key, no stale SPACE).
 const HINTS = [
-  { id: 'movement',    event: 'game:started',            text: 'WASD to move',                                  position: 'center',        duration: 3000, day: (d) => d === 1 },
+  { id: 'movement',    event: 'game:started',            text: 'WASD or arrows to move',                        mobileText: 'Drag the left thumbstick to move',          position: 'center',        duration: 3000, day: (d) => d === 1 },
   { id: 'forest_gate', event: 'tutorial:nearGate',       text: 'Walk through the gate to enter the forest',     position: 'bottom_center', duration: 4000, day: (d) => d === 1 },
   { id: 'first_seed',  event: 'tutorial:enteredForest',  text: 'Walk into glowing seeds to collect them',       position: 'top_center',    duration: 4000 },
-  { id: 'slots_full',  event: 'inventory:swapRequested', text: 'Slots full — press F near a seed to swap',      position: 'bottom_center', duration: 4000 },
+  { id: 'slots_full',  event: 'inventory:swapRequested', text: 'Slots full — press E near a seed to swap',      mobileText: 'Slots full — tap 🌱 near a seed to swap',    position: 'bottom_center', duration: 4000 },
   { id: 'return_home', event: 'tutorial:inventoryFull',  text: 'Head back through the gate to plant your seeds', position: 'top_center',    duration: 5000, day: (d) => d === 1 },
-  { id: 'plant_bed',   event: 'tutorial:enteredGarden',  text: 'Press F near a garden bed to plant',            position: 'top_center',    duration: 4000 },
+  { id: 'plant_bed',   event: 'tutorial:enteredGarden',  text: 'Press E near a garden bed to plant',            mobileText: 'Tap 🌱 near a garden bed to plant',          position: 'top_center',    duration: 4000 },
   { id: 'sleep',       event: 'bed:planted',             text: 'Sleep to advance the day and grow your plants', position: 'top_center',    duration: 5000, day: (d) => d === 1 },
   { id: 'chest',       event: 'plant:harvested',         text: 'Spend harvested plants at the workshop chest',  position: 'top_center',    duration: 5000 },
-  { id: 'attack',      event: 'tutorial:enemyContact',   text: 'SPACE to attack',                               position: 'bottom_center', duration: 3000 },
+  { id: 'attack',      event: 'tutorial:enemyContact',   text: 'Q or click to attack',                          mobileText: 'Tap ⚔ to attack',                           position: 'bottom_center', duration: 3000 },
   { id: 'timer',       event: 'day:timerWarning',        text: 'Timer running low — head back to the garden',   position: 'top_center',    duration: 4000, day: (d) => d <= 2 }
 ];
 
@@ -45,15 +52,17 @@ export default class TutorialSystem {
 
   onTrigger(event) {
     const day = this.getDay();
+    const isMobile = MobileDetect.isMobile();
     HINTS.filter((h) => h.event === event).forEach((h) => {
       if (this.seen.includes(h.id)) return;
       if (h.day && !h.day(day)) return;
       // Mark seen immediately so a repeating trigger can't re-enqueue it, then
-      // ask UIScene to show the pill and request a save so it persists.
+      // ask UIScene to show the pill and request a save so it persists. Mobile gets
+      // the button-based copy where one exists; desktop (and neutral hints) use `text`.
       this.seen.push(h.id);
       EventBus.emit('tutorial:hint', {
         id: h.id,
-        text: h.text,
+        text: isMobile && h.mobileText ? h.mobileText : h.text,
         position: h.position,
         duration: h.duration
       });

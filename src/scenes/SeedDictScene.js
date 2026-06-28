@@ -7,28 +7,34 @@
 // ESC or [Close] dismisses and emits 'dictionary:closed' so GameScene unfreezes.
 
 import Phaser from 'phaser';
+import { fitCameraToVirtual } from '../core/ViewportFit.js';
 import EventBus from '../core/EventBus.js';
 import { VIRTUAL_WIDTH, VIRTUAL_HEIGHT } from '../core/Constants.js';
 import entitiesData from '../data/entities.json';
 
-const PLANT_ORDER = [
-  'red_mushroom',
-  'blue_flower',
-  'golden_wheat',
-  'green_herb',
-  'glowshroom',
-  'sunflower'
-];
+// v4 (Sprint 10): derive from the reconciled 12-plant catalog. 12 entries fit a
+// 3-column grid (4 rows) within the 900px overlay — no scroll needed.
+const PLANT_ORDER = Object.keys(entitiesData.plants);
 
-// What each plant's resource feeds in the workshop (player-facing summary).
-const PLANT_USE = {
-  red_mushroom: 'Weapon upgrades',
-  blue_flower: 'Armor & well upgrades',
-  golden_wheat: 'Boots & move speed',
-  green_herb: 'Seed satchels & day timer',
-  glowshroom: 'Ranged & crit chance',
-  sunflower: 'Watering can & harvest range'
+// What each plant's resource feeds in the workshop (player-facing summary), derived
+// from the plant's stat tree. Sell-only crops have no upgrade — they fund coins.
+const STAT_LABEL = {
+  attackMult: 'Attack power',
+  damageReduction: 'Defense',
+  hpMax: 'Max HP',
+  speedMult: 'Move speed',
+  critChance: 'Crit chance',
+  harvestBonus: 'Harvest range',
+  rangedDamage: 'Ranged damage',
+  spellPower: 'Spell power',
+  dashBonus: 'Dash',
+  healthRegen: 'Health regen'
 };
+function plantUse(pt) {
+  const up = entitiesData.upgrades[pt];
+  if (up && up.stat) return STAT_LABEL[up.stat.statKey] || up.stat.name;
+  return 'Sell for coins';
+}
 
 function hexToNum(hex) {
   return parseInt(hex.replace('#', ''), 16);
@@ -44,6 +50,7 @@ export default class SeedDictScene extends Phaser.Scene {
   }
 
   create() {
+    fitCameraToVirtual(this);
     const gameScene = this.scene.get('GameScene');
     this.discovered = new Set((gameScene && gameScene.discoveredPlants) || []);
     this.grown = (gameScene && gameScene.plantsGrownEver) || {};
@@ -78,13 +85,15 @@ export default class SeedDictScene extends Phaser.Scene {
   }
 
   layout() {
-    const cols = 2;
-    const marginX = 48;
-    const gap = 24;
-    const top = 120;
+    // Sprint 10: 3 columns × 4 rows keeps all 12 plant cards inside the 900px
+    // overlay (was 2 columns, which overflowed at 21 and still at 12).
+    const cols = 3;
+    const marginX = 40;
+    const gap = 20;
+    const top = 112;
     const cardW = (VIRTUAL_WIDTH - marginX * 2 - gap * (cols - 1)) / cols;
-    const cardH = 210;
-    const rowGap = 18;
+    const cardH = 182;
+    const rowGap = 10;
 
     PLANT_ORDER.forEach((pt, i) => {
       const col = i % cols;
@@ -146,15 +155,15 @@ export default class SeedDictScene extends Phaser.Scene {
     const lines = [
       `Grows in:   ${humanize(plant.foundNear)}`,
       `Growth:     ${plant.growthDays} ${plant.growthDays === 1 ? 'day' : 'days'}`,
-      `Used for:   ${PLANT_USE[pt] || '—'}`,
+      `Used for:   ${plantUse(pt)}`,
       `Grown ever: ${this.grown[pt] || 0}`
     ];
     this.add
-      .text(x + 24, y + 92, lines.join('\n'), {
+      .text(x + 24, y + 86, lines.join('\n'), {
         fontFamily: '"SproutLands", "Courier New", monospace',
-        fontSize: '16px',
+        fontSize: '15px',
         color: '#D1CCC6',
-        lineSpacing: 8
+        lineSpacing: 6
       })
       .setDepth(102);
   }

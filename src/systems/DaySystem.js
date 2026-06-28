@@ -17,6 +17,7 @@ export default class DaySystem {
     this.timerActive = false;
     this.warningEmitted = false;
     this.urgentEmitted = false;
+    this.expiredEmitted = false; // Sprint 12 — fire day:timerExpired once, then run overtime
     this.todayWeather = null; // Sprint 11 — set by selectWeather()/restoreWeather()
   }
 
@@ -42,7 +43,21 @@ export default class DaySystem {
     if (!this.timerActive) return;
 
     this.timerRemaining -= delta;
-    EventBus.emit('day:timerTick', { remaining: Math.max(0, this.timerRemaining) });
+
+    // Overtime (Sprint 12): the day no longer freezes at 0:00 — it runs into
+    // negative as a "get home before you pass out" window, clamped at a fixed floor
+    // (passOutFloorMs below zero) so the HUD can count down the time left. The
+    // pass-out/KO consequence at the floor is the sortie sprint's job; here the
+    // timer just stops falling once it bottoms out.
+    const floor = -(this.gameData.daySystem.passOutFloorMs || 0);
+    if (this.timerRemaining < floor) this.timerRemaining = floor;
+
+    // raw carries the (possibly negative) overtime value for the HUD countdown;
+    // remaining stays clamped ≥ 0 so the existing positive-timer readout is unchanged.
+    EventBus.emit('day:timerTick', {
+      remaining: Math.max(0, this.timerRemaining),
+      raw: this.timerRemaining
+    });
 
     if (!this.warningEmitted && this.timerRemaining <= this.gameData.daySystem.warningTime) {
       this.warningEmitted = true;
@@ -52,10 +67,11 @@ export default class DaySystem {
       this.urgentEmitted = true;
       EventBus.emit('day:timerUrgent', {});
     }
-    if (this.timerRemaining <= 0) {
-      this.timerRemaining = 0;
+    // Fire the day-expiry buff exactly once at 0:00, then keep ticking into overtime
+    // (no longer deactivates the timer — the player must walk home to stop the bleed).
+    if (!this.expiredEmitted && this.timerRemaining <= 0) {
+      this.expiredEmitted = true;
       EventBus.emit('day:timerExpired', {});
-      this.setTimerActive(false);
     }
   }
 
@@ -64,6 +80,7 @@ export default class DaySystem {
     this.timerRemaining = this.maxTimer();
     this.warningEmitted = false;
     this.urgentEmitted = false;
+    this.expiredEmitted = false;
     // Notify garden beds to tick growth (and clear watered flags).
     EventBus.emit('day:advanced', { dayNumber: this.dayNumber });
     // Roll the day's weather after growth has ticked (Sprint 11).
@@ -92,5 +109,6 @@ export default class DaySystem {
     this.timerRemaining = this.maxTimer();
     this.warningEmitted = false;
     this.urgentEmitted = false;
+    this.expiredEmitted = false;
   }
 }

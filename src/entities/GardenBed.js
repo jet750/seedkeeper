@@ -7,37 +7,41 @@
 
 import Phaser from 'phaser';
 import EventBus from '../core/EventBus.js';
+import { GARDEN_PROP_SCALE } from '../core/Constants.js';
 
 const STATE = { EMPTY: 'EMPTY', PLANTED: 'PLANTED', GROWING: 'GROWING', READY: 'READY' };
-const BED_SIZE = 56;
+// Sprint 11: the bed footprint + crop sprite were authored at the old 2x sprite
+// scale; GARDEN_PROP_SCALE brings them down to sit proportional to the 1x sprite
+// (kept in sync with the well/workshop/structure scaling in GameScene).
+const BED_SIZE = 56 * GARDEN_PROP_SCALE;
 const SOIL_DRY = 0x5a4632;
 const SOIL_WET = 0x3f3022;
 
 // Watering overhaul (Sprint 9): each watering rolls two independent checks whose
 // odds scale with the watering-can tier (0 = basic, 1 = copper, 2 = golden).
+// Sprint 14b audit: the faster-growth (accelerate) chance is UNIFORM across every
+// plant type — it's this single shared constant (+ can tier + weather bonus), with
+// no per-plant override anywhere, so no crop is luckier to grow than another.
 const ACCELERATE_BASE_CHANCE = 0.4; // +0.10 per can tier → 40 / 50 / 60%
 const ACCELERATE_PER_TIER = 0.1;
 const DOUBLE_BASE_CHANCE = 0.08; // +0.04 per can tier → 8 / 12 / 16%
 const DOUBLE_PER_TIER = 0.04;
 
-// Real farming-plant art (Sprint 10d). The "Farming Plants" sheet is a clean
-// 5-col x 15-row grid: each row is one crop's growth sequence, columns 0..4 run
-// just-planted → sprout → small → medium → full-grown. Mapping each plant type to
-// a distinct row gives recognizable, per-type crop art that visibly advances with
-// growth — replacing the Sprint 10b "arbitrary frame" problem (frames [0,2,4]
-// were unreadable cells). Rows chosen for visual distinctness; verified by eye
-// against the sheet. Frame = row*5 + growthColumn.
-const PLANT_ROW_MAP = {
-  golden_wheat: 0, // tall golden grain
-  green_herb: 2, // leafy green
-  blue_flower: 4, // deep purple/blue crop
-  red_mushroom: 6, // low leafy crop
-  sunflower: 8, // orange/gold bulb
-  glowshroom: 10 // pink flowering crop
-};
-const PLANT_SHEET_COLS = 5;
-const PLANT_SPRITE_SCALE = 2.4; // 16px source → ~38px, sits on a 56px bed
-const PLANT_SPRITE_ORIGIN_Y = 0.78; // root the crop near the soil, not its centre
+// Per-plant growth art (Economy Sprint 6/3d). Each plant now has its OWN
+// spritesheet keyed by its plant type (e.g. 'corn', 'carrots') — a clean 7-column
+// growth strip: col 0 = just-planted seed, cols 1-4 = sprout → mid growth, col 5 =
+// ready to harvest. This replaces the single shared "farming_plants" sheet plus
+// the PLANT_ROW_MAP row lookup; the frame is now the growth column alone.
+const PLANT_SPRITE_FRAMES = 7; // columns 0..6 within a plant's strip
+// Sprint 8 fix: the mature/READY crop renders the LAST NON-EMPTY column. Across all
+// 28 plant sheets columns 0..5 are populated and only corn has art in col 6 — every
+// other plant's col 6 is empty, so pointing READY at the literal last column
+// (PLANT_SPRITE_FRAMES - 1 = 6) rendered grown plants as a blank frame. Frame 5 is
+// safe for every plant (corn's col-5 art reads fine too).
+const PLANT_READY_FRAME = 5;
+const PLANT_SPRITE_SCALE = 2.4 * GARDEN_PROP_SCALE; // 16px source, scaled to sit on the (Sprint 11) smaller bed
+const PLANT_SPRITE_ORIGIN_Y = 0.78; // standard crops root near the soil, not centre
+const PLANT_SPRITE_ORIGIN_Y_TALL = 0.85; // tall (16x32) crops root lower onto the soil
 
 // Real crop art is recognizable, so it's now the default growth visual. Falls back
 // to the colored-dot indicator automatically when the farming sheet is absent (the
@@ -81,22 +85,15 @@ export default class GardenBed {
       .setDepth(6)
       .setVisible(false);
 
-    // Real plant growth sprites (Sprint 10b) only when the farming sheet is a
-    // genuine multi-frame sheet AND we've opted in — otherwise the colored dot
-    // above stays the growth visual so feedback is never invisible.
-    this.usePlantSprite =
-      PREFER_PLANT_SPRITE &&
-      scene.textures.exists('farming_plants') &&
-      scene.textures.get('farming_plants').frameTotal > 1;
-    this.plantSprite = this.usePlantSprite
-      ? scene.add
-          .image(x, y, 'farming_plants', 0)
-          .setOrigin(0.5, PLANT_SPRITE_ORIGIN_Y)
-          .setDepth(6)
-          .setVisible(false)
-      : null;
-    // The object the pulse/scale animates — sprite when available, else rectangle.
-    this.growthVisual = this.plantSprite || this.plantShape;
+    // Per-plant growth sprites (Sprint 6/3d) are chosen per plant TYPE when it is
+    // planted/restored — see configurePlantVisual() — because the texture key now
+    // varies by crop. The image is created lazily on first use; until then (and
+    // whenever a plant's sheet is absent) the colored dot above stays the growth
+    // visual so feedback is never invisible.
+    this.plantSprite = null;
+    this.usePlantSprite = false;
+    // The object the pulse/scale animates — the sprite when in use, else the dot.
+    this.growthVisual = this.plantShape;
 
     this.daysText = scene.add
       .text(x, y - 42, '', {
@@ -154,9 +151,36 @@ export default class GardenBed {
     this.refreshSoil();
   }
 
-  // Sprite growth visual (real farming art): pick this plant's row and the growth
-  // column for the current state/progress. No tint — the crop art carries its own
-  // colour, and tinting a coloured crop would muddy it.
+  // Decide + configure the growth visual for the current plant TYPE (Sprint 6/3d).
+  // Per-plant spritesheets are preferred when the plant's texture loaded; else the
+  // colored dot is used so feedback is never invisible. Called from plant()/restore()
+  // BEFORE setState so applyPlantSprite always has a sprite ready.
+  configurePlantVisual(plantType) {
+    const hasSprite =
+      PREFER_PLANT_SPRITE && plantType && this.scene.textures.exists(plantType);
+    this.usePlantSprite = hasSprite;
+    if (hasSprite) {
+      const def = this.gameData.plants[plantType];
+      const originY = def && def.isTall ? PLANT_SPRITE_ORIGIN_Y_TALL : PLANT_SPRITE_ORIGIN_Y;
+      if (!this.plantSprite) {
+        this.plantSprite = this.scene.add
+          .image(this.x, this.y, plantType, 0)
+          .setDepth(6)
+          .setVisible(false);
+      }
+      this.plantSprite.setTexture(plantType, 0);
+      this.plantSprite.setOrigin(0.5, originY);
+      this.growthVisual = this.plantSprite;
+      this.plantShape.setVisible(false);
+    } else {
+      this.growthVisual = this.plantShape;
+      if (this.plantSprite) this.plantSprite.setVisible(false);
+    }
+  }
+
+  // Sprite growth visual (per-plant art): set this plant's texture + the growth
+  // column for the current state. No tint — the crop art carries its own colour,
+  // and tinting a coloured crop would muddy it.
   applyPlantSprite(newState) {
     const s = this.plantSprite;
     if (newState === STATE.EMPTY) {
@@ -164,24 +188,20 @@ export default class GardenBed {
       return;
     }
     s.clearTint();
-    s.setFrame(this.plantSpriteFrame(newState));
+    s.setTexture(this.plantType, this.plantSpriteFrame(newState));
     s.setScale(PLANT_SPRITE_SCALE);
     s.setVisible(true);
   }
 
-  // Frame index into the farming sheet for this plant at the given state: row by
-  // type, column by growth progress (1 = first sprout … 4 = ready to harvest).
+  // Growth column within this plant's 7-frame strip: col 0 just-planted, cols 1-4
+  // interpolated by growth progress, col 5 ready to harvest (last non-empty frame —
+  // Sprint 8 fix; col 6 is empty on all but corn and rendered grown plants blank).
   plantSpriteFrame(state) {
-    const row = PLANT_ROW_MAP[this.plantType] ?? 0;
-    let col;
-    if (state === STATE.READY) {
-      col = 4;
-    } else {
-      const total = this.totalGrowthDays || 1;
-      const progress = Phaser.Math.Clamp(1 - this.daysRemaining / total, 0, 1);
-      col = Phaser.Math.Clamp(Math.floor(progress * 3) + 1, 1, 3);
-    }
-    return row * PLANT_SHEET_COLS + col;
+    if (state === STATE.PLANTED) return 0;
+    if (state === STATE.READY) return PLANT_READY_FRAME; // col 5 (last non-empty)
+    const total = this.totalGrowthDays || 1;
+    const progress = Phaser.Math.Clamp(1 - this.daysRemaining / total, 0, 1);
+    return Phaser.Math.Clamp(Math.floor(progress * 4) + 1, 1, 4);
   }
 
   // Colored-dot growth visual (default; used unless the sprite path is opted in).
@@ -284,17 +304,26 @@ export default class GardenBed {
     this.daysRemaining = this.gameData.plants[plantType].growthDays;
     this.totalGrowthDays = this.daysRemaining;
     this.watered = false;
+    this.configurePlantVisual(plantType);
     this.setState(STATE.PLANTED);
     this.refreshDaysText();
     this.updateGrowthVisual();
     EventBus.emit('bed:planted', { plantType, bedIndex: this.bedIndex });
   }
 
-  // Watering overhaul (Sprint 9): marking the bed wet still gates the once-a-day
-  // rule, but watering now fires two probabilistic checks immediately rather
-  // than a silent 33% growth bonus on the next day.
+  // Watering overhaul (Sprint 9): watering fires two probabilistic checks
+  // immediately rather than a silent next-day bonus.
+  //
+  // Sprint 14b — once-per-day gate: only the FIRST water of the in-game day per
+  // plant has an effect. A bed already watered today re-waters as a no-op —
+  // allowed (no error) but it does NOTHING: no growth-boost reroll, no "grew
+  // faster" notice, no ripple, no charge value. The `watered` flag is the gate; it
+  // resets at day rollover (onDayAdvanced) and on plant()/harvest(). Returns true
+  // only on the effective (first) water so callers can decide whether to spend a
+  // watering-can charge.
   water(canTier = 0, accelBonus = 0) {
     if (this.state !== STATE.PLANTED && this.state !== STATE.GROWING) return false;
+    if (this.watered) return false; // already watered today — re-water does nothing
     this.watered = true;
     this.refreshSoil();
     // Physical watering feedback — expanding blue ripple (Sprint 13).
@@ -449,6 +478,7 @@ export default class GardenBed {
     this.watered = !!saveState.watered;
     this.doubleHarvest = !!saveState.doubleHarvest;
     this.setDoubleBadge(this.doubleHarvest);
+    this.configurePlantVisual(saveState.plantType);
     if (saveState.ready) {
       this.setState(STATE.READY);
     } else {

@@ -2,21 +2,15 @@
   "spritesheets": [
     {
       "key": "player_sheet",
-      "path": "assets/images/player_sheet.png",
+      "path": "assets/images/character/player_sheet.png",
       "frameWidth": 48,
       "frameHeight": 48
     },
     {
       "key": "slime_sheet",
-      "path": "assets/images/slime_sheet.png",
+      "path": "assets/images/enemies/slime_sheet.png",
       "frameWidth": 32,
       "frameHeight": 32
-    },
-    {
-      "key": "skeleton_sheet",
-      "path": "assets/images/skeleton_sheet.png",
-      "frameWidth": 16,
-      "frameHeight": 16
     },
     {
       "key": "props_decor",
@@ -26,73 +20,67 @@
     },
     {
       "key": "obj_chest",
-      "path": "assets/images/obj_chest.png",
+      "path": "assets/images/chests/obj_chest.png",
       "frameWidth": 48,
       "frameHeight": 48
     },
     {
       "key": "ui_slot_frame",
-      "path": "assets/images/ui_slot_frame.png",
+      "path": "assets/images/ui/ui_slot_frame.png",
       "frameWidth": 48,
       "frameHeight": 48
     },
     {
       "key": "fx_dust",
-      "path": "assets/images/fx_dust.png",
+      "path": "assets/images/effects/fx_dust.png",
       "frameWidth": 12,
       "frameHeight": 12
     },
     {
       "key": "furniture_sheet",
-      "path": "assets/images/furniture_sheet.png",
+      "path": "assets/images/furniture/furniture_sheet.png",
       "frameWidth": 16,
       "frameHeight": 16
     },
     {
       "key": "fence_gate",
-      "path": "assets/images/fence_gate.png",
+      "path": "assets/images/structures/fence_gate.png",
       "frameWidth": 16,
       "frameHeight": 48
     },
     {
-      "key": "farming_plants",
-      "path": "assets/images/Farming Plants.png",
-      "frameWidth": 16,
-      "frameHeight": 16
-    },
-    {
       "key": "grass_tiles",
-      "path": "assets/images/Grass_tiles_v2.png",
+      "path": "assets/images/ground/Grass_tiles_v2.png",
       "frameWidth": 16,
       "frameHeight": 16
     },
     {
       "key": "dark_grass_tiles",
-      "path": "assets/images/Darker_Grass_Tiles_v2.png",
+      "path": "assets/images/ground/Darker_Grass_Tiles_v2.png",
       "frameWidth": 16,
       "frameHeight": 16
     },
     {
       "key": "soil_tiles",
-      "path": "assets/images/Soil_Ground_Tiles.png",
+      "path": "assets/images/ground/Soil_Ground_Tiles.png",
       "frameWidth": 16,
       "frameHeight": 16
     },
     {
       "key": "water_tiles",
-      "path": "assets/images/Water.png",
+      "path": "assets/images/ground/Water.png",
       "frameWidth": 16,
       "frameHeight": 16
     },
     {
       "key": "mushrooms_flowers",
-      "path": "assets/images/Mushrooms, Flowers, Stones.png",
+      "path": "assets/images/nature/mushrooms_flowers_stones.png",
       "frameWidth": 16,
       "frameHeight": 16
     },
     {
       "key": "fences",
-      "path": "assets/images/Fences.png",
+      "path": "assets/images/structures/Fences.png",
       "frameWidth": 16,
       "frameHeight": 16
     },
@@ -104,48 +92,74 @@
     },
     {
       "key": "signs",
-      "path": "assets/images/signs.png",
+      "path": "assets/images/structures/signs.png",
       "frameWidth": 16,
       "frameHeight": 16
     },
     {
       "key": "skeleton_run",
-      "path": "assets/images/skeleton_run.png",
+      "path": "assets/images/enemies/skeleton_run.png",
       "frameWidth": 64,
       "frameHeight": 64
     },
     {
       "key": "skeleton_idle",
-      "path": "assets/images/skeleton_idle.png",
+      "path": "assets/images/enemies/skeleton_idle.png",
       "frameWidth": 32,
       "frameHeight": 32
     },
     {
       "key": "skeleton_death",
-      "path": "assets/images/skeleton_death.png",
-      "frameWidth": 64,
+      "path": "assets/images/enemies/skeleton_death.png",
+      "frameWidth": 96,
       "frameHeight": 64
     },
     {
       "key": "weather_icons",
-      "path": "assets/images/ui_weather_icons_small.png",
+      "path": "assets/images/ui/ui_weather_icons_small.png",
       "frameWidth": 32,
       "frameHeight": 32
     },
     {
       "key": "ui_btn_square",
-      "path": "assets/images/ui_buttons_square.png",
+      "path": "assets/images/ui/ui_buttons_square.png",
       "frameWidth": 48,
       "frameHeight": 48
-    }
+    },
+    { "key": "corn", "path": "assets/images/plants/corn.png", "frameWidth": 16, "frameHeight": 32 },
+    { "key": "carrots", "path": "assets/images/plants/carrots.png", "frameWidth": 16, "frameHeight": 16 },
+    { "key": "cauliflower", "path": "assets/images/plants/cauliflower.png", "frameWidth": 16, "frameHeight": 16 },
+    { "key": "red_berry", "path": "assets/images/plants/red_berry.png", "frameWidth": 16, "frameHeight": 16 },
+    { "key": "eggplant", "path": "assets/images/plants/eggplant.png", "frameWidth": 16, "frameHeight": 16 },
+    { "key": "blue_flower", "path": "assets/images/plants/blue_flower.png", "frameWidth": 16, "frameHeight": 16 },
+    { "key": "cabbage", "path": "assets/images/plants/cabbage.png", "frameWidth": 16, "frameHeight": 16 },
+    { "key": "wheat", "path": "assets/images/plants/wheat.png", "frameWidth": 16, "frameHeight": 16 },
+    { "key": "pumpkin", "path": "assets/images/plants/pumpkin.png", "frameWidth": 16, "frameHeight": 16 },
+    { "key": "parsnip", "path": "assets/images/plants/parsnip.png", "frameWidth": 16, "frameHeight": 16 },
+    { "key": "red_lettuce", "path": "assets/images/plants/red_lettuce.png", "frameWidth": 16, "frameHeight": 16 },
+    { "key": "purple_beets", "path": "assets/images/plants/purple_beets.png", "frameWidth": 16, "frameHeight": 16 },
+    { "key": "cucumber", "path": "assets/images/plants/cucumber.png", "frameWidth": 16, "frameHeight": 16 },
+    { "key": "sunflower", "path": "assets/images/plants/sunflower.png", "frameWidth": 16, "frameHeight": 32 },
+    { "key": "sweet_potatoes", "path": "assets/images/plants/sweet_potatoes.png", "frameWidth": 16, "frameHeight": 16 },
+    { "key": "white_carrots", "path": "assets/images/plants/white_carrots.png", "frameWidth": 16, "frameHeight": 16 },
+    { "key": "watermelon", "path": "assets/images/plants/watermelon.png", "frameWidth": 16, "frameHeight": 16 },
+    { "key": "purple_carrot", "path": "assets/images/plants/purple_carrot.png", "frameWidth": 16, "frameHeight": 16 },
+    { "key": "blue_melon", "path": "assets/images/plants/blue_melon.png", "frameWidth": 16, "frameHeight": 16 },
+    { "key": "beanstalk", "path": "assets/images/plants/beanstalk.png", "frameWidth": 16, "frameHeight": 32 },
+    { "key": "pineapple", "path": "assets/images/plants/pineapple.png", "frameWidth": 16, "frameHeight": 32 },
+    { "key": "green_melon", "path": "assets/images/plants/green_melon.png", "frameWidth": 16, "frameHeight": 16 },
+    { "key": "horseradish", "path": "assets/images/plants/horseradish.png", "frameWidth": 16, "frameHeight": 16 },
+    { "key": "tomato", "path": "assets/images/plants/tomato.png", "frameWidth": 16, "frameHeight": 32 },
+    { "key": "purple_cauliflower", "path": "assets/images/plants/purple_cauliflower.png", "frameWidth": 16, "frameHeight": 16 },
+    { "key": "blue_carrot", "path": "assets/images/plants/blue_carrot.png", "frameWidth": 16, "frameHeight": 16 },
+    { "key": "bok_choy", "path": "assets/images/plants/bok_choy.png", "frameWidth": 16, "frameHeight": 16 }
   ],
   "images": [
-    { "key": "trees", "path": "assets/images/Trees, stumps and bushes.png" },
+    { "key": "trees", "path": "assets/images/nature/trees_stumps_bushes.png" },
     { "key": "tileset_garden", "path": "assets/images/tileset_garden.png" },
-    { "key": "tileset_forest", "path": "assets/images/tileset_forest.png" },
-    { "key": "tileset_fence", "path": "assets/images/tileset_fence.png" },
-    { "key": "obj_well", "path": "assets/images/obj_well.png" },
-    { "key": "ui_dialog_big", "path": "assets/images/ui_dialog_big.png" }
+    { "key": "obj_well", "path": "assets/images/structures/water_well.png" },
+    { "key": "ui_dialog_big", "path": "assets/images/ui/ui_dialog_big.png" },
+    { "key": "work_station", "path": "assets/images/structures/work_station.png" }
   ],
   "audio": [
     { "key": "bgm_garden", "path": "assets/audio/bgm_garden.mp3" },

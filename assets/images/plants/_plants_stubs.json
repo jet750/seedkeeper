@@ -1,0 +1,282 @@
+{
+  "corn": {
+    "name": "Corn",
+    "color": "#FFFFFF",
+    "growDays": 1,
+    "statTree": null,
+    "sellValue": 3,
+    "frameCount": 7,
+    "isTall": true,
+    "_note": "verify color + growDays + statTree before wiring"
+  },
+  "carrots": {
+    "name": "Carrots",
+    "color": "#FFFFFF",
+    "growDays": 1,
+    "statTree": null,
+    "sellValue": 3,
+    "frameCount": 7,
+    "isTall": false,
+    "_note": "verify color + growDays + statTree before wiring"
+  },
+  "cauliflower": {
+    "name": "Cauliflower",
+    "color": "#FFFFFF",
+    "growDays": 1,
+    "statTree": null,
+    "sellValue": 3,
+    "frameCount": 7,
+    "isTall": false,
+    "_note": "verify color + growDays + statTree before wiring"
+  },
+  "red_berry": {
+    "name": "Red Berry",
+    "color": "#FFFFFF",
+    "growDays": 1,
+    "statTree": null,
+    "sellValue": 3,
+    "frameCount": 7,
+    "isTall": false,
+    "_note": "verify color + growDays + statTree before wiring"
+  },
+  "eggplant": {
+    "name": "Eggplant",
+    "color": "#FFFFFF",
+    "growDays": 1,
+    "statTree": null,
+    "sellValue": 3,
+    "frameCount": 7,
+    "isTall": false,
+    "_note": "verify color + growDays + statTree before wiring"
+  },
+  "blue_flower": {
+    "name": "Blue Flower",
+    "color": "#FFFFFF",
+    "growDays": 1,
+    "statTree": null,
+    "sellValue": 3,
+    "frameCount": 7,
+    "isTall": false,
+    "_note": "verify color + growDays + statTree before wiring"
+  },
+  "cabbage": {
+    "name": "Cabbage",
+    "color": "#FFFFFF",
+    "growDays": 1,
+    "statTree": null,
+    "sellValue": 3,
+    "frameCount": 7,
+    "isTall": false,
+    "_note": "verify color + growDays + statTree before wiring"
+  },
+  "wheat": {
+    "name": "Wheat",
+    "color": "#FFFFFF",
+    "growDays": 1,
+    "statTree": null,
+    "sellValue": 3,
+    "frameCount": 7,
+    "isTall": false,
+    "_note": "verify color + growDays + statTree before wiring"
+  },
+  "pumpkin": {
+    "name": "Pumpkin",
+    "color": "#FFFFFF",
+    "growDays": 1,
+    "statTree": null,
+    "sellValue": 3,
+    "frameCount": 7,
+    "isTall": false,
+    "_note": "verify color + growDays + statTree before wiring"
+  },
+  "parsnip": {
+    "name": "Parsnip",
+    "color": "#FFFFFF",
+    "growDays": 1,
+    "statTree": null,
+    "sellValue": 3,
+    "frameCount": 7,
+    "isTall": false,
+    "_note": "verify color + growDays + statTree before wiring"
+  },
+  "red_lettuce": {
+    "name": "Red Lettuce",
+    "color": "#FFFFFF",
+    "growDays": 1,
+    "statTree": null,
+    "sellValue": 3,
+    "frameCount": 7,
+    "isTall": false,
+    "_note": "verify color + growDays + statTree before wiring"
+  },
+  "purple_beets": {
+    "name": "Purple Beets",
+    "color": "#FFFFFF",
+    "growDays": 1,
+    "statTree": null,
+    "sellValue": 3,
+    "frameCount": 7,
+    "isTall": false,
+    "_note": "verify color + growDays + statTree before wiring"
+  },
+  "blue_flower_2": {
+    "name": "Blue Flower 2",
+    "color": "#FFFFFF",
+    "growDays": 1,
+    "statTree": null,
+    "sellValue": 3,
+    "frameCount": 7,
+    "isTall": false,
+    "_note": "verify color + growDays + statTree before wiring"
+  },
+  "cucumber": {
+    "name": "Cucumber",
+    "color": "#FFFFFF",
+    "growDays": 1,
+    "statTree": null,
+    "sellValue": 3,
+    "frameCount": 7,
+    "isTall": false,
+    "_note": "verify color + growDays + statTree before wiring"
+  },
+  "sunflower": {
+    "name": "Sunflower",
+    "color": "#FFFFFF",
+    "growDays": 1,
+    "statTree": null,
+    "sellValue": 3,
+    "frameCount": 7,
+    "isTall": true,
+    "_note": "verify color + growDays + statTree before wiring"
+  },
+  "sweet_potatoes": {
+    "name": "Sweet Potatoes",
+    "color": "#FFFFFF",
+    "growDays": 1,
+    "statTree": null,
+    "sellValue": 3,
+    "frameCount": 7,
+    "isTall": false,
+    "_note": "verify color + growDays + statTree before wiring"
+  },
+  "white_carrots": {
+    "name": "White Carrots",
+    "color": "#FFFFFF",
+    "growDays": 1,
+    "statTree": null,
+    "sellValue": 3,
+    "frameCount": 7,
+    "isTall": false,
+    "_note": "verify color + growDays + statTree before wiring"
+  },
+  "watermelon": {
+    "name": "Watermelon",
+    "color": "#FFFFFF",
+    "growDays": 1,
+    "statTree": null,
+    "sellValue": 3,
+    "frameCount": 7,
+    "isTall": false,
+    "_note": "verify color + growDays + statTree before wiring"
+  },
+  "purple_carrot": {
+    "name": "Purple Carrot",
+    "color": "#FFFFFF",
+    "growDays": 1,
+    "statTree": null,
+    "sellValue": 3,
+    "frameCount": 7,
+    "isTall": false,
+    "_note": "verify color + growDays + statTree before wiring"
+  },
+  "blue_melon": {
+    "name": "Blue Melon",
+    "color": "#FFFFFF",
+    "growDays": 1,
+    "statTree": null,
+    "sellValue": 3,
+    "frameCount": 7,
+    "isTall": false,
+    "_note": "verify color + growDays + statTree before wiring"
+  },
+  "beanstalk": {
+    "name": "Beanstalk",
+    "color": "#FFFFFF",
+    "growDays": 1,
+    "statTree": null,
+    "sellValue": 3,
+    "frameCount": 7,
+    "isTall": true,
+    "_note": "verify color + growDays + statTree before wiring"
+  },
+  "pineapple": {
+    "name": "Pineapple",
+    "color": "#FFFFFF",
+    "growDays": 1,
+    "statTree": null,
+    "sellValue": 3,
+    "frameCount": 7,
+    "isTall": true,
+    "_note": "verify color + growDays + statTree before wiring"
+  },
+  "green_melon": {
+    "name": "Green Melon",
+    "color": "#FFFFFF",
+    "growDays": 1,
+    "statTree": null,
+    "sellValue": 3,
+    "frameCount": 7,
+    "isTall": false,
+    "_note": "verify color + growDays + statTree before wiring"
+  },
+  "horseradish": {
+    "name": "Horseradish",
+    "color": "#FFFFFF",
+    "growDays": 1,
+    "statTree": null,
+    "sellValue": 3,
+    "frameCount": 7,
+    "isTall": false,
+    "_note": "verify color + growDays + statTree before wiring"
+  },
+  "tomato": {
+    "name": "Tomato",
+    "color": "#FFFFFF",
+    "growDays": 1,
+    "statTree": null,
+    "sellValue": 3,
+    "frameCount": 7,
+    "isTall": true,
+    "_note": "verify color + growDays + statTree before wiring"
+  },
+  "purple_cauliflower": {
+    "name": "Purple Cauliflower",
+    "color": "#FFFFFF",
+    "growDays": 1,
+    "statTree": null,
+    "sellValue": 3,
+    "frameCount": 7,
+    "isTall": false,
+    "_note": "verify color + growDays + statTree before wiring"
+  },
+  "blue_carrot": {
+    "name": "Blue Carrot",
+    "color": "#FFFFFF",
+    "growDays": 1,
+    "statTree": null,
+    "sellValue": 3,
+    "frameCount": 7,
+    "isTall": false,
+    "_note": "verify color + growDays + statTree before wiring"
+  },
+  "bok_choy": {
+    "name": "Bok Choy",
+    "color": "#FFFFFF",
+    "growDays": 1,
+    "statTree": null,
+    "sellValue": 3,
+    "frameCount": 7,
+    "isTall": false,
+    "_note": "verify color + growDays + statTree before wiring"
+  }
+}

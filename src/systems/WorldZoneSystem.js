@@ -56,7 +56,21 @@ export default class WorldZoneSystem {
       ]
     };
 
+    // Per-zone difficulty level (Sprint 5). The procedural world has none yet, so
+    // this stays null and GameScene falls back to a distance-from-home gradient.
+    // The hand-built LDtk world will populate this map (zoneName → level 1-5),
+    // at which point getZoneLevelAt() starts returning it.
+    this.zoneLevels = null;
+
     this.defineRiverSystem();
+  }
+
+  // The authored level for the zone at (x, y), or null when none is defined (the
+  // procedural world). GameScene uses this when present, else a distance heuristic.
+  getZoneLevelAt(x, y) {
+    if (!this.zoneLevels) return null;
+    const lvl = this.zoneLevels[this.getZoneAt(x, y)];
+    return typeof lvl === 'number' ? lvl : null;
   }
 
   // --- River geometry -------------------------------------------------------

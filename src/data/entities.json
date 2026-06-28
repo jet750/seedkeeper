@@ -1,50 +1,207 @@
 {
   "player": {
     "maxHP": 100,
-    "speed": 160,
+    "_speedNote": "Sprint 16: base move speed cut 160 -> 120 (75%) so the 6400x6400 world reads as appropriately large to traverse and a chase is a committed run, not a stroll. Enemy chase speeds were cut slightly more (see each enemy's chaseSpeed) so a fresh player still edges out a chaser; the slime LUNGE (unchanged) stays the close-range punish, and the post-timer 1.5x overtime can outpace the player (get-home tension). speedMult upgrades + boots stack on this. Sprint mobile-playability: 120 -> 108 (~10% modest cut) so the world feels fuller at the new mobile zoom (both platforms). Enemy chase speeds were left as-is this sprint, so the enemy/player ratio tightened slightly — hold it by scaling each enemy chaseSpeed by ~0.9 if chases feel too sticky. TUNE for feel.",
+    "speed": 108,
     "attackDamage": 10,
     "attackCooldown": 600,
     "critChance": 0.05,
-    "seedSlots": 3
+    "seedSlots": 3,
+    "_attackCommitNote": "Sprint 14b anti-stand-and-mash: while mid-swing the player is committed for attackCommitMs and cannot dash-cancel out of the attack, so mashing then instantly dodging the slime's lunge isn't free — you must time swings / reposition. Brief (a swing's length); set to 0 to disable. Not an input remap, just a combat-commit window.",
+    "attackCommitMs": 150
   },
   "newGamePlus": {
     "enemyDensityMult": 1.2
+  },
+  "loot": {
+    "_dropNote": "Sprint 14b: enemy seed drops were carrot-dominated — carrots carried the single highest weight (30) and the warm-tone everyday crops read alike, so kills felt like 'carrots, carrots, carrots, the occasional beanstalk'. The RNG itself (weightedRandom) was fine. Flattened to TWO tiers so kills yield a varied spread: every everyday crop shares one weight (no crop dominates), and the high-value crops (pineapple + the magic crops) stay a rarer treat. Tune the two numbers, never individual crops, to keep it feeling random.",
+    "seedDropWeights": {
+      "carrots": 10,
+      "sunflower": 10,
+      "wheat": 10,
+      "tomato": 10,
+      "pumpkin": 10,
+      "cucumber": 10,
+      "beanstalk": 10,
+      "pineapple": 4,
+      "red_berry": 4,
+      "blue_flower": 4
+    },
+    "bundleDropWeights": {
+      "tomato": 20,
+      "pumpkin": 18,
+      "wheat": 15,
+      "beanstalk": 12,
+      "pineapple": 12,
+      "blue_flower": 12,
+      "red_berry": 6
+    }
   },
   "enemies": {
     "green_slime": {
       "hp": 15,
       "damage": 8,
-      "wanderSpeed": 40,
-      "chaseSpeed": 90,
+      "wanderSpeed": 28,
+      "chaseSpeed": 64,
       "detectRange": 80,
-      "loseRange": 200
+      "loseRange": 200,
+      "respawnCooldownMs": 180000,
+      "levelCurve": {
+        "hp": [1, 1.5, 2.1, 2.8, 3.6],
+        "damage": [1, 1.25, 1.55, 1.9, 2.6],
+        "speed": [1, 1.07, 1.14, 1.22, 1.3]
+      },
+      "levelTint": ["0xffffff", "0xeaffd0", "0xfff0b0", "0xffcf90", "0xff9f70"],
+      "lungeCountByLevel": [1, 1, 1, 2, 2],
+      "lunge": {
+        "_scaleNote": "Sprint 12: attackRange + lungeSpeed halved (70→35, 280→140) for the 1x sprite. Telegraph timings (windUp/squash/duration/recover/cooldown) intact — only the distances changed. Travel = lungeSpeed*duration ≈ 34px, matched to the 35px trigger so a lvl-1 green commits only when genuinely close.",
+        "attackRange": 35,
+        "windUpMs": 300,
+        "squashScaleY": 0.6,
+        "lungeSpeed": 140,
+        "lungeDurationMs": 240,
+        "recoverMs": 450,
+        "cooldownMs": 1200,
+        "_spamNote": "Sprint 14b anti-stand-and-mash. attackImmunityMs: once the slime commits to a lunge it can't be interrupted OR knocked out of it for this long, so spamming attack no longer cancel-locks it — the lunge lands on a stationary player; the punish window is RECOVER (dodge, then hit). snap: if the player is stationary AND keeps attacking in range, the slime's NEXT lunge becomes a faster, red-telegraphed snap that closes before they can react (triggerAttacks = stationary in-range swings to provoke it; stationarySpeed = body speed below which the player counts as standing still; rangeMult scales how close counts as 'in range' for the read).",
+        "attackImmunityMs": 500,
+        "snap": {
+          "triggerAttacks": 3,
+          "stationarySpeed": 14,
+          "rangeMult": 1.6,
+          "windUpMs": 150,
+          "lungeSpeed": 215
+        }
+      }
     },
     "dark_slime": {
       "hp": 35,
       "damage": 15,
-      "wanderSpeed": 25,
-      "chaseSpeed": 70,
+      "wanderSpeed": 18,
+      "chaseSpeed": 50,
       "detectRange": 150,
       "loseRange": 300,
-      "bundleDropChance": 0.5
+      "bundleDropChance": 0.5,
+      "respawnCooldownMs": 180000,
+      "levelCurve": {
+        "hp": [1, 1.4, 1.9, 2.5, 3.2],
+        "damage": [1, 1.25, 1.5, 1.8, 2.2],
+        "speed": [1, 1.06, 1.12, 1.2, 1.28]
+      },
+      "levelTint": ["0x9a5de0", "0x8833cc", "0x7a28bd", "0x6a1ea8", "0x591593"],
+      "lungeCountByLevel": [1, 1, 1, 1, 2],
+      "lunge": {
+        "_scaleNote": "Sprint 12: attackRange + lungeSpeed halved (80→40, 250→125) for the 1x sprite. Telegraph timings intact — only the distances changed.",
+        "attackRange": 40,
+        "windUpMs": 350,
+        "squashScaleY": 0.6,
+        "lungeSpeed": 125,
+        "lungeDurationMs": 260,
+        "recoverMs": 550,
+        "cooldownMs": 1500,
+        "_spamNote": "Sprint 14b anti-stand-and-mash — see green_slime.lunge._spamNote. Darks commit harder (longer immunity) and snap a touch slower than greens.",
+        "attackImmunityMs": 600,
+        "snap": {
+          "triggerAttacks": 3,
+          "stationarySpeed": 14,
+          "rangeMult": 1.6,
+          "windUpMs": 180,
+          "lungeSpeed": 195
+        }
+      },
+      "split": {
+        "_skinNote": "Sprint 14b: children keep dark-slime stats (hp/damage factors below) but wear the STANDARD slime skin via childSkin, so a dark slime fractures into basic green-looking slimes rather than mini purple clones.",
+        "count": 2,
+        "hpFactor": 0.5,
+        "damageFactor": 0.6,
+        "scaleFactor": 0.7,
+        "childSkin": "green_slime",
+        "splitCountByLevel": [2, 2, 2, 3, 3]
+      }
     },
     "skeleton": {
       "hp": 50,
       "damage": 20,
-      "patrolSpeed": 55,
-      "chaseSpeed": 110,
+      "patrolSpeed": 40,
+      "chaseSpeed": 80,
       "detectRange": 120,
       "loseRange": 400,
-      "bundleDropChance": 0.7
+      "bundleDropChance": 0.7,
+      "respawnCooldownMs": 180000,
+      "levelCurve": {
+        "hp": [1, 1.35, 1.8, 2.3, 2.9],
+        "damage": [1, 1.2, 1.45, 1.75, 2.1],
+        "speed": [1, 1.05, 1.1, 1.16, 1.22]
+      },
+      "levelTint": ["0xffffff", "0xf2e2d0", "0xe8cdb0", "0xe0b890", "0xd8a070"],
+      "overhead": {
+        "attackRange": 70,
+        "windUpMs": 500,
+        "windUpMultByLevel": [1, 0.95, 0.88, 0.8, 0.72],
+        "followUpFromLevel": 5,
+        "raiseScale": 1.18,
+        "strikeRange": 90,
+        "strikeArcDeg": 140,
+        "strikeDamageMult": 1.75,
+        "recoverMs": 700,
+        "cooldownMs": 1800
+      },
+      "variants": {
+        "_note": "Sprint 7: two skeleton types from the same sheets. standard = smaller, white-tinted, levels 1-3, inner/mid; mega = current oversized, no tint, levels 3-5, outer perimeter, higher HP/damage. scaleMult multiplies the base 2x sprite scale; hp/damage mults stack on the level curve.",
+        "standard": { "scaleMult": 0.65, "tint": "0xeeeeee", "hpMult": 1.0, "damageMult": 1.0, "minLevel": 1, "maxLevel": 3 },
+        "mega":     { "scaleMult": 1.0,  "tint": null,       "hpMult": 1.8, "damageMult": 1.6, "minLevel": 3, "maxLevel": 5 }
+      }
+    },
+    "leveling": {
+      "_note": "Per-enemy level 1-5 is the single difficulty driver (Sprint 5). Sprint 16: the old single linear distance ramp (distanceForMaxLevel) rolled high levels right at the garden gate, so it was replaced by three readable distance BANDS (px from garden centre 3200,3200): LOW (gate -> first ~2 screens) = lv1-2 only, MID (mid-forest) = lv2-3, HIGH (far forest / near edges) = lv4-5. Within a band the level eases from min at the inner edge to max at the outer edge. The day bump + per-guard spread still add variety but are CLAMPED INSIDE the band, so leaving the gate ALWAYS meets lv1-2 (never lv5) regardless of day, and lv5 appears ONLY far out near the world edges. An LDtk zone `level` property still overrides the distance heuristic when present. distanceForMaxLevel is retained for reference but is SUPERSEDED by bands. All band thresholds are TUNE knobs.",
+      "distanceForMaxLevel": 3600,
+      "bands": [
+        { "maxDist": 1300, "min": 1, "max": 2 },
+        { "maxDist": 2400, "min": 2, "max": 3 },
+        { "maxDist": 3200, "min": 4, "max": 5 }
+      ],
+      "spread": 1,
+      "dayLevelBumpEvery": 4,
+      "sizeStepPerLevel": 0.05,
+      "dangerColors": { "safe": "#6FCF6F", "risky": "#F2C94C", "dangerous": "#EB5757" }
     },
     "scaling": {
-      "densityPerDay": 0.1,
+      "_densityNote": "Sprint 12: counts + split cap scaled up for the 6400x6400 massive world (~4x the old 3200² area) — the radial bands were so sparse the world read as empty. SPAWN_BAND distance logic is unchanged (greens ring the garden, danger scales out); only populations and the cap grew. maxActiveSlimes is raised but bounded for mobile (split children come from an object pool and AI runs on an every-Nth-frame throttle). All tunable. Sprint 15: the world is no longer bulk-populated around the garden — region spawning (regionSpawn below) fills cells around the PLAYER. The day-gate fields (startDay_*) and split cap (maxActiveSlimes) still apply; the baseline COUNT fields are superseded by regionSpawn density and are now unused.",
       "startDay_darkSlime": 3,
       "startDay_skeleton": 5,
-      "greenSlimeBaseCount": 5,
-      "greenSlimePerDay": 0.5,
-      "greenSlimeMaxCount": 12,
-      "greenSlimeRespawnMs": 30000
+      "darkSlimeBaseline": 8,
+      "skeletonBaseline": 3,
+      "greenSlimeBaseCount": 16,
+      "greenSlimeMaxCount": 24,
+      "maxActiveSlimes": 40
+    },
+    "regionSpawn": {
+      "_note": "Sprint 15 region-based spawning, RECALIBRATED Sprint 16. APPROACH = grid of cells (not a rolling radius): the 6400² world is diced into cellSize² cells; only cells within activeRadiusCells of the player's cell are populated, and enemies whose cell drifts past despawnRadiusCells from the player are returned/destroyed (hysteresis: despawn radius > active radius, so cells don't flicker and despawn happens off-screen). The camera shows only ~400x225 world px (zoom 4). Sprint 15 gave EVERY cell the same baseCellDensity, so leaving the gate met a near-camp swarm that chase-trained into the viewport. Sprint 16 makes per-cell density DISTANCE-SCALED (cellDensityByBand, indexed by the same leveling.bands a cell centre falls in): SPARSE near camp (a few lv1-2 you can skirt), DENSER far out — which weights the population to the dangerous far/high bands and pairs with seeds being denser+rarer far out (risk/reward). Type eligibility is gated by distance-from-garden (darks past darkMinDist, skeletons past skeletonMinDist) AND day; LEVEL comes from the distance bands (computeEnemyLevel). maxActiveEnemies caps the total across all loaded cells (counts split children too). Aggroed enemies are NEVER despawned mid-chase (cross-boundary chase persistence). cellDensityByBand, maxActiveEnemies and cellSize are the primary feel/perf dials.",
+      "cellSize": 560,
+      "activeRadiusCells": 1,
+      "despawnRadiusCells": 2,
+      "maxActiveEnemies": 50,
+      "cellDensityByBand": [1, 3, 5],
+      "darkMinDist": 1400,
+      "skeletonMinDist": 2200,
+      "typeWeights": { "green_slime": 6, "dark_slime": 4, "skeleton": 2 },
+      "sweepIntervalMs": 1000,
+      "road": {
+        "_roadNote": "Spawn-frequency only — chasing/roaming across roads is unaffected. Sprint 15's version RE-SAMPLED a near-road candidate, which only repositioned the spawn off the path tile but kept the cell's full count, so road areas were never actually quieter. Sprint 16 instead DROPS the spawn (count reduction) when a valid land point lands within proximityPx of a paths_main/paths_spur/bridges tile and random > keepChance, so roads carry genuinely FEWER enemies and the open off-road forest is the dense zone. proximityPx widened (90 -> 130) and keepChance lowered (0.4 -> 0.15) so walking a road reads clearly calm.",
+        "proximityPx": 130,
+        "keepChance": 0.15
+      }
+    }
+  },
+  "seeds": {
+    "regionSpawn": {
+      "_note": "Sprint 16 region-based WILD SEED spawning (Sprint 15 built enemies only and left seeds as a sparse fixed fan-out, so players wandered the whole map for scraps and the far edges were unrewarding). Mirrors the enemy region system: each cell the player enters is populated with wild seeds and they despawn with their region on leave / refresh on return + day rollover (replacing the 14b daily reroll for wild seeds; death-drop and daily-special seeds are NOT region-managed and are untouched). DENSITY scales with distance (seedsPerCellByBand, indexed by the leveling.bands the cell centre falls in) — denser the further out. RARITY scales with distance too (tierWeightByBand): near camp rolls almost all common meadow-tier seeds, far out rolls mostly deep_forest-tier (the rare / high-value / magic crops). This is the reward gradient that makes the dangerous far bands worth running. Within a chosen tier a random plant of that foundNear is picked, so the existing tier gating (meadow/mid_forest/deep_forest) still drives WHICH seeds appear where. Seeds reject water / garden interior / world edges (resample). Counts tuned so a full 8-slot satchel fills by exploring a region or two, not the whole map. maxActiveSeeds caps the loaded total. All knobs are TUNE values.",
+      "seedsPerCellByBand": [2, 3, 4],
+      "maxActiveSeeds": 30,
+      "tierWeightByBand": [
+        { "meadow": 7, "mid_forest": 2, "deep_forest": 0 },
+        { "meadow": 3, "mid_forest": 6, "deep_forest": 2 },
+        { "meadow": 1, "mid_forest": 3, "deep_forest": 7 }
+      ]
     }
   },
   "daySystem": {
@@ -52,106 +209,37 @@
     "warningTime": 30000,
     "urgentTime": 10000,
     "postTimerSpeedMult": 1.5,
-    "postTimerDamageMult": 1.5
+    "postTimerDamageMult": 1.5,
+    "_overtimeNote": "Sprint 12: after 0:00 the day runs into overtime (negative) down to passOutFloorMs below zero — a 'get home before you pass out' window. The HUD shows a red countdown of the time left to the floor. The actual pass-out/KO consequence at the floor is NOT implemented here (ships with the sortie sprint); for now the timer simply clamps at the floor.",
+    "passOutFloorMs": 300000
   },
+  "_plantsNote": "Sprint 10 reconciliation: catalog stripped to a clean 12 — 10 growable (one plant per stat tree) + 2 sell-only (watermelon, blue_melon; statTree null, no upgrades entry). blue_flower is the single magic-tree plant (renamed from the old blue_flower_2; the old environmental blue_flower is no longer a game entity). Retired keys (purple_carrot, white_carrots, cauliflower, purple_cauliflower, red_lettuce, corn, eggplant, bok_choy, green_melon + reserved cabbage/parsnip/etc.) are intentionally NOT wired. isTall plants use 16x32 frames and root lower to the soil.",
   "plants": {
-    "red_mushroom": {
-      "name": "Red Mushroom",
-      "growthDays": 1,
-      "color": "#cc3333",
-      "foundNear": "dark_trees",
-      "seedRespawn": 90000
-    },
-    "blue_flower": {
-      "name": "Blue Flower",
-      "growthDays": 1,
-      "color": "#3366cc",
-      "foundNear": "water",
-      "seedRespawn": 90000
-    },
-    "golden_wheat": {
-      "name": "Golden Wheat",
-      "growthDays": 1,
-      "color": "#ccaa00",
-      "foundNear": "clearing",
-      "seedRespawn": 90000
-    },
-    "green_herb": {
-      "name": "Green Herb",
-      "growthDays": 3,
-      "color": "#33aa44",
-      "foundNear": "entrance",
-      "seedRespawn": 120000
-    },
-    "glowshroom": {
-      "name": "Glowshroom",
-      "growthDays": 2,
-      "color": "#aa44ff",
-      "foundNear": "deep_forest",
-      "seedRespawn": 150000
-    },
-    "sunflower": {
-      "name": "Sunflower",
-      "growthDays": 1,
-      "color": "#ffcc00",
-      "foundNear": "meadow",
-      "seedRespawn": 90000
-    }
+    "tomato":      { "name": "Tomato",     "growthDays": 2, "color": "#E0402F", "foundNear": "mid_forest",  "seedRespawn": 120000, "statTree": "attack",  "sellValue": 7,  "isTall": true  },
+    "sunflower":   { "name": "Sunflower",  "growthDays": 2, "color": "#FFCC00", "foundNear": "meadow",      "seedRespawn": 120000, "statTree": "defense", "sellValue": 7,  "isTall": true  },
+    "pumpkin":     { "name": "Pumpkin",    "growthDays": 2, "color": "#D2691E", "foundNear": "mid_forest",  "seedRespawn": 120000, "statTree": "hp",      "sellValue": 7,  "isTall": false },
+    "carrots":     { "name": "Carrots",    "growthDays": 1, "color": "#E8862B", "foundNear": "meadow",      "seedRespawn": 90000,  "statTree": "speed",   "sellValue": 3,  "isTall": false },
+    "beanstalk":   { "name": "Beanstalk",  "growthDays": 2, "color": "#4A9D3F", "foundNear": "mid_forest",  "seedRespawn": 120000, "statTree": "crit",    "sellValue": 7,  "isTall": true  },
+    "wheat":       { "name": "Wheat",      "growthDays": 2, "color": "#D4B15A", "foundNear": "meadow",      "seedRespawn": 120000, "statTree": "harvest", "sellValue": 7,  "isTall": false },
+    "pineapple":   { "name": "Pineapple",  "growthDays": 3, "color": "#D4A017", "foundNear": "deep_forest", "seedRespawn": 150000, "statTree": "ranged",  "sellValue": 12, "isTall": true  },
+    "blue_flower": { "name": "Blue Flower","growthDays": 3, "color": "#3366CC", "foundNear": "deep_forest", "seedRespawn": 150000, "statTree": "magic",   "sellValue": 12, "isTall": false },
+    "cucumber":    { "name": "Cucumber",   "growthDays": 2, "color": "#5A9D3F", "foundNear": "mid_forest",  "seedRespawn": 120000, "statTree": "dash",    "sellValue": 7,  "isTall": false },
+    "red_berry":   { "name": "Red Berry",  "growthDays": 3, "color": "#C0392B", "foundNear": "deep_forest", "seedRespawn": 150000, "statTree": "regen",   "sellValue": 12, "isTall": false },
+    "watermelon":  { "name": "Watermelon", "growthDays": 3, "color": "#2E8B57", "foundNear": "deep_forest", "seedRespawn": 150000, "statTree": null,      "sellValue": 15, "isTall": false },
+    "blue_melon":  { "name": "Blue Melon", "growthDays": 3, "color": "#4A7FC0", "foundNear": "deep_forest", "seedRespawn": 150000, "statTree": null,      "sellValue": 15, "isTall": false }
   },
+  "_upgradesNote": "Sprint 10: exactly ONE plant feeds each stat tree, so applyStatEffect's per-statKey sum reduces to a single plant — the prior 3x stat-ceiling is gone. All perLevelBonus values are PROVISIONAL placeholders (tunable in Player.js consumption). New effects: damageReduction (% incoming dmg reduced/level, capped in Player), hpMax (max-HP %), rangedDamage (projectile dmg %), spellPower (wired now; spells land later), dashBonus (dash cooldown down / distance up), healthRegen (passive HP/sec, pauses briefly after a hit).",
   "upgrades": {
-    "red_mushroom": {
-      "stat": { "name": "Attack Power", "statKey": "attackMult", "levels": 5, "perLevelBonus": 0.05, "costs": [1, 3, 6, 10, 15] },
-      "gear": { "tiers": [
-        { "id": "dagger", "name": "Dagger", "cost": 3,  "attackDamage": 3, "attackCooldown": 500, "arcDegrees": 90 },
-        { "id": "sword",  "name": "Sword",  "cost": 12, "attackDamage": 8, "attackCooldown": 550, "arcDegrees": 120 }
-      ]}
-    },
-    "blue_flower": {
-      "stat": { "name": "Max HP", "statKey": "hpMult", "levels": 5, "perLevelBonus": 0.08, "costs": [1, 3, 6, 10, 15] },
-      "gear": { "tiers": [
-        { "id": "tunic",     "name": "Tunic",     "cost": 3,  "damageReduction": 0.10 },
-        { "id": "leather",   "name": "Leather",   "cost": 8,  "damageReduction": 0.20 },
-        { "id": "chainmail", "name": "Chainmail", "cost": 18, "damageReduction": 0.35 }
-      ]}
-    },
-    "golden_wheat": {
-      "stat": { "name": "Move Speed", "statKey": "speedMult", "levels": 5, "perLevelBonus": 0.03, "costs": [1, 3, 6, 10, 15] },
-      "gear": { "tiers": [
-        { "id": "basic_boots", "name": "Boots",      "cost": 3,  "speedBonus": 0.05 },
-        { "id": "dash_boots",  "name": "Dash Boots", "cost": 10, "speedBonus": 0.05, "dashEnabled": true, "dashSpeed": 400, "dashDuration": 200, "dashCooldown": 2000 }
-      ]}
-    },
-    "green_herb": {
-      "stat": { "name": "Day Timer", "statKey": "timerBonus", "levels": 5, "perLevelBonus": 15000, "costs": [1, 2, 4, 7, 11] },
-      "gear": { "tiers": [
-        { "id": "satchel_1", "name": "Small Satchel",   "cost": 2,  "seedSlots": 4 },
-        { "id": "satchel_2", "name": "Satchel",         "cost": 4,  "seedSlots": 5 },
-        { "id": "satchel_3", "name": "Large Satchel",   "cost": 7,  "seedSlots": 6 },
-        { "id": "satchel_4", "name": "Explorer Satchel","cost": 11, "seedSlots": 7 }
-      ]}
-    },
-    "glowshroom": {
-      "stat": { "name": "Crit Chance", "statKey": "critBonus", "levels": 5, "perLevelBonus": 0.02, "costs": [1, 3, 6, 10, 15] },
-      "gear": { "tiers": [
-        { "id": "sling", "name": "Sling", "cost": 3,  "projDamage": 3, "projRange": 150, "projSpeed": 350, "ammo": 10 },
-        { "id": "bow",   "name": "Bow",   "cost": 10, "projDamage": 6, "projRange": 300, "projSpeed": 450, "ammo": 10 }
-      ]}
-    },
-    "sunflower": {
-      "stat": { "name": "Harvest Range", "statKey": "harvestRange", "levels": 5, "perLevelBonus": 0.05, "costs": [1, 3, 6, 10, 15] },
-      "gear": { "tiers": [
-        { "id": "copper_can", "name": "Copper Can", "cost": 3,  "bedsPerUse": 2 },
-        { "id": "golden_can", "name": "Golden Can", "cost": 10, "bedsPerUse": 99 }
-      ]}
-    }
-  },
-  "well_upgrades": {
-    "tiers": [
-      { "id": "well_basic",   "name": "Basic Well",    "capacity": 1, "cost": 0,  "currency": null },
-      { "id": "well_bucket",  "name": "Deep Bucket",   "capacity": 2, "cost": 4,  "currency": "blue_flower" },
-      { "id": "well_cistern", "name": "Rain Cistern",  "capacity": 4, "cost": 10, "currency": "blue_flower" },
-      { "id": "well_spring",  "name": "Garden Spring", "capacity": 8, "cost": 18, "currency": "blue_flower" }
-    ]
+    "tomato":      { "stat": { "name": "Attack Power",  "statKey": "attackMult",      "levels": 5, "perLevelBonus": 0.05, "costs": [1, 3, 6, 10, 15] } },
+    "sunflower":   { "stat": { "name": "Defense",       "statKey": "damageReduction", "levels": 5, "perLevelBonus": 0.03, "costs": [1, 3, 6, 10, 15] } },
+    "pumpkin":     { "stat": { "name": "Max HP",        "statKey": "hpMax",           "levels": 5, "perLevelBonus": 0.08, "costs": [1, 3, 6, 10, 15] } },
+    "carrots":     { "stat": { "name": "Move Speed",    "statKey": "speedMult",       "levels": 5, "perLevelBonus": 0.03, "costs": [1, 3, 6, 10, 15] } },
+    "beanstalk":   { "stat": { "name": "Crit Chance",   "statKey": "critChance",      "levels": 5, "perLevelBonus": 0.02, "costs": [1, 3, 6, 10, 15] } },
+    "wheat":       { "stat": { "name": "Harvest Range", "statKey": "harvestBonus",    "levels": 5, "perLevelBonus": 0.05, "costs": [1, 3, 6, 10, 15] } },
+    "pineapple":   { "stat": { "name": "Ranged Damage", "statKey": "rangedDamage",    "levels": 5, "perLevelBonus": 0.08, "costs": [1, 3, 6, 10, 15] } },
+    "blue_flower": { "stat": { "name": "Spell Power",   "statKey": "spellPower",      "levels": 5, "perLevelBonus": 0.10, "costs": [1, 3, 6, 10, 15] } },
+    "cucumber":    { "stat": { "name": "Dash",          "statKey": "dashBonus",       "levels": 5, "perLevelBonus": 0.10, "costs": [1, 3, 6, 10, 15] } },
+    "red_berry":   { "stat": { "name": "Health Regen",  "statKey": "healthRegen",     "levels": 5, "perLevelBonus": 0.40, "costs": [1, 3, 6, 10, 15] } }
   },
   "weather": [
     { "id": "cloudy", "name": "Cloudy Day",    "icon": "☁️",  "description": "Overcast skies slow plant growth today.",            "effect": "growthPenalty",   "value": 1 },

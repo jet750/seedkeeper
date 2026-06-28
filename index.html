@@ -12,9 +12,20 @@
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <meta name="apple-mobile-web-app-title" content="Seedkeeper">
+  <link rel="apple-touch-icon" href="./icon.svg">
   <!-- Android home-screen app -->
   <meta name="mobile-web-app-capable" content="yes">
   <meta name="theme-color" content="#1a2410">
+  <!-- Installable PWA (Add to Home Screen → full-screen, chrome-free) -->
+  <link rel="manifest" href="./manifest.json">
+  <link rel="icon" type="image/svg+xml" href="./icon.svg">
+  <!-- TODO (icons): iOS ignores SVG apple-touch-icons, and some older Android wants a
+       raster icon. For a crisp home-screen icon everywhere, supply PNGs and switch to
+       them: public/apple-touch-icon-180.png (180x180) for the apple-touch-icon href,
+       and public/icon-192.png + public/icon-512.png added to public/manifest.json
+       icons[]. SVG is used for now because this environment had no raster image tool
+       to generate PNGs. Full-screen standalone launch already works via the meta tags
+       + SVG icon above; the PNGs only upgrade the icon fidelity. -->
   <!-- Stop phone-number autodetection turning HUD numbers into tap-to-call links -->
   <meta name="format-detection" content="telephone=no">
 
@@ -44,8 +55,15 @@
       touch-action: none;
     }
 
-    /* MOBILE / touch — full-bleed, inset by the safe area, no bounce-scroll.
-       Scoped to coarse pointers + small screens so desktop layout is untouched. */
+    /* MOBILE / touch — full-bleed canvas, edge-to-edge, no bounce-scroll. The
+       canvas fills the entire viewport (RESIZE scale mode); the HUD itself insets
+       to the safe area in JS (layoutHUD/TouchControlSystem.layout read the --sa*
+       vars), so the game art reaches under the notch/home indicator but no button
+       or readout ever sits beneath them. Scoped to coarse pointers + small screens
+       so the desktop FIT layout is untouched.
+       JS (main.js) also pins width/height to window.visualViewport in px on resize
+       so the iOS Safari collapsing-toolbar area is excluded; the 100% here is the
+       pre-JS default. */
     @media (pointer: coarse), (max-width: 768px) {
       html, body {
         position: fixed;
@@ -59,12 +77,10 @@
       body { display: block; background: #1a2410; }
       #game-container {
         position: fixed;
-        top: var(--sat);
-        left: var(--sal);
-        right: var(--sar);
-        bottom: var(--sab);
-        width: calc(100% - var(--sal) - var(--sar));
-        height: calc(100% - var(--sat) - var(--sab));
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
         max-width: none;
         aspect-ratio: auto;
       }

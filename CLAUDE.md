@@ -541,7 +541,7 @@ great-pollinator:  localhost:3002
 
 **portfolio-site:** Live site — extra caution. Always run `npm run build` successfully before merging to main. API keys via Vercel env vars only, never committed.
 
-**seedkeeper:** Sprint branches as `feature/sprint-1`, `feature/sprint-2` etc. `assets-raw\` is gitignored. `seedkeeper-prompts\` is committed.
+**seedkeeper:** Sprint branches as `feature/sprint-1`, `feature/sprint-2` etc. `assets-raw\` is gitignored. `seedkeeper-prompts\` is gitignored (kept on disk for running prompts locally; not shipped to GitHub/Vercel).
 
 **great-pollinator:** Phase branches as `feature/phase-4`, `feature/phase-5` etc. Continue numbering from Phase 3 (last completed build before migration).
 

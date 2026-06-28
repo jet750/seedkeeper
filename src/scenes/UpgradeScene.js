@@ -1,24 +1,29 @@
 // UpgradeScene.js
 //
 // The Seedkeeper Workshop — a full-screen overlay launched on top of GameScene
-// (which keeps rendering frozen behind it). Shows all six plant upgrade trees
-// (a stat track + a gear track each), spends plant resources, and asks GameScene
-// to apply effects + auto-save via purchaseUpgrade(). It reads live state from
-// GameScene (plantBank, upgradeLevels, gameData) and never mutates it directly.
+// (which keeps rendering frozen behind it). v2: shows plant STAT trees only (gear
+// + capacity moved to the coin economy / marketplace). Spends plant resources and
+// asks GameScene to apply effects + auto-save via purchaseUpgrade(). Reads live
+// state from GameScene (plantBank, upgradeLevels, gameData); never mutates directly.
+//
+// Sprint 10: the reconciled catalog has 10 stat trees (one plant each) — too many
+// for one screen, so the trees are split across 2 pages with ◀ ▶ arrows and page
+// dots. Sprint 14: page split is 6 + 4 (page 1 reads as a full 3-row grid, page 2
+// as overflow) rather than 5 + 5. Page-scoped objects are torn down on each switch.
 
 import Phaser from 'phaser';
+import { fitCameraToVirtual } from '../core/ViewportFit.js';
 import EventBus from '../core/EventBus.js';
 import MobileDetect from '../core/MobileDetect.js';
 import { VIRTUAL_WIDTH, VIRTUAL_HEIGHT } from '../core/Constants.js';
+import entitiesData from '../data/entities.json';
 
-const PLANT_ORDER = [
-  'red_mushroom',
-  'blue_flower',
-  'golden_wheat',
-  'green_herb',
-  'glowshroom',
-  'sunflower'
-];
+// One stat tree per plant, derived from the upgrades catalog (10 entries → 2 pages).
+// PAGE_SIZE 6 yields a 6 + 4 split (page 1 a full 3×2 grid, page 2 the 4-tree
+// overflow) instead of two half-empty 5-tree pages (Sprint 14).
+const PLANT_ORDER = Object.keys(entitiesData.upgrades);
+const PAGE_SIZE = 6;
+const PAGE_COUNT = Math.ceil(PLANT_ORDER.length / PAGE_SIZE);
 
 const PANEL_W = 700;
 const PANEL_H = 190;
@@ -33,6 +38,8 @@ const COLOR_CONFIRM_YES = 0x3a7d44;
 const COLOR_CONFIRM_NO = 0x8a3a3a;
 const COLOR_PANEL = 0x221e1b;
 const COLOR_CLOSE = 0x36322e;
+const COLOR_ARROW = 0x2d2926;
+const COLOR_ARROW_DISABLED = 0x201d1a;
 
 function hexToNum(hex) {
   return parseInt(hex.replace('#', ''), 16);
@@ -44,13 +51,16 @@ export default class UpgradeScene extends Phaser.Scene {
   }
 
   create() {
+    fitCameraToVirtual(this);
     this.gameScene = this.scene.get('GameScene');
     this.gameData = this.gameScene.gameData;
 
+    this.page = 0;
     this._pending = null; // { plantType, track } awaiting confirm
     this.panelRefs = {};
     this.actionObjs = {}; // key `${plantType}_${track}` -> [gameobjects]
     this.summaryRefs = {};
+    this._pageObjs = []; // every object that belongs to the current page (destroyed on switch)
 
     // Dim, click-swallowing backdrop.
     this.add
@@ -77,17 +87,7 @@ export default class UpgradeScene extends Phaser.Scene {
       })
       .setDepth(101);
 
-    this.buildResourceSummary();
-
-    PLANT_ORDER.forEach((pt, i) => {
-      const col = i % 2;
-      const row = Math.floor(i / 2);
-      this.buildPanel(pt, GRID_X + col * COL_STRIDE, GRID_Y + row * ROW_STRIDE);
-    });
-
-    // Well-upgrade track (Sprint 9) — a wide compact bar below the plant grid.
-    this.buildWellPanel();
-
+    // Close button (static across pages).
     this.makeButton(
       VIRTUAL_WIDTH / 2,
       VIRTUAL_HEIGHT - 42,
@@ -100,23 +100,26 @@ export default class UpgradeScene extends Phaser.Scene {
       '#F5EFE6'
     );
 
-    PLANT_ORDER.forEach((pt) => this.refreshPanel(pt));
-    this.refreshSummary();
+    // Paging chrome — prev/next arrows flanking the close button, plus page dots.
+    this.buildPagingChrome();
+
+    this.buildPage();
 
     this.input.keyboard.on('keydown-ESC', () => this.close());
+    this.input.keyboard.on('keydown-LEFT', () => this.switchPage(this.page - 1));
+    this.input.keyboard.on('keydown-RIGHT', () => this.switchPage(this.page + 1));
 
     // Keep displays live if the bank changes (it does on each purchase).
     this._onBank = () => {
       this.refreshSummary();
-      PLANT_ORDER.forEach((pt) => this.refreshPanel(pt));
-      this.refreshWellPanel();
+      this.pagePlants().forEach((pt) => this.refreshPanel(pt));
     };
     EventBus.on('bank:updated', this._onBank);
     this.events.once('shutdown', () => EventBus.off('bank:updated', this._onBank));
 
-    // Mobile: the BUY/Close buttons already take touch (they use pointerup), but
-    // there's no Esc key — add a swipe-down gesture to dismiss, plus a hint. The
-    // horizontal guard keeps it from firing on a sideways drag across buttons.
+    // Mobile: the BUY/Close buttons already take touch (pointerup), but there's no
+    // Esc key — add a swipe-down gesture to dismiss, plus a hint. The horizontal
+    // guard keeps it from firing on a sideways drag across buttons.
     if (MobileDetect.isMobile()) {
       let startY = 0;
       let startX = 0;
@@ -128,23 +131,97 @@ export default class UpgradeScene extends Phaser.Scene {
         if (p.y - startY > 120 && Math.abs(p.x - startX) < 90) this.close();
       });
       this.add
-        .text(VIRTUAL_WIDTH / 2, VIRTUAL_HEIGHT - 76, 'swipe down to close', {
+        .text(VIRTUAL_WIDTH / 2, VIRTUAL_HEIGHT - 76, 'swipe to change page · swipe down to close', {
           fontFamily: '"SproutLands", "Courier New", monospace',
           fontSize: '14px',
           color: '#9B9389'
         })
         .setOrigin(0.5)
         .setDepth(101);
+      // Horizontal swipe pages between the two screens of trees.
+      this.input.on('pointerup', (p) => {
+        const dx = p.x - startX;
+        if (Math.abs(dx) > 120 && Math.abs(p.y - startY) < 90) {
+          this.switchPage(this.page + (dx < 0 ? 1 : -1));
+        }
+      });
     }
   }
 
-  // --- Header resource summary ---------------------------------------------
+  // --- Paging ---------------------------------------------------------------
 
-  buildResourceSummary() {
-    PLANT_ORDER.forEach((pt, i) => {
+  pagePlants() {
+    return PLANT_ORDER.slice(this.page * PAGE_SIZE, this.page * PAGE_SIZE + PAGE_SIZE);
+  }
+
+  buildPagingChrome() {
+    const cy = VIRTUAL_HEIGHT - 42;
+    this._prevArrow = this.makeButton(VIRTUAL_WIDTH / 2 - 200, cy, 56, 42, '◀', COLOR_ARROW, true, () =>
+      this.switchPage(this.page - 1), '#F5EFE6'
+    );
+    this._nextArrow = this.makeButton(VIRTUAL_WIDTH / 2 + 200, cy, 56, 42, '▶', COLOR_ARROW, true, () =>
+      this.switchPage(this.page + 1), '#F5EFE6'
+    );
+
+    // Page dots, centred above the close button.
+    this._dots = [];
+    const dotGap = 26;
+    const startX = VIRTUAL_WIDTH / 2 - (dotGap * (PAGE_COUNT - 1)) / 2;
+    for (let i = 0; i < PAGE_COUNT; i++) {
+      this._dots.push(this.add.circle(startX + i * dotGap, VIRTUAL_HEIGHT - 92, 7, 0x4d4843).setDepth(101));
+    }
+  }
+
+  switchPage(next) {
+    const clamped = Phaser.Math.Clamp(next, 0, PAGE_COUNT - 1);
+    if (clamped === this.page) return;
+    this.page = clamped;
+    this._pending = null;
+    this.buildPage();
+  }
+
+  buildPage() {
+    // Tear down the previous page's objects.
+    this._pageObjs.forEach((o) => o.destroy());
+    this._pageObjs = [];
+    this.panelRefs = {};
+    this.summaryRefs = {};
+    this.actionObjs = {};
+
+    const plants = this.pagePlants();
+    this.buildResourceSummary(plants);
+    plants.forEach((pt, i) => {
+      const col = i % 2;
+      const row = Math.floor(i / 2);
+      this.buildPanel(pt, GRID_X + col * COL_STRIDE, GRID_Y + row * ROW_STRIDE);
+    });
+    plants.forEach((pt) => this.refreshPanel(pt));
+    this.refreshSummary();
+
+    // Arrow availability + dot highlight.
+    this.setArrowEnabled(this._prevArrow, this.page > 0);
+    this.setArrowEnabled(this._nextArrow, this.page < PAGE_COUNT - 1);
+    this._dots.forEach((d, i) => d.setFillStyle(i === this.page ? 0xeac34f : 0x4d4843));
+  }
+
+  setArrowEnabled([bg], enabled) {
+    bg.setAlpha(enabled ? 1 : 0.4);
+    if (this.textures.exists('ui_btn_square')) bg.setTint(enabled ? COLOR_ARROW : COLOR_ARROW_DISABLED);
+    else bg.setFillStyle(enabled ? COLOR_ARROW : COLOR_ARROW_DISABLED);
+  }
+
+  track(objs) {
+    (Array.isArray(objs) ? objs : [objs]).forEach((o) => this._pageObjs.push(o));
+    return objs;
+  }
+
+  // --- Header resource summary (current page's plants) ----------------------
+
+  buildResourceSummary(plants) {
+    plants.forEach((pt, i) => {
       const x = 660 + i * 156;
       const color = hexToNum(this.gameData.plants[pt].color);
-      this.add.circle(x, 56, 11, color).setDepth(101);
+      this.track(this.add.circle(x, 56, 11, color).setDepth(101));
       this.summaryRefs[pt] = this.add
         .text(x + 18, 56, '0', {
           fontFamily: '"SproutLands", "Courier New", monospace',
@@ -153,102 +230,14 @@ export default class UpgradeScene extends Phaser.Scene {
         })
         .setOrigin(0, 0.5)
         .setDepth(101);
+      this.track(this.summaryRefs[pt]);
     });
   }
 
   refreshSummary() {
-    PLANT_ORDER.forEach((pt) => {
-      this.summaryRefs[pt].setText(`${this.bank(pt)}`);
+    this.pagePlants().forEach((pt) => {
+      if (this.summaryRefs[pt]) this.summaryRefs[pt].setText(`${this.bank(pt)}`);
     });
-  }
-
-  // --- Well-upgrade bar (Sprint 9) ------------------------------------------
-  // A standalone track paid for in blue flowers. Sits in the gap below the
-  // plant grid; the buy button is rebuilt each refresh like the plant rows.
-
-  buildWellPanel() {
-    const cx = VIRTUAL_WIDTH / 2;
-    const cy = 794;
-    const w = 1440;
-    const h = 60;
-    this.add.rectangle(cx, cy, w, h, COLOR_PANEL).setStrokeStyle(2, 0x6b92bc).setDepth(100);
-    const leftX = cx - w / 2 + 22;
-    this.add.circle(leftX, cy, 12, hexToNum(this.gameData.plants.blue_flower.color)).setDepth(101);
-    this.add
-      .text(leftX + 24, cy - 17, 'WELL UPGRADES', {
-        fontFamily: '"SproutLands", "Courier New", monospace',
-        fontSize: '14px',
-        fontStyle: 'bold',
-        color: '#ABC4DE'
-      })
-      .setOrigin(0, 0)
-      .setDepth(101);
-    this.wellInfoText = this.add
-      .text(leftX + 24, cy + 3, '', {
-        fontFamily: '"SproutLands", "Courier New", monospace',
-        fontSize: '15px',
-        color: '#D1CCC6'
-      })
-      .setOrigin(0, 0)
-      .setDepth(101);
-    this._wellActionObjs = [];
-    this.refreshWellPanel();
-  }
-
-  refreshWellPanel() {
-    if (!this.wellInfoText) return;
-    const tiers = this.gameData.well_upgrades.tiers;
-    const lvl = this.gameScene.wellLevel || 0;
-    const current = tiers[lvl];
-    const next = tiers[lvl + 1];
-
-    const cx = VIRTUAL_WIDTH / 2;
-    const w = 1440;
-    const cy = 794;
-    const rightX = cx + w / 2 - 22;
-
-    if (this._wellActionObjs) this._wellActionObjs.forEach((o) => o.destroy());
-    this._wellActionObjs = [];
-
-    if (!next) {
-      this.wellInfoText.setText(`${current.name} · Water Capacity ${current.capacity}  ·  fully upgraded`);
-      const t = this.add
-        .text(rightX, cy, 'MAXED', {
-          fontFamily: '"SproutLands", "Courier New", monospace',
-          fontSize: '16px',
-          fontStyle: 'bold',
-          color: '#8AB87E'
-        })
-        .setOrigin(1, 0.5)
-        .setDepth(102);
-      this._wellActionObjs.push(t);
-      return;
-    }
-
-    this.wellInfoText.setText(
-      `${current.name} (cap ${current.capacity})  →  ${next.name} (cap ${next.capacity})   ·   ${next.cost} Blue Flower`
-    );
-    const cost = next.cost;
-    const affordable = (this.gameScene.plantBank[next.currency] || 0) >= cost;
-    this._wellActionObjs = this.makeButton(
-      rightX - 90,
-      cy,
-      180,
-      36,
-      `BUY  ${cost}`,
-      affordable ? COLOR_AFFORD : COLOR_DISABLED,
-      affordable,
-      () => this.onWellBuy(),
-      affordable ? '#141210' : '#7a746c'
-    );
-  }
-
-  onWellBuy() {
-    this.gameScene.purchaseWellUpgrade();
-    // purchase emits bank:updated → _onBank refreshes everything; refresh now too.
-    this.refreshSummary();
-    this.refreshWellPanel();
-    PLANT_ORDER.forEach((p) => this.refreshPanel(p));
   }
 
   // --- Panels ---------------------------------------------------------------
@@ -256,22 +245,26 @@ export default class UpgradeScene extends Phaser.Scene {
   buildPanel(pt, px, py) {
     const plant = this.gameData.plants[pt];
 
-    this.add
-      .rectangle(px, py, PANEL_W, PANEL_H, COLOR_PANEL)
-      .setOrigin(0, 0)
-      .setStrokeStyle(2, 0x4d4843)
-      .setDepth(100);
+    this.track(
+      this.add
+        .rectangle(px, py, PANEL_W, PANEL_H, COLOR_PANEL)
+        .setOrigin(0, 0)
+        .setStrokeStyle(2, 0x4d4843)
+        .setDepth(100)
+    );
 
-    this.add.circle(px + 34, py + 34, 16, hexToNum(plant.color)).setDepth(101);
+    this.track(this.add.circle(px + 34, py + 34, 16, hexToNum(plant.color)).setDepth(101));
 
-    this.add
-      .text(px + 62, py + 22, plant.name, {
-        fontFamily: '"SproutLands", "Courier New", monospace',
-        fontSize: '22px',
-        fontStyle: 'bold',
-        color: '#F5EFE6'
-      })
-      .setDepth(101);
+    this.track(
+      this.add
+        .text(px + 62, py + 22, plant.name, {
+          fontFamily: '"SproutLands", "Courier New", monospace',
+          fontSize: '22px',
+          fontStyle: 'bold',
+          color: '#F5EFE6'
+        })
+        .setDepth(101)
+    );
 
     const resourceText = this.add
       .text(px + PANEL_W - 20, py + 24, '', {
@@ -281,35 +274,27 @@ export default class UpgradeScene extends Phaser.Scene {
       })
       .setOrigin(1, 0)
       .setDepth(101);
+    this.track(resourceText);
 
     const statLabel = this.add
-      .text(px + 24, py + 70, '', {
+      .text(px + 24, py + 78, '', {
         fontFamily: '"SproutLands", "Courier New", monospace',
         fontSize: '15px',
         color: '#D1CCC6',
         lineSpacing: 4
       })
       .setDepth(101);
+    this.track(statLabel);
 
-    const gearLabel = this.add
-      .text(px + 24, py + 124, '', {
-        fontFamily: '"SproutLands", "Courier New", monospace',
-        fontSize: '15px',
-        color: '#D1CCC6',
-        lineSpacing: 4
-      })
-      .setDepth(101);
-
-    this.panelRefs[pt] = { px, py, resourceText, statLabel, gearLabel };
+    this.panelRefs[pt] = { px, py, resourceText, statLabel };
   }
 
   refreshPanel(pt) {
     const ref = this.panelRefs[pt];
+    if (!ref) return;
     ref.resourceText.setText(`× ${this.bank(pt)}`);
     ref.statLabel.setText(this.statLabelText(pt));
-    ref.gearLabel.setText(this.gearLabelText(pt));
     this.rebuildAction(pt, 'stat');
-    this.rebuildAction(pt, 'gear');
   }
 
   statLabelText(pt) {
@@ -319,19 +304,10 @@ export default class UpgradeScene extends Phaser.Scene {
     return `STAT · ${s.name}   Lv ${lv}/${s.levels}\nNext: ${this.statEffectText(pt)}`;
   }
 
-  gearLabelText(pt) {
-    const g = this.gameData.upgrades[pt].gear;
-    const gi = this.levels(pt).gear;
-    const current = gi >= 0 ? g.tiers[gi].name : 'None';
-    const next = gi + 1 < g.tiers.length ? g.tiers[gi + 1] : null;
-    if (!next) return `GEAR · ${current}\nMAXED`;
-    return `GEAR · ${current}\nNext: ${next.name}`;
-  }
-
   statEffectText(pt) {
     const s = this.gameData.upgrades[pt].stat;
     const b = s.perLevelBonus;
-    if (s.statKey === 'timerBonus') return `+${b / 1000}s per day`;
+    if (s.statKey === 'healthRegen') return `+${b} HP/sec`;
     return `+${Math.round(b * 100)}% ${s.name}`;
   }
 
@@ -345,12 +321,13 @@ export default class UpgradeScene extends Phaser.Scene {
     this.actionObjs[key] = [];
 
     const ref = this.panelRefs[pt];
-    const rowY = track === 'stat' ? ref.py + 84 : ref.py + 138;
+    if (!ref) return;
+    const rowY = ref.py + 92;
     const rightX = ref.px + PANEL_W - 20;
 
     // Confirm prompt for the pending row.
     if (this._pending && this._pending.plantType === pt && this._pending.track === track) {
-      const cost = this.nextCost(pt, track);
+      const cost = this.nextCost(pt);
       const yes = this.makeButton(
         rightX - 150,
         rowY,
@@ -374,11 +351,12 @@ export default class UpgradeScene extends Phaser.Scene {
         '#FFFFFF'
       );
       this.actionObjs[key] = [...yes, ...no];
+      this.track(this.actionObjs[key]);
       return;
     }
 
     // Maxed → static label, no button.
-    if (this.isMaxed(pt, track)) {
+    if (this.isMaxed(pt)) {
       const t = this.add
         .text(rightX, rowY, 'MAXED', {
           fontFamily: '"SproutLands", "Courier New", monospace',
@@ -389,11 +367,12 @@ export default class UpgradeScene extends Phaser.Scene {
         .setOrigin(1, 0.5)
         .setDepth(102);
       this.actionObjs[key] = [t];
+      this.track(t);
       return;
     }
 
     // Normal BUY button — green if affordable, grey/disabled otherwise.
-    const cost = this.nextCost(pt, track);
+    const cost = this.nextCost(pt);
     const affordable = this.bank(pt) >= cost;
     this.actionObjs[key] = this.makeButton(
       rightX - 70,
@@ -406,6 +385,7 @@ export default class UpgradeScene extends Phaser.Scene {
       () => this.onBuyClicked(pt, track),
       affordable ? '#141210' : '#7a746c'
     );
+    this.track(this.actionObjs[key]);
   }
 
   // --- Purchase flow --------------------------------------------------------
@@ -413,10 +393,7 @@ export default class UpgradeScene extends Phaser.Scene {
   onBuyClicked(pt, track) {
     this._pending = { plantType: pt, track };
     // Cancel any other pending confirm so only one is active at a time.
-    PLANT_ORDER.forEach((p) => {
-      this.rebuildAction(p, 'stat');
-      this.rebuildAction(p, 'gear');
-    });
+    this.pagePlants().forEach((p) => this.rebuildAction(p, 'stat'));
   }
 
   onConfirm(pt, track) {
@@ -425,7 +402,7 @@ export default class UpgradeScene extends Phaser.Scene {
     // purchase emits bank:updated → _onBank refreshes everything; refresh now too
     // so the change is instant even if the event order ever shifts.
     this.refreshSummary();
-    PLANT_ORDER.forEach((p) => this.refreshPanel(p));
+    this.pagePlants().forEach((p) => this.refreshPanel(p));
   }
 
   onCancel(pt, track) {
@@ -443,16 +420,12 @@ export default class UpgradeScene extends Phaser.Scene {
     return this.gameScene.upgradeLevels[pt];
   }
 
-  isMaxed(pt, track) {
-    const lv = this.levels(pt);
-    if (track === 'stat') return lv.stat >= this.gameData.upgrades[pt].stat.levels;
-    return lv.gear + 1 >= this.gameData.upgrades[pt].gear.tiers.length;
+  isMaxed(pt) {
+    return this.levels(pt).stat >= this.gameData.upgrades[pt].stat.levels;
   }
 
-  nextCost(pt, track) {
-    const lv = this.levels(pt);
-    if (track === 'stat') return this.gameData.upgrades[pt].stat.costs[lv.stat];
-    return this.gameData.upgrades[pt].gear.tiers[lv.gear + 1].cost;
+  nextCost(pt) {
+    return this.gameData.upgrades[pt].stat.costs[this.levels(pt).stat];
   }
 
   // Button background uses the Sprout Lands square-button art (nine-sliced from a

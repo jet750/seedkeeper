@@ -4,6 +4,7 @@
 // scene flow: Boot → Menu → Game (+ parallel UI).
 
 import Phaser from 'phaser';
+import { inject } from '@vercel/analytics';
 import sproutFontUrl from '/assets/fonts/sproutlands-font.ttf?url';
 import sproutFontSmallUrl from '/assets/fonts/sproutlands-font-small.ttf?url';
 import { VIRTUAL_WIDTH, VIRTUAL_HEIGHT } from './core/Constants.js';
@@ -13,13 +14,21 @@ import MenuScene from './scenes/MenuScene.js';
 import GameScene from './scenes/GameScene.js';
 import UIScene from './scenes/UIScene.js';
 import UpgradeScene from './scenes/UpgradeScene.js';
+import MarketplaceScene from './scenes/MarketplaceScene.js';
 import WinScene from './scenes/WinScene.js';
 import SignpostScene from './scenes/SignpostScene.js';
 import SeedDictScene from './scenes/SeedDictScene.js';
 import PauseScene from './scenes/PauseScene.js';
 import SettingsScene from './scenes/SettingsScene.js';
 import CreditsScene from './scenes/CreditsScene.js';
+import MapScene from './scenes/MapScene.js';
+import ControlsScene from './scenes/ControlsScene.js';
 import DevMenuScene from './scenes/DevMenuScene.js';
+
+// Vercel Web Analytics (vanilla JS — not the React/Next component form). Injects the
+// pageview beacon once at boot; mode tracks the Vite build so dev traffic stays out of
+// production stats.
+inject({ mode: import.meta.env.PROD ? 'production' : 'development' });
 
 // Detected once at boot. Drives the touch control layer (instantiated only in
 // UIScene), the 3-pointer input budget (joystick + two action buttons), and the
@@ -37,9 +46,14 @@ const config = {
   powerPreference: 'high-performance',
   failIfMajorPerformanceCaveat: false,
   scale: {
-    // FIT + CENTER already absorbs the Chrome URL-bar viewport shift (it
-    // recomputes on resize), so no manual innerHeight lock is needed here.
-    mode: Phaser.Scale.FIT,
+    // Mobile uses RESIZE so the canvas fills the whole viewport (no 16:9 letterbox
+    // bands) and a larger screen simply shows more world at CAMERA_ZOOM. Desktop
+    // stays on FIT — RESIZE at a sub-1600 desktop window would change the world FOV
+    // and HUD scale, which the "desktop unchanged" guardrail forbids. At exactly
+    // 1600x900 the two modes are identical, so this only diverges on real phones.
+    // Under RESIZE the HUD coordinate space becomes the live screen size, so UIScene
+    // re-runs layoutHUD() on every Scale 'resize' (see UIScene.onResize).
+    mode: isMobile ? Phaser.Scale.RESIZE : Phaser.Scale.FIT,
     autoCenter: Phaser.Scale.CENTER_BOTH,
     width: VIRTUAL_WIDTH,
     height: VIRTUAL_HEIGHT
@@ -52,9 +66,18 @@ const config = {
     arcade: {
       gravity: { x: 0, y: 0 },
       debug: false,
-      // 30Hz physics on mobile halves the integration cost; the game is
-      // velocity-driven so it stays smooth. Desktop keeps the 60Hz default.
-      fps: isMobile ? 30 : 60
+      // Integrate exactly ONE physics step per rendered frame, using the real frame
+      // delta (fixedStep:false). The previous mobile path pinned a 30Hz FIXED step to
+      // halve integration cost — but Phaser then advanced the body only every OTHER
+      // frame at 60Hz render, while the camera (lerped follow) scrolled smoothly every
+      // frame. That mismatch made the player sawtooth-jitter against the world — the
+      // "movement strobe", and the reason it was WORSE on mobile (desktop already ran
+      // 60Hz = render, so it was smooth). A variable per-frame step keeps motion smooth
+      // at ANY refresh rate (60/90/120 Hz) with no more than one integration per frame,
+      // so it never costs more than the old 30Hz path on a 60 Hz screen. The mobile CPU
+      // saver remains the slime-AI throttle (slimeUpdateInterval), independent of this.
+      fps: 60,
+      fixedStep: false
     }
   },
   scene: [
@@ -63,12 +86,15 @@ const config = {
     GameScene,
     UIScene,
     UpgradeScene,
+    MarketplaceScene,
     WinScene,
     SignpostScene,
     SeedDictScene,
     PauseScene,
     SettingsScene,
     CreditsScene,
+    MapScene,
+    ControlsScene,
     DevMenuScene
   ]
 };
@@ -93,5 +119,34 @@ function loadGameFonts() {
   );
 }
 
-// eslint-disable-next-line no-new
-loadGameFonts().finally(() => new Phaser.Game(config));
+// Drive the canvas off the TRUE visible area on mobile. window.innerHeight on iOS
+// Safari includes the strip behind the collapsing address bar, so the game would be
+// sized into space the user can't see; window.visualViewport excludes it. We resize
+// the Phaser scale to the visualViewport on its own 'resize' event (fires when the
+// toolbar expands/collapses) AND on orientationchange, and pin the parent's pixel
+// size to match so Phaser's RESIZE parent-read agrees instead of fighting us. The
+// Scale Manager then emits 'resize', which UIScene listens for to reflow the HUD —
+// that chain is what makes portrait<->landscape reflow live without a page reload.
+function setupViewportSizing(game) {
+  const vv = window.visualViewport;
+  const parent = document.getElementById('game-container');
+  const apply = () => {
+    const w = Math.round(vv ? vv.width : window.innerWidth);
+    const h = Math.round(vv ? vv.height : window.innerHeight);
+    if (parent) {
+      parent.style.width = `${w}px`;
+      parent.style.height = `${h}px`;
+    }
+    if (game.scale) game.scale.resize(w, h);
+  };
+  if (vv) vv.addEventListener('resize', apply);
+  // orientationchange fires before the new dimensions settle, so apply after a beat.
+  window.addEventListener('orientationchange', () => setTimeout(apply, 250));
+  // Sync once the Scale Manager is live (its size is otherwise the 1600x900 base).
+  game.events.once(Phaser.Core.Events.READY, apply);
+}
+
+loadGameFonts().finally(() => {
+  const game = new Phaser.Game(config);
+  if (isMobile) setupViewportSizing(game);
+});

@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512" role="img" aria-label="Seedkeeper">
+  <!-- App icon: a seedling on the Seedkeeper night-garden background. Content is kept
+       within the central ~80% so it survives a maskable (rounded/circular) crop. -->
+  <rect width="512" height="512" fill="#1a2410"/>
+  <ellipse cx="256" cy="398" rx="118" ry="24" fill="#3a2b1a"/>
+  <path d="M256 398 C256 322 256 282 256 232" stroke="#8AB87E" stroke-width="16" stroke-linecap="round" fill="none"/>
+  <path d="M256 302 C200 302 168 270 160 224 C214 224 252 252 256 302 Z" fill="#8AB87E"/>
+  <path d="M256 282 C312 282 350 244 358 194 C300 196 262 230 256 282 Z" fill="#B8D5B1"/>
+  <circle cx="256" cy="218" r="14" fill="#EDD49A"/>
+</svg>
