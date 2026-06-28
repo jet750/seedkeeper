@@ -420,7 +420,11 @@ export default class Skeleton extends Phaser.Physics.Arcade.Sprite {
 
   // --- Combat ---------------------------------------------------------------
 
-  takeDamage(amount, sourcePosition) {
+  // opts.noKnockback (Sprint magic-4): a knockback-FREE damage path for ground/DoT
+  // sources (Thornfield, any future damaging field), so a per-tick field doesn't shove
+  // enemies out of itself after one tick. Damage/hit-flash/interrupt/float number are
+  // unchanged — only the shove is skipped.
+  takeDamage(amount, sourcePosition, opts = {}) {
     if (this.isDead) return;
     // Getting hit mid-wind-up interrupts the overhead (no effect on RECOVER).
     this.interruptAttack();
@@ -432,10 +436,13 @@ export default class Skeleton extends Phaser.Physics.Arcade.Sprite {
       if (!this.isDead) this.restoreBaseTint();
     });
 
-    // Knockback away from the hit source.
-    const angle = Phaser.Math.Angle.Between(sourcePosition.x, sourcePosition.y, this.x, this.y);
-    this.setVelocity(Math.cos(angle) * KNOCKBACK_VELOCITY, Math.sin(angle) * KNOCKBACK_VELOCITY);
-    this._knockbackUntil = this.scene.time.now + KNOCKBACK_MS;
+    // Knockback away from the hit source — skipped for ground/DoT sources so a field
+    // doesn't punt enemies out of itself each tick (opts.noKnockback).
+    if (!opts.noKnockback) {
+      const angle = Phaser.Math.Angle.Between(sourcePosition.x, sourcePosition.y, this.x, this.y);
+      this.setVelocity(Math.cos(angle) * KNOCKBACK_VELOCITY, Math.sin(angle) * KNOCKBACK_VELOCITY);
+      this._knockbackUntil = this.scene.time.now + KNOCKBACK_MS;
+    }
 
     // Float-up damage number.
     EventBus.emit('ui:floatText', {

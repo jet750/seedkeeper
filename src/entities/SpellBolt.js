@@ -77,7 +77,11 @@ export default class SpellBolt extends Phaser.Physics.Arcade.Sprite {
     return e;
   }
 
-  // opts: { x, y, angle, target, speed, range, damage, aoeRadius, aoeDamage, tier }
+  // opts: { x, y, angle, target, speed, range, damage, aoeRadius, aoeDamage, tier,
+  //         tint?, scaleMult? }
+  // tint/scaleMult (Sprint magic-4) are an OPTIONAL appearance override: the Sprout
+  // Sentinel's turret reuses this pooled bolt but recolours it GREEN and shrinks it so
+  // its shot reads as a "green mini fireball", not an Ember cast.
   fire(opts) {
     this.damage = opts.damage || 0;
     this.aoeRadius = opts.aoeRadius || 0;
@@ -90,10 +94,25 @@ export default class SpellBolt extends Phaser.Physics.Arcade.Sprite {
     this.tier = Math.max(1, Math.min(TIER_FX.length, opts.tier || 1));
 
     this.applyTierVisuals(this.tier, opts.x, opts.y);
+    this.applyOverride(opts.tint, opts.scaleMult); // green mini-bolt override, or a no-op
 
     this.setPosition(opts.x, opts.y).setActive(true).setVisible(true).setRotation(opts.angle);
     this.body.enable = true;
     this.setVelocity(Math.cos(opts.angle) * opts.speed, Math.sin(opts.angle) * opts.speed);
+  }
+
+  // Optional recolour/resize applied AFTER applyTierVisuals so it overrides the tier
+  // palette + scale. Tints the kite AND its trails (the spark/streak are neutral white,
+  // so the tint lands cleanly) and multiplies the tier scale. Cleared on a plain Ember
+  // reuse from the pool (no tint passed → the kite shows its native tier colours again).
+  applyOverride(tint, scaleMult) {
+    if (tint != null) {
+      this.setTint(tint);
+      for (const e of this._emitters) e.setParticleTint(tint);
+    } else {
+      this.clearTint();
+    }
+    if (scaleMult) this.setScale(this.scaleX * scaleMult);
   }
 
   // Swap the kite texture/scale for the tier and (re)start the tier-tinted trails. The

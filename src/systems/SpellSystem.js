@@ -8,6 +8,8 @@
 
 import Phaser from 'phaser';
 import SpellBolt from '../entities/SpellBolt.js';
+import SproutSentinel from '../entities/SproutSentinel.js';
+import { SENTINEL_MAX_ACTIVE } from '../core/Constants.js';
 import { getSpellBehavior } from './spells/registry.js';
 
 const BOLT_POOL_SIZE = 10;
@@ -44,6 +46,9 @@ export default class SpellSystem {
     // `barrierGroup` holds the static colliders for Thornfield's max-tier barrier;
     // one collider per enemy group blocks every barrier in the group.
     this.fields = [];
+    // Persistent auto-turrets (Sprint magic-4). Capped at SENTINEL_MAX_ACTIVE; ticked
+    // each frame by update() → _tickSentinels (lifetime despawn + fire interval).
+    this.sentinels = [];
     this.slowDecals = new Map();
     this._chilled = new Set();
     this.barrierGroup = scene.physics.add.staticGroup();
@@ -157,6 +162,29 @@ export default class SpellSystem {
     const now = this.scene.time.now;
     this._tickFields(now, dtMs);
     this._applySlows(now);
+    this._tickSentinels(now);
+  }
+
+  // --- Sprout Sentinel (persistent auto-turret, Sprint magic-4) --------------
+
+  // Plant a Sprout Sentinel turret. Capped at SENTINEL_MAX_ACTIVE: a recast REPLACES the
+  // oldest standing turret (despawn it, then plant a fresh one at the new spot) so the
+  // player can reposition without waiting out the lifetime. SEAM: to BLOCK a recast while
+  // one lives instead, early-return `null` when sentinels.length >= SENTINEL_MAX_ACTIVE.
+  spawnSentinel(opts) {
+    while (this.sentinels.length >= SENTINEL_MAX_ACTIVE) {
+      this.sentinels.shift().despawn();
+    }
+    const s = new SproutSentinel(this.scene, opts);
+    this.sentinels.push(s);
+    return s;
+  }
+
+  // Tick every turret; drop (and let it tear down) any that has expired this frame.
+  _tickSentinels(now) {
+    for (let i = this.sentinels.length - 1; i >= 0; i--) {
+      if (!this.sentinels[i].update(now, this)) this.sentinels.splice(i, 1);
+    }
   }
 
   // --- Targeting helpers (shared) -------------------------------------------
@@ -183,8 +211,10 @@ export default class SpellSystem {
   }
 
   // Damage every live enemy within `radius` of (x,y). Returns the count hit. Reused
-  // by Frost's nova and the ground-field DoT tick. Source = (x,y) for knockback dir.
-  damageEnemiesInRadius(x, y, radius, damage) {
+  // by Frost's nova (a burst — knockback intended) and the ground-field DoT tick
+  // (opts.noKnockback so the field doesn't shove enemies out of itself each tick —
+  // Sprint magic-4). Source = (x,y) for knockback dir; opts forwards to takeDamage.
+  damageEnemiesInRadius(x, y, radius, damage, opts) {
     if (radius <= 0 || damage <= 0) return 0;
     const r2 = radius * radius;
     let hit = 0;
@@ -193,7 +223,7 @@ export default class SpellSystem {
       const dx = e.x - x;
       const dy = e.y - y;
       if (dx * dx + dy * dy <= r2) {
-        e.takeDamage(damage, { x, y });
+        e.takeDamage(damage, { x, y }, opts);
         hit++;
       }
     }
@@ -407,7 +437,10 @@ export default class SpellSystem {
         f._tickAccum += dtMs;
         while (f._tickAccum >= f.tickMs) {
           f._tickAccum -= f.tickMs;
-          this.damageEnemiesInRadius(f.x, f.y, f.radius, f.dmgPerTick);
+          // Knockback-free: a ground field is "deny this ground", so its DoT must NOT
+          // shove enemies out of itself after one tick — they sit in it taking the
+          // sustained damage/slow (Sprint magic-4 — Thornfield knockback fix).
+          this.damageEnemiesInRadius(f.x, f.y, f.radius, f.dmgPerTick, { noKnockback: true });
         }
       }
     }

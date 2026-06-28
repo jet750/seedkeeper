@@ -66,7 +66,7 @@
       { "id": "frost", "name": "Frost", "flavor": "A breath of grave-cold that roots the corrupted where they stand.", "unlock": 55, "upgrades": [45, 75, 110], "manaCost": 14, "tierNotes": ["slow + root one", "nova freeze", "lingering ice field", "+field radius"] },
       { "id": "thornfield", "name": "Thornfield", "flavor": "A snarl of living bramble that denies the ground it claims.", "unlock": 85, "upgrades": [60, 95, 140], "manaCost": 22, "tierNotes": ["vine patch", "+size", "+thorn DoT", "dense barrier"] },
       { "id": "bulwark", "name": "Bulwark", "flavor": "A ward of living hedge raised to take the blow meant for you.", "unlock": 125, "upgrades": [80, 120, 170], "manaCost": 28, "tierNotes": ["reactive block", "longer block", "invuln dome", "+dome duration"] },
-      { "id": "sprout_sentinel", "name": "Sprout Sentinel", "flavor": "Summon a guardian sprout from the soil to stand the watch.", "unlock": 180, "upgrades": [110, 160, 220], "manaCost": 35 }
+      { "id": "sprout_sentinel", "name": "Sprout Sentinel", "flavor": "Summon a guardian sprout from the soil to stand the watch.", "unlock": 180, "upgrades": [110, 160, 220], "manaCost": 35, "tierNotes": ["base turret", "+damage/fire rate", "+lifetime", "+all"] }
     ]
   }
 }

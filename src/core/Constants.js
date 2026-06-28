@@ -298,6 +298,56 @@ export const BULWARK_TIERS = [
   { mode: 'dome',     durationMs: 4500, domeRadius: 74 }             // L4 — +dome duration
 ];
 
+// ════════════════════════════════════════════════════════════════════════════
+// Sprint magic-4 — Sprout Sentinel (the SIXTH spell): a persistent, stationary
+// auto-turret summoned from the soil. Unlike the other five (instant-effect casts),
+// casting the Sentinel PLANTS an entity that lives for a lifetime, auto-targets the
+// nearest enemy in range, and fires a green mini-bolt on a fire interval — then
+// despawns. Capped at ONE active (a recast REPLACES the standing one). v1 is a BASE
+// RANGED turret with LINEAR L1→L4 tiers (the persistent-entity is the new hard part;
+// melee/mage branches are a deliberate follow-up behind the entity's `mode` seam,
+// default 'ranged'). EVERY number here is FIRST-PASS, EXPLICITLY UNBALANCED. // TUNE
+// ════════════════════════════════════════════════════════════════════════════
+
+// Body sprite: a RETIRED crop sheet rendered at its grown column so the turret reads as
+// a planted stalk (corn = tall, tower-shaped). The texture is ALREADY registered through
+// the manifest → imageImports.js path, so it emits in the prod build (the raw glob would
+// drop it — see MEMORY vite-glob-asset-emission); the body is a // TUNE swap. SproutSentinel
+// guards with textures.exists() + a procedural fallback so it never renders as nothing.
+export const SENTINEL_BODY_TEXTURE = 'corn'; // manifest spritesheet key (registered + prod-verified) // TUNE
+export const SENTINEL_BODY_FRAME = 5; // grown column (matches GardenBed PLANT_READY_FRAME) // TUNE
+export const SENTINEL_BODY_SCALE = 2.2; // draw scale — taller than a bed crop so it reads as a turret // TUNE
+export const SENTINEL_BODY_DEPTH = 8; // sits in the world like a slime (player=10, bolts=10 render over it)
+
+// Placement: auto-plant just AHEAD of the player along the aim angle (NO tap-to-place on
+// mobile). 0 = plant on the player.
+export const SENTINEL_AHEAD_DIST = 30; // px ahead of the player to plant // TUNE
+
+// Cap: only this many Sentinels may stand at once; a recast REPLACES the oldest (despawn
+// + re-plant at the new spot). Seam: see SpellSystem.spawnSentinel to BLOCK instead.
+export const SENTINEL_MAX_ACTIVE = 1;
+
+// Mini-bolt look: the turret reuses the pooled Ember SpellBolt, tinted GREEN and scaled
+// DOWN so its shot reads as a "green mini fireball", NOT an Ember cast. Trails are neutral
+// white so the green tint lands cleanly on them.
+export const SENTINEL_BOLT_TINT = 0x8ae66b; // vivid leaf green // TUNE
+export const SENTINEL_BOLT_SCALE = 0.6; // × the tier-1 kite scale — a small bolt // TUNE
+export const SENTINEL_BOLT_SPEED = 360; // px/sec // TUNE
+
+// Per-level tier table (index = level-1; L1 = unlock, +1 per Mage Mart upgrade). LINEAR
+// ramp on ALL FOUR stats — a simple monotone ladder (NOT the branch system). spellPower
+// (blue_flower) scales damage + range per-cast (mirrors the other spells). // TUNE (all)
+//   damage     = per-bolt hit damage
+//   fireMs     = ms between shots (LOWER = faster fire rate)
+//   lifetimeMs = how long the turret stands before despawning
+//   range      = px the turret can acquire AND reach a target
+export const SENTINEL_TIERS = [
+  { damage: 5,  fireMs: 1100, lifetimeMs: 8000,  range: 220 }, // L1 — base turret
+  { damage: 8,  fireMs: 900,  lifetimeMs: 10000, range: 260 }, // L2 — +damage, +fire rate
+  { damage: 11, fireMs: 720,  lifetimeMs: 12000, range: 300 }, // L3 — +damage/rate, +lifetime
+  { damage: 15, fireMs: 560,  lifetimeMs: 15000, range: 360 }  // L4 — +all
+];
+
 // --- Corrupted souls currency (Sprint magic-1) ----------------------------
 // Souls = corrupted forest spirits, the third currency (alongside plants → stat
 // trees and coins → gear/capacity). They drop from slain enemies and are spent at
