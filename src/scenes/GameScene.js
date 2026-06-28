@@ -231,15 +231,22 @@ const BEDS_PER_ROW = 4;
 // Workshop chest — lower-right of the garden interior.
 const CHEST_X = 3340;
 const CHEST_Y = GARDEN_TOP + 660; // was 860
-// Market stall (Sprint 3) — opens the marketplace on F-interact. Single config
-// point: move this when the world layout changes; nothing else hardcodes its tile.
-const MARKET_X = 3340;
-// In-line with the workshop row. The workshop snaps to the authored `work_station`
-// marker (y=3304 in world_v1), so the stall matches that y (GARDEN_TOP+504 == 3304)
-// rather than the legacy CHEST_Y constant — both pass through gardenScaled(), so equal
-// authored y == equal rendered row. MARKET_X stays left of the workshop's marker x
-// (3464) so the two read as one aligned row instead of overlapping. (was +420, +620)
-const MARKET_Y = GARDEN_TOP + 504;
+// Shop building row (Sprint magic-1 → shop-row fix). The three new shops line up as
+// ONE horizontal row along the SOUTHERN part of the compound — Farmstand · Blacksmith ·
+// Mage Mart, west→east — evenly spaced so neither the buildings nor their [E] interact
+// labels overlap (the prior layout stacked all three ±130 authored px apart, ~78px
+// rendered, on top of each other AND beside the Workshop). Authored coords pass through
+// gardenScaled() like every other prop, so these are PRE-scale values:
+//   • SHOP_ROW_Y (3650) renders ~y3470 — ~130px inside the south fence (3600), a clear
+//     walkable margin, and well south of the Workshop row (~y3262) so it's untouched.
+//   • SHOP_ROW_CENTER_X is shifted EAST of garden centre so the south gate gap (centred
+//     on x=3200) falls in the Farmstand↔Blacksmith GAP, never behind a building.
+//   • SHOP_ROW_GAP renders ~180px between neighbours — labels (~110px) stay clear.
+// Mage Mart stays beside the Blacksmith (the gear/magic pair); Farmstand on the far end.
+// // TUNE — nudge the row without touching any shop logic.
+const SHOP_ROW_Y = GARDEN_TOP + 850; // 3650 authored → ~y3470 rendered (south band)
+const SHOP_ROW_CENTER_X = GARDEN_CENTER_X + 120; // 3320 — east of the south gate column
+const SHOP_ROW_GAP = 300; // authored spacing between adjacent shops (~180px rendered)
 // obj_chest.png is a 48x48 sheet: row 0 is a closed→open progression.
 const CHEST_CLOSED_FRAME = 0;
 const CHEST_OPEN_FRAME = 4;
@@ -2340,14 +2347,15 @@ export default class GameScene extends Phaser.Scene {
     this.addStructureLabel(bookPos.x, bookPos.y, bookPos.x, bookPos.y - 34, 'FIELD NOTES  [F]', '#ABC4DE');
 
     // Three shop buildings (Sprint magic-1) — the old single Market stall split into
-    // the BLACKSMITH (coins → gear/capacity), the FARMSTAND (coins ↔ plants) and the
-    // MAGE MART (souls → spell purification). Placeholder toned stalls until real shop
-    // art lands. The Mage Mart sits beside the Blacksmith (intended fuller homestead
-    // hub); all three stay clear of the bed grid + well and open via the [F] prompt.
-    // The Blacksmith inherits the old market's MARKET_X/MARKET_Y anchor.
-    this.blacksmith = this.makeShopBuilding(MARKET_X, MARKET_Y, 0x6b6b73, 0x3a3a40, 0x8a8a92, 'BLACKSMITH  [F]', '#E5B69A');
-    this.mageMart = this.makeShopBuilding(MARKET_X + 130, MARKET_Y, 0x6b3fa0, 0x3a2a4a, 0xc29be0, 'MAGE MART  [F]', '#C29BE0');
-    this.farmstand = this.makeShopBuilding(MARKET_X - 130, MARKET_Y + 36, 0x6a8a4a, 0x4a5a2a, 0xb8d5b1, 'FARMSTAND  [F]', '#B8D5B1');
+    // the FARMSTAND (coins ↔ plants), BLACKSMITH (coins → gear/capacity) and MAGE MART
+    // (souls → spell purification). Placeholder toned stalls until real shop art lands.
+    // Laid out as one evenly-spaced southern row (west→east) on the SHOP_ROW_* anchors
+    // so the buildings + their [E] labels never overlap; the south gate gap sits in the
+    // Farmstand↔Blacksmith gap; all three stay clear of the bed grid, well, Workshop and
+    // fence line. Mage Mart sits beside the Blacksmith. Open via the [F] prompt.
+    this.farmstand = this.makeShopBuilding(SHOP_ROW_CENTER_X - SHOP_ROW_GAP, SHOP_ROW_Y, 0x6a8a4a, 0x4a5a2a, 0xb8d5b1, 'FARMSTAND  [F]', '#B8D5B1');
+    this.blacksmith = this.makeShopBuilding(SHOP_ROW_CENTER_X, SHOP_ROW_Y, 0x6b6b73, 0x3a3a40, 0x8a8a92, 'BLACKSMITH  [F]', '#E5B69A');
+    this.mageMart = this.makeShopBuilding(SHOP_ROW_CENTER_X + SHOP_ROW_GAP, SHOP_ROW_Y, 0x6b3fa0, 0x3a2a4a, 0xc29be0, 'MAGE MART  [F]', '#C29BE0');
 
     // Solid garden props get a small static collider so the player routes around
     // them (Sprint 10c). Interaction stays distance-based, so this never blocks
