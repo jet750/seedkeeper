@@ -53,9 +53,20 @@
     }
   },
   "sellPrices": {
-    "_comment": "Plant sell value (coins) keyed by growthDays. Used by the marketplace in Sprint 3.",
+    "_comment": "Plant sell value (coins) keyed by growthDays. Used by the Blacksmith→Farmstand split (Sprint magic-1). Farmstand BUY price = sell × FARMSTAND_MARKUP (Constants.js).",
     "1": 3,
     "2": 7,
     "3": 12
+  },
+  "spells": {
+    "_comment": "Spell catalog — souls UNLOCK + UPGRADE these at the Mage Mart (purification). Listed cheapest→most-expensive unlock (Ember cheapest, Sprout Sentinel most expensive); any-order, price-bounded. `unlock`/`upgrades` are in SOULS; `manaCost` is the per-cast MANA. Sprint magic-2: unlock = LEVEL 1 (immediately castable); each `upgrades` entry buys the next level (L2..L4) — so a spell's max level = 1 + upgrades.length. Ember is the reusable template; Arc/Frost/Thornfield/Bulwark (magic-3) are implemented against the same seam; only Sprout Sentinel remains inert-but-owned until its cast lands. Order in this list = secondary-slot order (slot 2 = first entry … slot 7 = last). All numbers TUNE.",
+    "list": [
+      { "id": "ember", "name": "Ember", "flavor": "A spark of cleansed flame. The first ember of the purified grove.", "unlock": 15, "upgrades": [20, 35, 55], "manaCost": 22, "tierNotes": ["base bolt", "+damage", "impact AoE", "wide AoE"] },
+      { "id": "arc", "name": "Arc", "flavor": "A leashed bolt of cleansing lightning that leaps from foe to foe.", "unlock": 30, "upgrades": [30, 50, 80], "manaCost": 16, "tierNotes": ["strike + chain to 2", "+1 jump", "+chain range", "+per-jump damage"] },
+      { "id": "frost", "name": "Frost", "flavor": "A breath of grave-cold that roots the corrupted where they stand.", "unlock": 55, "upgrades": [45, 75, 110], "manaCost": 14, "tierNotes": ["slow + root one", "nova freeze", "lingering ice field", "+field radius"] },
+      { "id": "thornfield", "name": "Thornfield", "flavor": "A snarl of living bramble that denies the ground it claims.", "unlock": 85, "upgrades": [60, 95, 140], "manaCost": 22, "tierNotes": ["vine patch", "+size", "+thorn DoT", "dense barrier"] },
+      { "id": "bulwark", "name": "Bulwark", "flavor": "A ward of living hedge raised to take the blow meant for you.", "unlock": 125, "upgrades": [80, 120, 170], "manaCost": 28, "tierNotes": ["reactive block", "longer block", "invuln dome", "+dome duration"] },
+      { "id": "sprout_sentinel", "name": "Sprout Sentinel", "flavor": "Summon a guardian sprout from the soil to stand the watch.", "unlock": 180, "upgrades": [110, 160, 220], "manaCost": 35, "tierNotes": ["base turret", "+damage/fire rate", "+lifetime", "+all"] }
+    ]
   }
 }

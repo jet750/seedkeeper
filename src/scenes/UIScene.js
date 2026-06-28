@@ -112,6 +112,13 @@ export default class UIScene extends Phaser.Scene {
     this._radialSlots = [];
     this._radialCenter = { x: 0, y: 0 };
     this._radialSel = 1;
+    // Which secondary slots are SELECTABLE (Sprint magic-1). Slot 1 (ranged) always;
+    // a spell slot joins once purified at the Mage Mart ('secondary:unlocks'). Drives
+    // the lock badge / dim in both the desktop strip and the mobile radial.
+    this._unlockedSlots = new Set([1]);
+    // Per-slot metadata (Sprint magic-2): { slot → { cost, unlocked, name } } for the
+    // mana-cost + lock labels on the strip + radial ('secondary:meta').
+    this._slotMeta = {};
   }
 
   create() {
@@ -317,6 +324,18 @@ export default class UIScene extends Phaser.Scene {
       })
       .setOrigin(0, 0.5);
 
+    // Corrupted-souls counter (Sprint magic-1) — the third currency. Sits directly
+    // under the coin readout in the same left-of-centre cluster, tinted the corrupted-
+    // spirit purple the Mage Mart uses. Always visible; updated via 'souls:changed'.
+    this.soulsText = this.add
+      .text(300, 64, '👻 0', {
+        fontFamily: '"SproutLands", "Courier New", monospace',
+        fontSize: '22px',
+        fontStyle: 'bold',
+        color: '#C29BE0'
+      })
+      .setOrigin(0, 0.5);
+
     // TOP CENTER (under zone badge) — New Game+ indicator, shown only on NG+.
     this.ngPlusIndicator = this.add
       .text(VIRTUAL_WIDTH / 2, 96, '⭐ NG+', {
@@ -416,9 +435,10 @@ export default class UIScene extends Phaser.Scene {
 
   // --- Secondary-slot strip (Sprint control-scheme-combat-input) ------------
   // A compact row of SECONDARY_SLOT_COUNT mini-slots, bottom-right. Slot 1 = ranged
-  // (functional); slots 2-5 are spell SELECTORS (locked/inert — dimmed ✦ until the
-  // spell sprint). The active slot gets a gold border. Selection is driven over
-  // EventBus ('secondary:changed'); layoutHUD seats the row per viewport.
+  // (functional); slots 2-7 are spell SELECTORS — dimmed + 🔒 until that spell is
+  // purified at the Mage Mart (Sprint magic-1), then they brighten + show their index.
+  // The active slot gets a gold border. Driven over EventBus ('secondary:changed' /
+  // 'secondary:unlocks'); layoutHUD seats the row per viewport.
   buildSecondaryStrip() {
     this._secSize = 30;
     this._secGap = 6;
@@ -436,19 +456,93 @@ export default class UIScene extends Phaser.Scene {
         })
         .setOrigin(0.5)
         .setDepth(6);
-      // Slots 2-5 are locked spell selectors for now — dim them.
-      if (i > 0) glyph.setAlpha(0.35);
+      // A locked (un-purified) spell slot is dimmed; slot 1 + any purified spell are
+      // full-bright (Sprint magic-1). The corner badge shows 🔒 when locked, else index.
+      const unlocked = this._unlockedSlots.has(i + 1);
+      if (!unlocked) glyph.setAlpha(0.35);
       const num = this.add
-        .text(0, 0, `${i + 1}`, {
+        .text(0, 0, unlocked ? `${i + 1}` : '🔒', {
           fontFamily: '"SproutLands", "Courier New", monospace',
           fontSize: '10px',
           color: '#9B9389'
         })
         .setOrigin(1, 1)
         .setDepth(6);
-      this.secondarySlots.push({ box, glyph, num });
+      // Mana-cost label under each spell slot (Sprint magic-2). Empty for ranged + any
+      // slot we have no meta for yet; filled by refreshSlotMeta. Mana-blue to read as
+      // "this costs mana", distinct from the gold slot index.
+      const meta = this._slotMeta[i + 1];
+      const cost = this.add
+        .text(0, 0, meta && meta.cost != null ? `${meta.cost}` : '', {
+          fontFamily: '"SproutLands", "Courier New", monospace',
+          fontSize: '10px',
+          color: '#7FB0E0'
+        })
+        .setOrigin(0.5, 0)
+        .setDepth(6);
+      this.secondarySlots.push({ box, glyph, num, cost });
     }
     this.refreshSecondary(this._secActive);
+  }
+
+  // Spell purification changed which slots are selectable (Sprint magic-1). Store the
+  // set and rebuild the desktop strip so newly-purified slots brighten. Mobile has no
+  // strip — the radial reads _unlockedSlots fresh each time it opens.
+  refreshUnlocks(slots) {
+    this._unlockedSlots = new Set([1, ...(slots || [])]);
+    if (this.secondarySlots && this.secondarySlots.length) {
+      this.secondarySlots.forEach((s) => { s.box.destroy(); s.glyph.destroy(); s.num.destroy(); s.cost.destroy(); });
+      this.buildSecondaryStrip();
+      this.layoutAll(this.scale.width, this.scale.height);
+    }
+  }
+
+  // Per-slot mana cost + lock state changed (Sprint magic-2, 'secondary:meta'). Store it
+  // and rebuild the strip so each spell slot shows its cost. Mobile radial reads it live.
+  refreshSlotMeta(meta) {
+    this._slotMeta = {};
+    (meta || []).forEach((m) => { this._slotMeta[m.slot] = m; });
+    if (this.secondarySlots && this.secondarySlots.length) {
+      this.secondarySlots.forEach((s) => { s.box.destroy(); s.glyph.destroy(); s.num.destroy(); s.cost.destroy(); });
+      this.buildSecondaryStrip();
+      this.layoutAll(this.scale.width, this.scale.height);
+    }
+  }
+
+  // Insufficient-mana denial cue (Sprint magic-2): a brief red pulse on the mana bar +
+  // the active spell slot, so a blocked cast reads as "no mana", never a dropped input.
+  flashSpellDenied() {
+    if (this.manaFill && this.manaBorder && this.manaBorder.visible) {
+      this.manaBorder.setStrokeStyle(2, 0xff5a5a);
+      this.tweens.add({
+        targets: this.manaFill,
+        alpha: { from: 1, to: 0.35 },
+        yoyo: true,
+        duration: 90,
+        repeat: 1,
+        onComplete: () => {
+          this.manaFill.setAlpha(1);
+          this.manaBorder.setStrokeStyle(2, 0x9ab4dc);
+        }
+      });
+    }
+    if (this.secondarySlots && this.secondarySlots.length) {
+      const s = this.secondarySlots[this._secActive - 1];
+      if (s && s.box) {
+        s.box.setFillStyle(0x6a2a2a, 0.95);
+        this.tweens.add({
+          targets: s.box,
+          alpha: { from: 1, to: 0.45 },
+          yoyo: true,
+          duration: 90,
+          repeat: 1,
+          onComplete: () => {
+            s.box.setFillStyle(0x2d2926, 0.92);
+            s.box.setAlpha(1);
+          }
+        });
+      }
+    }
   }
 
   // Highlight the active secondary slot; called on 'secondary:changed' and on build.
@@ -459,7 +553,7 @@ export default class UIScene extends Phaser.Scene {
     if (!this.secondarySlots || !this.secondarySlots.length) return; // mobile: strip removed
     if (total && total !== this.secondarySlots.length) {
       // Slot count changed (e.g. SECONDARY_SLOT_COUNT retune) — rebuild to match.
-      this.secondarySlots.forEach((s) => { s.box.destroy(); s.glyph.destroy(); s.num.destroy(); });
+      this.secondarySlots.forEach((s) => { s.box.destroy(); s.glyph.destroy(); s.num.destroy(); s.cost.destroy(); });
       this.buildSecondaryStrip();
       this.layoutAll(this.scale.width, this.scale.height);
       return;
@@ -672,8 +766,9 @@ export default class UIScene extends Phaser.Scene {
     this.subscribe('player:waterChanged', (d) => this.refreshWater(d.charges, d.capacity));
     // TODO: surface bank on a garden sign/chest — the BANK readout was removed from
     // active play (Sprint mobile-playability-2); it only matters once the
-    // sortie/extraction economy exists. MarketplaceScene still listens to bank:updated.
+    // sortie/extraction economy exists. The shops still listen to bank:updated.
     this.subscribe('coins:changed', (d) => this.refreshCoins(d.coins));
+    this.subscribe('souls:changed', (d) => this.refreshSouls(d.souls));
 
     // --- Sprint 4 ---
     this.subscribe('player:statsChanged', (d) => {
@@ -714,6 +809,12 @@ export default class UIScene extends Phaser.Scene {
 
     // --- Sprint control-scheme-combat-input — secondary slots + mana scaffold + radial ---
     this.subscribe('secondary:changed', (d) => this.refreshSecondary(d.slot, d.total));
+    // Spell purification (Sprint magic-1): which secondary slots are now selectable.
+    this.subscribe('secondary:unlocks', (d) => this.refreshUnlocks(d.slots));
+    // Per-slot mana cost + lock labels (Sprint magic-2).
+    this.subscribe('secondary:meta', (d) => this.refreshSlotMeta(d.meta));
+    // Insufficient-mana denial — grey the active slot + a soft cue, NOT a dropped input.
+    this.subscribe('spell:denied', () => this.flashSpellDenied());
     // Mana scaffold: dormant until the first spell unlock (no spells yet → unused).
     this.subscribe('mana:unlocked', (d) => this.unlockMana(d));
     this.subscribe('mana:changed', (d) => this.refreshMana(d.mana, d.max));
@@ -1311,11 +1412,12 @@ export default class UIScene extends Phaser.Scene {
       const ang = -Math.PI / 2 + (i / total) * Math.PI * 2; // start at top, clockwise
       const ox = ccx + Math.cos(ang) * R;
       const oy = ccy + Math.sin(ang) * R;
-      // Slots 2-5 are spell selectors — inert until the spell sprint. Render them dimmed
-      // with a lock badge (instead of the mobile-irrelevant number) so demo players don't
-      // tap one expecting an effect. They're still selectable (loading one makes the fire
-      // input a deliberate no-op, per the core invariant).
-      const locked = i > 0;
+      // A spell slot is LOCKED until purified at the Mage Mart (Sprint magic-1): render
+      // it dimmed with a 🔒 badge. Releasing on a locked sector still emits the select,
+      // but Player.selectSecondary rejects an un-purified slot, so it stays on the
+      // current pick. Once purified the slot brightens and becomes selectable (still
+      // inert to FIRE — no spell effects yet). Slot 1 (ranged) is always unlocked.
+      const locked = !this._unlockedSlots.has(i + 1);
       const box = this.add
         .circle(ox, oy, 28, 0x2d2926, locked ? 0.6 : 0.96)
         .setStrokeStyle(2, 0x57514b)
@@ -1337,8 +1439,23 @@ export default class UIScene extends Phaser.Scene {
         })
         .setOrigin(0.5)
         .setDepth(352);
+      // Mana-cost label above each unlocked spell node (Sprint magic-2).
+      const meta = this._slotMeta[i + 1];
+      let costText = null;
+      if (!locked && meta && meta.cost != null) {
+        costText = this.add
+          .text(ox, oy - 22, `${meta.cost}`, {
+            fontFamily: '"SproutLands", "Courier New", monospace',
+            fontSize: '12px',
+            fontStyle: 'bold',
+            color: '#7FB0E0'
+          })
+          .setOrigin(0.5)
+          .setDepth(352);
+      }
       this._radialNodes.push({ box, glyph, ang, locked });
       this._radialObjects.push(box, glyph, num);
+      if (costText) this._radialObjects.push(costText);
     }
     this.highlightRadial();
   }
@@ -1423,6 +1540,7 @@ export default class UIScene extends Phaser.Scene {
     if (this.manaBorder) this.manaBorder.setPosition(pad + sl, 80 + st);
     if (this.waterIndicator) this.waterIndicator.setPosition(pad + sl, (this._manaUnlocked ? 100 : 92) + st);
     if (this.coinText) this.coinText.setPosition(300 + sl, 40 + st);
+    if (this.soulsText) this.soulsText.setPosition(300 + sl, 64 + st);
 
     // TOP CENTER — day + zone + weather + NG+ (drop below the top inset).
     if (this.dayText) this.dayText.setPosition(width / 2, 30 + st);
@@ -1496,6 +1614,7 @@ export default class UIScene extends Phaser.Scene {
         s.box.setPosition(cx, secY);
         s.glyph.setPosition(cx, secY);
         s.num.setPosition(cx + size / 2 - 3, secY + size / 2 - 2);
+        if (s.cost) s.cost.setPosition(cx, secY + size / 2 + 1);
       });
     }
   }
@@ -1555,6 +1674,10 @@ export default class UIScene extends Phaser.Scene {
 
   refreshCoins(coins) {
     this.coinText.setText(`🪙 ${coins || 0}`);
+  }
+
+  refreshSouls(souls) {
+    if (this.soulsText) this.soulsText.setText(`👻 ${souls || 0}`);
   }
 
   // --- Refreshers -----------------------------------------------------------

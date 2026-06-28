@@ -13,7 +13,10 @@
 // version bump WIPES old slots to a fresh default (no shim). v5 (Sprint control-scheme-
 // combat-input): added `autoTargetDesktop` (desktop auto-target preference). Saves are
 // disposable in this pre-launch showcase, so v4 slots wipe to a fresh v5 default.
-const SAVE_VERSION = 5;
+// v6 (Sprint magic-1): added the corrupted-souls currency (`souls`) + spell
+// purification state (`spellUnlocks`, `spellUpgrades`). v5 slots wipe to a fresh v6
+// default (the existing "save reset" notice fires).
+const SAVE_VERSION = 6;
 const SAVE_KEY_PREFIX = 'seedkeeper_save_';
 const SETTINGS_KEY = 'seedkeeper_settings'; // global audio settings (Sprint 12)
 
@@ -52,6 +55,12 @@ const SaveSystem = {
       bank: freshBank(),
       // Banked coins (v2). All mutations route through GameScene.addCoins/spendCoins.
       coins: 0,
+      // Corrupted souls (v6) — third currency; banked on enemy death, spent at the
+      // Mage Mart. spellUnlocks: { id: true } per purified spell; spellUpgrades:
+      // { id: tierIndex } (both keyed by economy.json spells.list id). Empty = none.
+      souls: 0,
+      spellUnlocks: {},
+      spellUpgrades: {},
       upgrades: freshUpgrades(),
       // Coin-funded gear. Start with NO weapon (base unarmed attack). wateringCan
       // is the default basic can (cans are no longer purchasable in v2).

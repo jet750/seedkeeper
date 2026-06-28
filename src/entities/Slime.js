@@ -522,7 +522,12 @@ export default class Slime extends Phaser.Physics.Arcade.Sprite {
 
   // --- Combat (Sprint 3) ----------------------------------------------------
 
-  takeDamage(amount, sourcePosition) {
+  // opts.noKnockback (Sprint magic-4): a knockback-FREE damage path for ground/DoT
+  // sources (Thornfield, any future damaging field). Without it the per-tick DoT
+  // shoved enemies straight out of the field after one tick, undercutting "deny this
+  // ground"; with it they sit in the zone taking sustained damage/slow. Damage, hit-
+  // flash, interrupt and the float number are unchanged — only the shove is skipped.
+  takeDamage(amount, sourcePosition, opts = {}) {
     if (this.isDead) return;
     // A committed lunge is protected (Sprint 14b): the hit still deals damage, but
     // it neither interrupts the wind-up nor knocks the slime off its leap — so the
@@ -542,8 +547,9 @@ export default class Slime extends Phaser.Physics.Arcade.Sprite {
     });
 
     // Knockback away from the hit source — skipped during a protected commit so the
-    // leap's locked-in velocity rides through.
-    if (!committed) {
+    // leap's locked-in velocity rides through, and skipped for ground/DoT sources
+    // (opts.noKnockback) so a field doesn't punt enemies out of itself each tick.
+    if (!committed && !opts.noKnockback) {
       const angle = Phaser.Math.Angle.Between(sourcePosition.x, sourcePosition.y, this.x, this.y);
       this.setVelocity(Math.cos(angle) * KNOCKBACK_VELOCITY, Math.sin(angle) * KNOCKBACK_VELOCITY);
       this._knockbackUntil = this.scene.time.now + KNOCKBACK_MS;
@@ -596,6 +602,7 @@ export default class Slime extends Phaser.Physics.Arcade.Sprite {
     EventBus.emit('enemy:died', {
       type: this.slimeType,
       position: { x: this.x, y: this.y },
+      level: this.level, // souls drop scales type × level (Sprint magic-1)
       light: this.isSplitChild // suppress the heavy dark-slime death flash for children
     });
     const idx = this.scene.enemies.indexOf(this);

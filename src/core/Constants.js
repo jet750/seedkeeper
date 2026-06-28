@@ -175,7 +175,11 @@ export const MAP_CHEAT_RESET_MS = 600;
 // SCOPE this sprint: slot 1 = ranged (fully functional, drives the existing ranged
 // system); slots 2..SECONDARY_SLOT_COUNT are inert spell SELECTORS (selecting changes
 // the active secondary but casts nothing yet). All values below are feel knobs.
-export const SECONDARY_SLOT_COUNT = 5; // slot 1 ranged + 4 spell selectors
+// Sprint magic-1: widened 5 → 7 (slot 1 ranged + 6 spell selectors) so all SIX Mage
+// Mart spells map 1:1 onto a secondary slot (slot 2 = cheapest spell … slot 7 = most
+// expensive). Slots 2-7 stay inert (no spell effects yet); a spell becomes SELECTABLE
+// only once purified (unlocked) at the Mage Mart — see Player.selectSecondary gating.
+export const SECONDARY_SLOT_COUNT = 7; // slot 1 ranged + 6 spell selectors
 
 // Auto-target facing-weighted cone (FULL width, degrees). A candidate enemy must lie
 // within ±(cone/2) of the player's facing to be acquired; wider = more forgiving aim.
@@ -196,12 +200,174 @@ export const AUTO_TARGET_DESKTOP_DEFAULT = false; // TUNE
 export const RADIAL_LONGPRESS_MS = 260; // TUNE
 export const RADIAL_TIMESCALE = 0.15; // ~15% speed while the radial is open // TUNE
 
-// Mana scaffold (DORMANT until the spell sprint). The bar renders ONLY after the first
-// spell unlock (none exist yet, so it stays hidden by default). Bar width matches the
-// HP bar; mounts directly beneath it.
+// Mana scaffold (LIVE from Sprint magic-2). The bar renders after the first spell is
+// purified (unlockMana); casting a spell spends mana; mana regenerates passively. Bar
+// width matches the HP bar; mounts directly beneath it.
 export const MANA_BAR_MAX_WIDTH = 240; // matches HP bar width
 export const MANA_BAR_HEIGHT = 12;
-export const MANA_DEFAULT_MAX = 100; // starting mana pool once unlocked // TUNE
+export const MANA_DEFAULT_MAX = 100; // base mana pool once unlocked // TUNE
+
+// --- Mana economy (Sprint magic-2) ----------------------------------------
+// Passive mana regen: a flat base rate, plus a contribution from the red_berry
+// healthRegen node (so the regen stat tree feeds BOTH HP and mana). Max mana gets a
+// small bump from the blue_flower spellPower node. spellPower (0..0.5 at max) also
+// scales spell power/radius (applied per-spell). All TUNE.
+export const MANA_REGEN_PER_SEC = 3; // flat mana/sec regenerated — lowered from 5 so sustained casting is a real drain (Ember rebalance) // TUNE
+export const MANA_REGEN_FROM_REGEN_NODE = 2.5; // × red_berry healthRegen (HP/s) → extra mana/s // TUNE
+export const MANA_PER_SPELLPOWER = 40; // × blue_flower spellPower → +max mana (≤ +20 at cap) // TUNE
+export const SPELL_CAST_COOLDOWN_MS = 320; // min interval between casts so mana isn't frame-drained // TUNE
+
+// --- Ember spell (Sprint magic-2) — the implemented template ---------------
+// A semi-homing single-target bolt with a procedural flame-teardrop silhouette + spark
+// trail (distinguishable by SHAPE + MOTION, not colour alone — so a future dark mirror
+// reads as the dark version of this). The upgrade ladder (level 1-4, where level 1 is
+// the unlock): L1 base bolt → L2 +damage → L3 small impact AoE → L4 wide AoE. blue_flower
+// spellPower scales damage + AoE radius. All numbers TUNE.
+export const EMBER_BOLT_SPEED = 430; // px/sec // TUNE
+export const EMBER_BOLT_RANGE = 380; // px before it fizzles // TUNE
+export const EMBER_HOMING_RAD_PER_S = 5.5; // semi-homing turn rate (stronger than the bow's 3.5) // TUNE
+// Per-level tier table (index = level-1). damage = direct-hit damage; aoeRadius = impact
+// blast radius (0 = single-target); aoeDamageMult = blast damage as a fraction of `damage`.
+// Damage curve shifted DOWN by 4 from the original 12/20/24/28 (Ember rebalance): the
+// L1→L4 progression (deltas +8/+4/+4) is preserved, but the whole curve drops so Ember is
+// "kill this one thing," not "delete the army" — melee/ranged stay relevant for trash. // TUNE
+export const EMBER_TIERS = [
+  { damage: 8,  aoeRadius: 0,   aoeDamageMult: 0 },    // L1 — base bolt (the unlock)
+  { damage: 16, aoeRadius: 0,   aoeDamageMult: 0 },    // L2 — +damage
+  { damage: 20, aoeRadius: 52,  aoeDamageMult: 0.6 },  // L3 — small impact AoE on hit
+  { damage: 24, aoeRadius: 112, aoeDamageMult: 0.7 }   // L4 — wide "diameter nuke" AoE
+];
+
+// ════════════════════════════════════════════════════════════════════════════
+// Sprint magic-3 — the four combat spells (Arc · Frost · Thornfield · Bulwark).
+// EVERY number below is a FIRST-PASS, EXPLICITLY UNBALANCED value (// TUNE). The
+// magic-3 sprint's job was to make each effect WORK and read distinctly tier-to-
+// tier, NOT to balance damage/radius/mana — do not treat these as tuned. Each
+// table is index = level-1 (L1 = unlock, +1 per Mage Mart upgrade). blue_flower
+// spellPower scales damage + radii per-spell (mirrors Ember).
+// ════════════════════════════════════════════════════════════════════════════
+
+// --- Arc (chain lightning) — "thin this pack" --------------------------------
+// Instant strike to the nearest enemy, then chains to the nearest un-hit enemy
+// within chainRange, with per-jump damage falloff. Ladder: L2 +jump, L3 +range,
+// L4 +per-jump damage (higher falloff = less lost per jump). chainCount = jumps
+// AFTER the first strike (so total targets = 1 + chainCount). // TUNE (all)
+export const ARC_TIERS = [
+  { damage: 10, chainCount: 2, chainRange: 170, falloff: 0.55 }, // L1 — strike + chain to 2
+  { damage: 10, chainCount: 3, chainRange: 170, falloff: 0.55 }, // L2 — +1 jump
+  { damage: 10, chainCount: 3, chainRange: 260, falloff: 0.55 }, // L3 — +chain range
+  { damage: 14, chainCount: 3, chainRange: 260, falloff: 0.85 }  // L4 — +per-jump damage
+];
+export const ARC_STRIKE_RANGE = 360; // px the initial auto-lock strike can reach // TUNE
+
+// --- Frost (slow / freeze / field) — "stop them so I can move" ---------------
+// L1 slow+root one target. L2 adds a self/target-centred freeze NOVA. L3 adds a
+// lingering ground-ice FIELD (persistent slow zone w/ floor decal). L4 +radius.
+// slowMult = velocity multiplier while chilled (lower = slower; ~0.3 reads as a
+// near-root). novaRadius 0 = single-target; fieldMs 0 = no lingering field. // TUNE
+export const FROST_TIERS = [
+  { damage: 6, slowMult: 0.30, slowMs: 1600, novaRadius: 0,   fieldRadius: 0,   fieldMs: 0    }, // L1 — slow+root one
+  { damage: 6, slowMult: 0.30, slowMs: 1600, novaRadius: 120, fieldRadius: 0,   fieldMs: 0    }, // L2 — nova freeze
+  { damage: 6, slowMult: 0.35, slowMs: 1600, novaRadius: 120, fieldRadius: 130, fieldMs: 4000 }, // L3 — lingering field
+  { damage: 6, slowMult: 0.35, slowMs: 1600, novaRadius: 140, fieldRadius: 190, fieldMs: 4500 }  // L4 — +field radius
+];
+
+// --- Thornfield (ground denial) — "deny this ground" -------------------------
+// A vine patch placed on the ground (at the locked target, else ahead of the
+// player). Slows + DoT-damages enemies pathing through; NEVER touches the player
+// (fields only iterate scene.enemies). Ladder: L2 +size, L3 +DoT (more/faster
+// ticks), L4 dense enough to BLOCK pathing (a static collider barrier). // TUNE
+export const THORNFIELD_TIERS = [
+  { fieldRadius: 90,  fieldMs: 5000, dmgPerTick: 3, tickMs: 700, slowMult: 0.55, blocks: false }, // L1 — vine patch
+  { fieldRadius: 130, fieldMs: 5000, dmgPerTick: 3, tickMs: 700, slowMult: 0.55, blocks: false }, // L2 — +size
+  { fieldRadius: 130, fieldMs: 6000, dmgPerTick: 6, tickMs: 480, slowMult: 0.50, blocks: false }, // L3 — +DoT
+  { fieldRadius: 150, fieldMs: 6000, dmgPerTick: 6, tickMs: 480, slowMult: 0.40, blocks: true  }  // L4 — dense barrier
+];
+export const THORNFIELD_AHEAD_DIST = 110; // px ahead of the player to plant when no target is locked // TUNE
+
+// --- Bulwark (self-cast block / dome) — "survive this burst" -----------------
+// L1/L2 are REACTIVE: a guard goes up for armMs during which the player CANNOT
+// attack; the first hit taken is negated and grants negateMs of full invuln, then
+// the guard ends. L3/L4 are a STATIC invulnerability DOME (cast-and-forget): full
+// invuln for durationMs, attacking locked the whole time. domeRadius drives the
+// pulsing-ring VFX size. // TUNE (all)
+export const BULWARK_TIERS = [
+  { mode: 'reactive', armMs: 1400, negateMs: 700,  domeRadius: 46 }, // L1 — reactive block
+  { mode: 'reactive', armMs: 1800, negateMs: 1100, domeRadius: 50 }, // L2 — longer block
+  { mode: 'dome',     durationMs: 3000, domeRadius: 62 },            // L3 — invuln dome
+  { mode: 'dome',     durationMs: 4500, domeRadius: 74 }             // L4 — +dome duration
+];
+
+// ════════════════════════════════════════════════════════════════════════════
+// Sprint magic-4 — Sprout Sentinel (the SIXTH spell): a persistent, stationary
+// auto-turret summoned from the soil. Unlike the other five (instant-effect casts),
+// casting the Sentinel PLANTS an entity that lives for a lifetime, auto-targets the
+// nearest enemy in range, and fires a green mini-bolt on a fire interval — then
+// despawns. Capped at ONE active (a recast REPLACES the standing one). v1 is a BASE
+// RANGED turret with LINEAR L1→L4 tiers (the persistent-entity is the new hard part;
+// melee/mage branches are a deliberate follow-up behind the entity's `mode` seam,
+// default 'ranged'). EVERY number here is FIRST-PASS, EXPLICITLY UNBALANCED. // TUNE
+// ════════════════════════════════════════════════════════════════════════════
+
+// Body sprite: a RETIRED crop sheet rendered at its grown column so the turret reads as
+// a planted stalk (corn = tall, tower-shaped). The texture is ALREADY registered through
+// the manifest → imageImports.js path, so it emits in the prod build (the raw glob would
+// drop it — see MEMORY vite-glob-asset-emission); the body is a // TUNE swap. SproutSentinel
+// guards with textures.exists() + a procedural fallback so it never renders as nothing.
+export const SENTINEL_BODY_TEXTURE = 'corn'; // manifest spritesheet key (registered + prod-verified) // TUNE
+export const SENTINEL_BODY_FRAME = 5; // grown column (matches GardenBed PLANT_READY_FRAME) // TUNE
+export const SENTINEL_BODY_SCALE = 2.2; // draw scale — taller than a bed crop so it reads as a turret // TUNE
+export const SENTINEL_BODY_DEPTH = 8; // sits in the world like a slime (player=10, bolts=10 render over it)
+
+// Placement: auto-plant just AHEAD of the player along the aim angle (NO tap-to-place on
+// mobile). 0 = plant on the player.
+export const SENTINEL_AHEAD_DIST = 30; // px ahead of the player to plant // TUNE
+
+// Cap: only this many Sentinels may stand at once; a recast REPLACES the oldest (despawn
+// + re-plant at the new spot). Seam: see SpellSystem.spawnSentinel to BLOCK instead.
+export const SENTINEL_MAX_ACTIVE = 1;
+
+// Mini-bolt look: the turret reuses the pooled Ember SpellBolt, tinted GREEN and scaled
+// DOWN so its shot reads as a "green mini fireball", NOT an Ember cast. Trails are neutral
+// white so the green tint lands cleanly on them.
+export const SENTINEL_BOLT_TINT = 0x8ae66b; // vivid leaf green // TUNE
+export const SENTINEL_BOLT_SCALE = 0.6; // × the tier-1 kite scale — a small bolt // TUNE
+export const SENTINEL_BOLT_SPEED = 360; // px/sec // TUNE
+
+// Per-level tier table (index = level-1; L1 = unlock, +1 per Mage Mart upgrade). LINEAR
+// ramp on ALL FOUR stats — a simple monotone ladder (NOT the branch system). spellPower
+// (blue_flower) scales damage + range per-cast (mirrors the other spells). // TUNE (all)
+//   damage     = per-bolt hit damage
+//   fireMs     = ms between shots (LOWER = faster fire rate)
+//   lifetimeMs = how long the turret stands before despawning
+//   range      = px the turret can acquire AND reach a target
+export const SENTINEL_TIERS = [
+  { damage: 5,  fireMs: 1100, lifetimeMs: 8000,  range: 220 }, // L1 — base turret
+  { damage: 8,  fireMs: 900,  lifetimeMs: 10000, range: 260 }, // L2 — +damage, +fire rate
+  { damage: 11, fireMs: 720,  lifetimeMs: 12000, range: 300 }, // L3 — +damage/rate, +lifetime
+  { damage: 15, fireMs: 560,  lifetimeMs: 15000, range: 360 }  // L4 — +all
+];
+
+// --- Corrupted souls currency (Sprint magic-1) ----------------------------
+// Souls = corrupted forest spirits, the third currency (alongside plants → stat
+// trees and coins → gear/capacity). They drop from slain enemies and are spent at
+// the Mage Mart to "purify" (unlock + upgrade) spells. Drop = BASE[type] × level
+// (the enemy's 1-5 level), banked immediately on death. Split-children award none
+// (mirrors the coin/seed loot rule). All values TUNE — dial in during feel-test.
+// NOTE: a future sortie/extraction loop will escrow souls in the world and forfeit
+// them on death/timeout (mirroring the planned coins layer); banked-on-death is the
+// interim model. // TUNE
+export const SOUL_DROP_BASE = {
+  green_slime: 1, // common woodland spirit — the everyday trickle
+  dark_slime: 3, // corrupted heavier spirit
+  skeleton: 5 // the rarest, most-corrupted remains
+};
+export const SOUL_DROP_FALLBACK = 1; // any enemy type not listed above
+
+// Farmstand plant BUY markup (Sprint magic-1). Plants buy back at sellPrice × this —
+// a HEAVY markup so rebuying a crop to feed a different stat tree is real friction (a
+// rebalancing valve), never a free swap. Sell stays at economy.json sellPrices. // TUNE
+export const FARMSTAND_MARKUP = 4;
 
 // --- Shared UI styling (Sprint 12 visual-consistency pass) ---
 // Every text object in the game already renders with this family; referencing the
