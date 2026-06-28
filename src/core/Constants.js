@@ -175,7 +175,11 @@ export const MAP_CHEAT_RESET_MS = 600;
 // SCOPE this sprint: slot 1 = ranged (fully functional, drives the existing ranged
 // system); slots 2..SECONDARY_SLOT_COUNT are inert spell SELECTORS (selecting changes
 // the active secondary but casts nothing yet). All values below are feel knobs.
-export const SECONDARY_SLOT_COUNT = 5; // slot 1 ranged + 4 spell selectors
+// Sprint magic-1: widened 5 → 7 (slot 1 ranged + 6 spell selectors) so all SIX Mage
+// Mart spells map 1:1 onto a secondary slot (slot 2 = cheapest spell … slot 7 = most
+// expensive). Slots 2-7 stay inert (no spell effects yet); a spell becomes SELECTABLE
+// only once purified (unlocked) at the Mage Mart — see Player.selectSecondary gating.
+export const SECONDARY_SLOT_COUNT = 7; // slot 1 ranged + 6 spell selectors
 
 // Auto-target facing-weighted cone (FULL width, degrees). A candidate enemy must lie
 // within ±(cone/2) of the player's facing to be acquired; wider = more forgiving aim.
@@ -202,6 +206,27 @@ export const RADIAL_TIMESCALE = 0.15; // ~15% speed while the radial is open // 
 export const MANA_BAR_MAX_WIDTH = 240; // matches HP bar width
 export const MANA_BAR_HEIGHT = 12;
 export const MANA_DEFAULT_MAX = 100; // starting mana pool once unlocked // TUNE
+
+// --- Corrupted souls currency (Sprint magic-1) ----------------------------
+// Souls = corrupted forest spirits, the third currency (alongside plants → stat
+// trees and coins → gear/capacity). They drop from slain enemies and are spent at
+// the Mage Mart to "purify" (unlock + upgrade) spells. Drop = BASE[type] × level
+// (the enemy's 1-5 level), banked immediately on death. Split-children award none
+// (mirrors the coin/seed loot rule). All values TUNE — dial in during feel-test.
+// NOTE: a future sortie/extraction loop will escrow souls in the world and forfeit
+// them on death/timeout (mirroring the planned coins layer); banked-on-death is the
+// interim model. // TUNE
+export const SOUL_DROP_BASE = {
+  green_slime: 1, // common woodland spirit — the everyday trickle
+  dark_slime: 3, // corrupted heavier spirit
+  skeleton: 5 // the rarest, most-corrupted remains
+};
+export const SOUL_DROP_FALLBACK = 1; // any enemy type not listed above
+
+// Farmstand plant BUY markup (Sprint magic-1). Plants buy back at sellPrice × this —
+// a HEAVY markup so rebuying a crop to feed a different stat tree is real friction (a
+// rebalancing valve), never a free swap. Sell stays at economy.json sellPrices. // TUNE
+export const FARMSTAND_MARKUP = 4;
 
 // --- Shared UI styling (Sprint 12 visual-consistency pass) ---
 // Every text object in the game already renders with this family; referencing the

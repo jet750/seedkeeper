@@ -150,6 +150,7 @@ export default class DevMenuScene extends Phaser.Scene {
 
   getPages() {
     const coins = this.gameScene.coins || 0;
+    const souls = this.gameScene.souls || 0;
     const day = this.gameScene.daySystem ? this.gameScene.daySystem.dayNumber : 1;
 
     // +10-to-bank button per current plant (the reconciled set, derived from data so
@@ -178,6 +179,23 @@ export default class DevMenuScene extends Phaser.Scene {
           { type: 'full', label: 'Grant All Gear (coin path)', onClick: () => this.dispatch('dev:grantGear') },
           { type: 'full', label: 'Max All Stats (10 trees)', onClick: () => this.dispatch('dev:maxStats') },
           { type: 'full', label: 'Max All Capacity', onClick: () => this.dispatch('dev:maxCapacity') }
+        ]
+      },
+      {
+        title: 'MAGIC',
+        rows: [
+          { type: 'section', label: `SOULS — ${souls}` },
+          {
+            type: 'row',
+            buttons: [
+              { label: '+50 Souls', onClick: () => this.dispatch('dev:addSouls', { amount: 50 }) },
+              { label: '+200 Souls', onClick: () => this.dispatch('dev:addSouls', { amount: 200 }) }
+            ]
+          },
+          { type: 'section', label: 'SPELLS (Mage Mart)' },
+          { type: 'full', label: 'Unlock All Spells', onClick: () => this.dispatch('dev:unlockAllSpells') },
+          { type: 'full', label: 'Max Spell Upgrades', onClick: () => this.dispatch('dev:maxSpellUpgrades') },
+          { type: 'note', label: 'unlock flips spells selectable · no effects yet' }
         ]
       },
       {

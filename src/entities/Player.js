@@ -145,6 +145,12 @@ export default class Player extends Phaser.Physics.Arcade.Sprite {
     // ranged (the only functional secondary this sprint). Slots 2..N are inert spell
     // SELECTORS. Defaults to slot 1.
     this.activeSecondary = 1;
+    // Sprint magic-1: which secondary slots are SELECTABLE. Slot 1 (ranged) is always
+    // selectable; a spell slot (2..N) becomes selectable only once purified at the Mage
+    // Mart. GameScene.applySpellUnlocks() drives this from the save's spellUnlocks.
+    // A locked slot can't be selected (selectSecondary rejects it), so an un-purified
+    // spell stays inert AND unreachable.
+    this.unlockedSecondary = new Set([1]);
     // Hold-to-strafe (Shift): while true, movement no longer rotates `facing`, so the
     // player can move sideways while keeping their aim/swing direction. _strafeTarget is
     // the specific enemy locked on the rising edge of Shift — facing re-points at its
@@ -776,11 +782,25 @@ export default class Player extends Phaser.Physics.Arcade.Sprite {
 
   selectSecondary(slot) {
     if (!slot || slot < 1 || slot > SECONDARY_SLOT_COUNT) return;
+    // Sprint magic-1: a locked (un-purified) spell slot is unreachable — the select is
+    // a no-op so the spell stays inert. Slot 1 (ranged) is always in the set.
+    if (!this.unlockedSecondary.has(slot)) return;
     if (slot === this.activeSecondary) return;
     this.activeSecondary = slot;
     EventBus.emit('secondary:changed', { slot, total: SECONDARY_SLOT_COUNT });
     // TEST: toggle-then-fire vs auto-cast-on-select — once spell effects exist, flip
     // this handler to fire immediately on select. For now selection NEVER casts.
+  }
+
+  // Set which secondary slots are selectable (Sprint magic-1). Slot 1 is always kept.
+  // If the active slot just became locked (shouldn't happen in normal play — spells
+  // only unlock — but guards a dev "reset" path), fall back to ranged.
+  setUnlockedSecondary(slots) {
+    this.unlockedSecondary = new Set([1, ...(slots || [])]);
+    if (!this.unlockedSecondary.has(this.activeSecondary)) {
+      this.activeSecondary = 1;
+      EventBus.emit('secondary:changed', { slot: 1, total: SECONDARY_SLOT_COUNT });
+    }
   }
 
   // Fire the active secondary (R / right-click / mobile Ranged-Magic). Slot 1 routes to

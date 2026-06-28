@@ -41,6 +41,9 @@ import {
   SECONDARY_SLOT_COUNT,
   AUTO_TARGET_DESKTOP_DEFAULT,
   RADIAL_TIMESCALE,
+  SOUL_DROP_BASE,
+  SOUL_DROP_FALLBACK,
+  FARMSTAND_MARKUP,
   isDevModeActive
 } from '../core/Constants.js';
 import WorldZoneSystem, { RIVER_WIDTH, CREEK_WIDTH } from '../systems/WorldZoneSystem.js';
@@ -344,6 +347,15 @@ export default class GameScene extends Phaser.Scene {
     this.plantsGrownEver = { ...DEFAULT_BANK, ...(this.saveData.plantsGrownEver || {}) };
     // Dual economy (v2): banked coins + the three coin-funded capacity tiers.
     this.coins = this.saveData.coins || 0;
+    // Third currency (Sprint magic-1, save v6): corrupted souls — drop from enemies,
+    // spent at the Mage Mart to purify (unlock + upgrade) spells. Banked immediately.
+    this.souls = this.saveData.souls || 0;
+    // Spell purification state (Sprint magic-1, save v6). spellUnlocks: { id: true }
+    // for each purified spell; spellUpgrades: { id: tierIndex } (0 = unlocked, no
+    // upgrades yet). Both keyed by economy.json spells.list id. Applied to the player
+    // (selectable secondary slots) in applySpellUnlocks(), called once on load.
+    this.spellUnlocks = { ...(this.saveData.spellUnlocks || {}) };
+    this.spellUpgrades = { ...(this.saveData.spellUpgrades || {}) };
     // Desktop auto-target preference (Sprint control-scheme-combat-input; save v5).
     // Mobile ignores it (forced on). Undefined on a pre-v5 save → fall back to default.
     this.autoTargetDesktop = this.saveData.autoTargetDesktop != null
@@ -538,6 +550,9 @@ export default class GameScene extends Phaser.Scene {
 
     // --- Apply saved upgrades to the freshly-built player ---
     this.applyAllUpgrades();
+    // Apply saved spell purifications → which secondary slots are selectable (Sprint
+    // magic-1). Runs before input is live so a locked spell can't be selected.
+    this.applySpellUnlocks();
 
     // Populate the enemy density appropriate to the loaded day (no-op on day 1).
     this.handleEnemyScaling(this.daySystem.dayNumber);
@@ -558,7 +573,10 @@ export default class GameScene extends Phaser.Scene {
       two: Phaser.Input.Keyboard.KeyCodes.TWO,
       three: Phaser.Input.Keyboard.KeyCodes.THREE,
       four: Phaser.Input.Keyboard.KeyCodes.FOUR,
-      five: Phaser.Input.Keyboard.KeyCodes.FIVE
+      five: Phaser.Input.Keyboard.KeyCodes.FIVE,
+      // Sprint magic-1: slots 6-7 host the two priciest spells (slot count → 7).
+      six: Phaser.Input.Keyboard.KeyCodes.SIX,
+      seven: Phaser.Input.Keyboard.KeyCodes.SEVEN
     });
     // T toggles desktop auto-target (weak / mouse-led; OFF by default). Mobile forces
     // it on and ignores this. The preference persists (save v5) — see toggleAutoTarget.
@@ -588,7 +606,7 @@ export default class GameScene extends Phaser.Scene {
     this.subscribe('seed:collected', (d) => this.onSeedCollected(d));
     this.subscribe('projectile:spawn', (d) => this.firePooledProjectile(d));
     this.subscribe('upgrade:closed', () => this.onUpgradeClosed());
-    this.subscribe('market:closed', () => this.onMarketClosed());
+    this.subscribe('shop:closed', () => this.onShopClosed());
     this.subscribe('upgrade:purchased', (d) => this.onUpgradePurchased(d));
     this.subscribe('player:slept', () => this.onPlayerSlept());
 
@@ -679,6 +697,7 @@ export default class GameScene extends Phaser.Scene {
     EventBus.emit('inventory:changed', { slots: [...this.player.seedSlots] });
     EventBus.emit('bank:updated', { bank: { ...this.plantBank } });
     EventBus.emit('coins:changed', { coins: this.coins, delta: 0 });
+    EventBus.emit('souls:changed', { souls: this.souls, delta: 0 });
     EventBus.emit('player:statsChanged', {
       maxHP: this.player.maxHP,
       currentHP: this.player.currentHP
@@ -710,6 +729,9 @@ export default class GameScene extends Phaser.Scene {
       slot: this.player.activeSecondary,
       total: SECONDARY_SLOT_COUNT
     });
+    // Re-broadcast spell unlock state now the HUD scene is up, so the strip/radial
+    // show the right locked vs selectable slots on a loaded run (Sprint magic-1).
+    this.applySpellUnlocks();
   }
 
   // --- Placeholder textures (Sprint 2 additive — leaves BootScene untouched) -
@@ -2317,27 +2339,42 @@ export default class GameScene extends Phaser.Scene {
       .setDepth(2);
     this.addStructureLabel(bookPos.x, bookPos.y, bookPos.x, bookPos.y - 34, 'FIELD NOTES  [F]', '#ABC4DE');
 
-    // Market stall (Sprint 3) — opens the marketplace (sell plants / buy gear +
-    // capacity). Placeholder ember-toned stall until a real shop sprite lands;
-    // placement is the MARKET_X/MARKET_Y config point.
-    const marketPos = this.gardenScaled(MARKET_X, MARKET_Y); // Sprint 11 — tightened
-    this.add.rectangle(marketPos.x, marketPos.y + 16 * GARDEN_PROP_SCALE, 64 * GARDEN_PROP_SCALE, 10 * GARDEN_PROP_SCALE, 0x6e4a22).setDepth(2); // counter base
-    this.market = this.add
-      .rectangle(marketPos.x, marketPos.y - 8 * GARDEN_PROP_SCALE, 60 * GARDEN_PROP_SCALE, 40 * GARDEN_PROP_SCALE, 0xc96b42)
-      .setStrokeStyle(3, 0xe5b69a)
-      .setDepth(2);
-    this.add
-      .rectangle(marketPos.x, marketPos.y - 30 * GARDEN_PROP_SCALE, 72 * GARDEN_PROP_SCALE, 12 * GARDEN_PROP_SCALE, 0x8a3a22)
-      .setStrokeStyle(2, 0x5a2a18)
-      .setDepth(2); // awning
-    this.addStructureLabel(marketPos.x, marketPos.y, marketPos.x, marketPos.y - 44, 'MARKET  [F]', '#E5B69A');
+    // Three shop buildings (Sprint magic-1) — the old single Market stall split into
+    // the BLACKSMITH (coins → gear/capacity), the FARMSTAND (coins ↔ plants) and the
+    // MAGE MART (souls → spell purification). Placeholder toned stalls until real shop
+    // art lands. The Mage Mart sits beside the Blacksmith (intended fuller homestead
+    // hub); all three stay clear of the bed grid + well and open via the [F] prompt.
+    // The Blacksmith inherits the old market's MARKET_X/MARKET_Y anchor.
+    this.blacksmith = this.makeShopBuilding(MARKET_X, MARKET_Y, 0x6b6b73, 0x3a3a40, 0x8a8a92, 'BLACKSMITH  [F]', '#E5B69A');
+    this.mageMart = this.makeShopBuilding(MARKET_X + 130, MARKET_Y, 0x6b3fa0, 0x3a2a4a, 0xc29be0, 'MAGE MART  [F]', '#C29BE0');
+    this.farmstand = this.makeShopBuilding(MARKET_X - 130, MARKET_Y + 36, 0x6a8a4a, 0x4a5a2a, 0xb8d5b1, 'FARMSTAND  [F]', '#B8D5B1');
 
     // Solid garden props get a small static collider so the player routes around
     // them (Sprint 10c). Interaction stays distance-based, so this never blocks
     // the [F] prompt — only the body of the object is impassable.
     this.addPropCollision(this.signpost, 10 * GARDEN_PROP_SCALE, 20 * GARDEN_PROP_SCALE);
     this.addPropCollision(this.book, 24 * GARDEN_PROP_SCALE, 16 * GARDEN_PROP_SCALE);
-    this.addPropCollision(this.market, 56 * GARDEN_PROP_SCALE, 24 * GARDEN_PROP_SCALE);
+    this.addPropCollision(this.blacksmith, 56 * GARDEN_PROP_SCALE, 24 * GARDEN_PROP_SCALE);
+    this.addPropCollision(this.mageMart, 56 * GARDEN_PROP_SCALE, 24 * GARDEN_PROP_SCALE);
+    this.addPropCollision(this.farmstand, 56 * GARDEN_PROP_SCALE, 24 * GARDEN_PROP_SCALE);
+  }
+
+  // Draw a placeholder shop stall (counter base + body + awning) at a world point and
+  // return its body handle (the interactable). Mirrors the old market-stall art so the
+  // three new shops read as one family; per-shop tones distinguish them (Sprint magic-1).
+  makeShopBuilding(wx, wy, bodyColor, baseColor, borderColor, label, labelColor) {
+    const pos = this.gardenScaled(wx, wy);
+    this.add.rectangle(pos.x, pos.y + 16 * GARDEN_PROP_SCALE, 64 * GARDEN_PROP_SCALE, 10 * GARDEN_PROP_SCALE, baseColor).setDepth(2); // counter base
+    const obj = this.add
+      .rectangle(pos.x, pos.y - 8 * GARDEN_PROP_SCALE, 60 * GARDEN_PROP_SCALE, 40 * GARDEN_PROP_SCALE, bodyColor)
+      .setStrokeStyle(3, borderColor)
+      .setDepth(2);
+    this.add
+      .rectangle(pos.x, pos.y - 30 * GARDEN_PROP_SCALE, 72 * GARDEN_PROP_SCALE, 12 * GARDEN_PROP_SCALE, baseColor)
+      .setStrokeStyle(2, 0x000000)
+      .setDepth(2); // awning
+    this.addStructureLabel(pos.x, pos.y, pos.x, pos.y - 44, label, labelColor);
+    return obj;
   }
 
   // Give a static prop a narrow collider and route the player around it.
@@ -2398,7 +2435,9 @@ export default class GameScene extends Phaser.Scene {
     };
 
     consider(this.chest, INTERACT_RANGE, () => ({ text: '[F] Open Workshop', actionable: true }));
-    consider(this.market, INTERACT_RANGE, () => ({ text: '[F] Open Market', actionable: true }));
+    consider(this.blacksmith, INTERACT_RANGE, () => ({ text: '[F] Open Blacksmith', actionable: true }));
+    consider(this.farmstand, INTERACT_RANGE, () => ({ text: '[F] Open Farmstand', actionable: true }));
+    consider(this.mageMart, INTERACT_RANGE, () => ({ text: '[F] Open Mage Mart', actionable: true }));
     consider(this.signpost, INTERACT_RANGE, () => ({ text: '[F] View achievements', actionable: true }));
     consider(this.sleepObject, INTERACT_RANGE, () => ({
       text: `[F] Sleep — advance to Day ${this.daySystem.dayNumber + 1}`,
@@ -2671,8 +2710,16 @@ export default class GameScene extends Phaser.Scene {
       this.openUpgrade();
       return;
     }
-    if (this.market && this.within(this.market, INTERACT_RANGE)) {
-      this.openMarket();
+    if (this.blacksmith && this.within(this.blacksmith, INTERACT_RANGE)) {
+      this.openBlacksmith();
+      return;
+    }
+    if (this.farmstand && this.within(this.farmstand, INTERACT_RANGE)) {
+      this.openFarmstand();
+      return;
+    }
+    if (this.mageMart && this.within(this.mageMart, INTERACT_RANGE)) {
+      this.openMageMart();
       return;
     }
     if (this.signpost && this.within(this.signpost, INTERACT_RANGE)) {
@@ -3545,9 +3592,20 @@ export default class GameScene extends Phaser.Scene {
     else this.shake('hands_hit');
   }
 
-  onEnemyDied({ type, position, light }) {
+  onEnemyDied({ type, position, level, light }) {
     this.runStats.enemiesDefeated++;
     if (this.runStats.killsByType[type] !== undefined) this.runStats.killsByType[type]++;
+    // Corrupted souls drop (Sprint magic-1): BASE[type] × enemy level, banked at once.
+    // Split-children (`light`) award none — they exist for pressure, not income, so
+    // the souls economy can't be farmed by baiting dark-slime splits. // TUNE
+    if (!light) {
+      const lvl = Phaser.Math.Clamp(Math.round(level || 1), 1, 5);
+      const soulGain = (SOUL_DROP_BASE[type] || SOUL_DROP_FALLBACK) * lvl;
+      if (soulGain > 0) {
+        this.addSouls(soulGain);
+        EventBus.emit('souls:dropped', { amount: soulGain, position });
+      }
+    }
     // Per-type death flourish (Sprint 13) — particles emit from the enemy's spot.
     // `light` (Sprint 4) marks a small split-child death: skip the heavy burst +
     // screen flash so a multi-slime fight doesn't stack desaturate flashes.
@@ -3618,21 +3676,37 @@ export default class GameScene extends Phaser.Scene {
     }
   }
 
-  // --- Marketplace (Sprint 3) -----------------------------------------------
+  // --- Shops (Sprint magic-1) -----------------------------------------------
+  // The old single Market split into three full-screen shops, each on the shared
+  // PaginatedMenu. Only one is ever open (they're modal); `_marketOpen` is the shared
+  // "a shop overlay is open" flag every freeze/guard check reads, cleared on the
+  // generic 'shop:closed' event each shop emits. openShop() is the common launch path.
 
-  openMarket() {
+  openShop(sceneKey) {
     if (this._marketOpen) return;
     this._marketOpen = true;
     this.player.setVelocity(0, 0);
     if (this._swapPickerOpen) this.closeSwapPicker(false);
-    EventBus.emit('market:opened', {});
-    this.scene.launch('MarketplaceScene');
+    EventBus.emit('shop:opened', { scene: sceneKey });
+    this.scene.launch(sceneKey);
     // Render above the HUD scene (as every other overlay does) so no stray HUD
     // sprite — e.g. a lingering combo counter mid-screen — bleeds into the panel.
-    this.scene.bringToTop('MarketplaceScene');
+    this.scene.bringToTop(sceneKey);
   }
 
-  onMarketClosed() {
+  openBlacksmith() {
+    this.openShop('BlacksmithScene');
+  }
+
+  openFarmstand() {
+    this.openShop('FarmstandScene');
+  }
+
+  openMageMart() {
+    this.openShop('MageMartScene');
+  }
+
+  onShopClosed() {
     this._marketOpen = false;
   }
 
@@ -3816,6 +3890,137 @@ export default class GameScene extends Phaser.Scene {
     return true;
   }
 
+  // --- Corrupted souls (Sprint magic-1) -------------------------------------
+  // SINGLE mutation path for banked souls, mirroring addCoins/spendCoins. Souls drop
+  // from enemies (onEnemyDied) and are spent at the Mage Mart to purify spells.
+  // TODO: souls escrow on sortie/extraction loop (forfeit on death/timeout), mirror
+  // coins. For now souls bank immediately on death; no in-world escrow layer exists.
+
+  addSouls(amount) {
+    if (!amount) return this.souls;
+    this.souls += amount;
+    EventBus.emit('souls:changed', { souls: this.souls, delta: amount });
+    this.autoSave();
+    return this.souls;
+  }
+
+  spendSouls(amount) {
+    if (amount <= 0 || this.souls < amount) return false;
+    this.souls -= amount;
+    EventBus.emit('souls:spent', { souls: this.souls, amount });
+    EventBus.emit('souls:changed', { souls: this.souls, delta: -amount });
+    this.autoSave();
+    return true;
+  }
+
+  // --- Farmstand: buy plants with coins (Sprint magic-1) --------------------
+  // The Farmstand sells plants back at a HEAVY markup (FARMSTAND_MARKUP × sell price)
+  // so liquidating a surplus crop and rebuying a different one to feed another stat
+  // tree is friction, not a free swap. Only the stat-tree plants (entities.json
+  // `upgrades` keys) are buyable — the two sell-only melons don't feed a tree.
+
+  buyablePlants() {
+    return Object.keys(this.gameData.upgrades);
+  }
+
+  buyPlantPrice(plantType) {
+    return Math.ceil(this.sellPrice(plantType) * FARMSTAND_MARKUP);
+  }
+
+  buyPlant(plantType, qty = 1) {
+    if (!this.gameData.plants[plantType]) return { ok: false };
+    const n = Math.max(1, qty);
+    const total = this.buyPlantPrice(plantType) * n;
+    if (!this.spendCoins(total)) return { ok: false }; // emits coins:changed + autoSave
+    this.plantBank[plantType] = (this.plantBank[plantType] || 0) + n;
+    EventBus.emit('bank:updated', { bank: { ...this.plantBank } });
+    EventBus.emit('plant:bought', { plantType, qty: n, coins: total });
+    return { ok: true, qty: n, coins: total };
+  }
+
+  // --- Mage Mart: spell purification (Sprint magic-1) -----------------------
+  // Souls UNLOCK and then UPGRADE spells. Any-order, price-bounded by the souls ladder
+  // in economy.json (spells.list). NO spell EFFECTS this sprint — unlocking only flips
+  // the spell's secondary slot from locked→selectable (the effect lands next sprint).
+  // spellUnlocks[id] = true once purified; spellUpgrades[id] = tiers bought (0..N).
+
+  spellCatalog() {
+    return (this.economyData.spells && this.economyData.spells.list) || [];
+  }
+
+  spellDef(id) {
+    return this.spellCatalog().find((s) => s.id === id) || null;
+  }
+
+  // Secondary slot a spell occupies: slot 1 = ranged, so the catalog (price order)
+  // maps onto slots 2..(1+N). Returns -1 for an unknown id.
+  spellSlot(id) {
+    const idx = this.spellCatalog().findIndex((s) => s.id === id);
+    return idx < 0 ? -1 : idx + 2;
+  }
+
+  isSpellUnlocked(id) {
+    return !!this.spellUnlocks[id];
+  }
+
+  spellUpgradeLevel(id) {
+    return this.spellUpgrades[id] || 0;
+  }
+
+  spellMaxUpgrades(id) {
+    const def = this.spellDef(id);
+    return def && def.upgrades ? def.upgrades.length : 0;
+  }
+
+  // Cost of the NEXT action on a spell: its unlock price if locked, else the next
+  // upgrade tier's price, or null if already fully upgraded.
+  spellNextCost(id) {
+    const def = this.spellDef(id);
+    if (!def) return null;
+    if (!this.isSpellUnlocked(id)) return def.unlock;
+    const lv = this.spellUpgradeLevel(id);
+    return lv < def.upgrades.length ? def.upgrades[lv] : null;
+  }
+
+  // Purify (unlock) a spell with souls. Flips its secondary slot selectable. Inert.
+  unlockSpell(id) {
+    const def = this.spellDef(id);
+    if (!def || this.isSpellUnlocked(id)) return { ok: false };
+    if (!this.spendSouls(def.unlock)) return { ok: false };
+    this.spellUnlocks[id] = true;
+    if (this.spellUpgrades[id] == null) this.spellUpgrades[id] = 0;
+    this.applySpellUnlocks();
+    EventBus.emit('spell:unlocked', { id, slot: this.spellSlot(id) });
+    this.autoSave();
+    return { ok: true, id };
+  }
+
+  // Buy the next upgrade tier of an already-unlocked spell with souls. Purely economic
+  // this sprint (no effect scaling exists yet — that arrives with spell effects).
+  upgradeSpell(id) {
+    const def = this.spellDef(id);
+    if (!def || !this.isSpellUnlocked(id)) return { ok: false };
+    const lv = this.spellUpgradeLevel(id);
+    if (lv >= def.upgrades.length) return { ok: false }; // maxed
+    if (!this.spendSouls(def.upgrades[lv])) return { ok: false };
+    this.spellUpgrades[id] = lv + 1;
+    EventBus.emit('spell:upgraded', { id, tier: lv + 1 });
+    this.autoSave();
+    return { ok: true, id, tier: lv + 1 };
+  }
+
+  // Push the set of selectable secondary slots to the player (gates selectSecondary)
+  // and broadcast it so the HUD strip + mobile radial reflect locked vs unlocked.
+  // Slot 1 (ranged) is always selectable; each unlocked spell adds its slot.
+  applySpellUnlocks() {
+    const slots = [1];
+    this.spellCatalog().forEach((s, i) => {
+      if (this.isSpellUnlocked(s.id)) slots.push(i + 2);
+    });
+    if (this.player && this.player.setUnlockedSecondary) this.player.setUnlockedSecondary(slots);
+    EventBus.emit('secondary:unlocks', { slots });
+  }
+
   // --- Coin-funded gear -----------------------------------------------------
   // economy.json.gear[slot] is an ordered, strictly-better tier list. The index
   // of the equipped item is derived from equippedGear[slot]'s id (-1 = none).
@@ -3931,6 +4136,10 @@ export default class GameScene extends Phaser.Scene {
       totalPlaytime: Math.floor(this._playtimeMs / 1000),
       bank: { ...this.plantBank },
       coins: this.coins,
+      // Corrupted souls + spell unlock/upgrade state (Sprint magic-1, save v6).
+      souls: this.souls,
+      spellUnlocks: { ...this.spellUnlocks },
+      spellUpgrades: { ...this.spellUpgrades },
       upgrades: JSON.parse(JSON.stringify(this.upgradeLevels)),
       equippedGear: { ...this.player.equippedGear },
       seedBagTier: this.seedBagTier,
@@ -4104,6 +4313,11 @@ export default class GameScene extends Phaser.Scene {
     this.subscribe('dev:fillBank', () => this.devFillBank());
     this.subscribe('dev:addBank', (d) => this.devAddBank(d));
     this.subscribe('dev:addCoins', (d) => this.devAddCoins(d));
+    // Sprint magic-1 — souls + spell purification cheats so the Mage Mart (and next
+    // sprint's spell effects) can be exercised without grinding souls.
+    this.subscribe('dev:addSouls', (d) => this.devAddSouls(d));
+    this.subscribe('dev:unlockAllSpells', () => this.devUnlockAllSpells());
+    this.subscribe('dev:maxSpellUpgrades', () => this.devMaxSpellUpgrades());
     this.subscribe('dev:day', (d) => this.devDay(d));
     this.subscribe('dev:grantGear', () => this.devGrantAllGear());
     this.subscribe('dev:maxStats', () => this.devMaxAllStats());
@@ -4153,6 +4367,33 @@ export default class GameScene extends Phaser.Scene {
   // Coins go through the single addCoins path so the HUD + save stay in sync.
   devAddCoins({ amount }) {
     this.addCoins(amount);
+  }
+
+  // Souls go through the single addSouls path (HUD + save in sync).
+  devAddSouls({ amount }) {
+    this.addSouls(amount);
+  }
+
+  // Purify every spell at no cost — flips all spell slots selectable (Sprint magic-1).
+  devUnlockAllSpells() {
+    this.spellCatalog().forEach((s) => {
+      this.spellUnlocks[s.id] = true;
+      if (this.spellUpgrades[s.id] == null) this.spellUpgrades[s.id] = 0;
+    });
+    this.applySpellUnlocks(); // player selectable slots + HUD strip/radial
+    EventBus.emit('spell:unlocked', { id: null, all: true }); // refresh an open Mage Mart
+    this.autoSave();
+  }
+
+  // Unlock (if needed) + max every spell's upgrade tier at no cost.
+  devMaxSpellUpgrades() {
+    this.spellCatalog().forEach((s) => {
+      this.spellUnlocks[s.id] = true;
+      this.spellUpgrades[s.id] = (s.upgrades && s.upgrades.length) || 0;
+    });
+    this.applySpellUnlocks();
+    EventBus.emit('spell:upgraded', { id: null, all: true });
+    this.autoSave();
   }
 
   devDay({ delta }) {
@@ -4318,6 +4559,8 @@ export default class GameScene extends Phaser.Scene {
       else if (Phaser.Input.Keyboard.JustDown(sk.three)) this.player.selectSecondary(3);
       else if (Phaser.Input.Keyboard.JustDown(sk.four)) this.player.selectSecondary(4);
       else if (Phaser.Input.Keyboard.JustDown(sk.five)) this.player.selectSecondary(5);
+      else if (Phaser.Input.Keyboard.JustDown(sk.six)) this.player.selectSecondary(6);
+      else if (Phaser.Input.Keyboard.JustDown(sk.seven)) this.player.selectSecondary(7);
     }
   }
 

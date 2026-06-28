@@ -476,7 +476,7 @@ export default class Skeleton extends Phaser.Physics.Arcade.Sprite {
       onComplete: () => {
         this.dropBundle();
         this.dropSeeds();
-        EventBus.emit('enemy:died', { type: 'skeleton', position: { x: this.x, y: this.y } });
+        EventBus.emit('enemy:died', { type: 'skeleton', position: { x: this.x, y: this.y }, level: this.level }); // level → souls drop (Sprint magic-1)
         const idx = this.scene.enemies.indexOf(this);
         if (idx > -1) this.scene.enemies.splice(idx, 1);
         if (this.levelMarker) {

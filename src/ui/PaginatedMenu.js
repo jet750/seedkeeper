@@ -1,7 +1,8 @@
 // PaginatedMenu.js
 //
 // The shared full-screen, game-paused, paginated menu layout used by every
-// in-game overlay menu (DevMenuScene, MarketplaceScene, and any future shop).
+// in-game overlay menu (DevMenuScene and the three shops — Blacksmith / Farmstand /
+// Mage Mart — plus any future one).
 // Extracted from the dev-menu / marketplace pair, which had each grown a private
 // copy of the same machinery: a full-bleed backdrop, a page model with ◀ ▶ /
 // dots / swipe navigation, safe-inset-aware framing, and a close-button footer

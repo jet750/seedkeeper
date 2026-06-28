@@ -53,9 +53,20 @@
     }
   },
   "sellPrices": {
-    "_comment": "Plant sell value (coins) keyed by growthDays. Used by the marketplace in Sprint 3.",
+    "_comment": "Plant sell value (coins) keyed by growthDays. Used by the Blacksmith→Farmstand split (Sprint magic-1). Farmstand BUY price = sell × FARMSTAND_MARKUP (Constants.js).",
     "1": 3,
     "2": 7,
     "3": 12
+  },
+  "spells": {
+    "_comment": "Spell catalog (Sprint magic-1) — souls UNLOCK + UPGRADE these at the Mage Mart (purification). Listed cheapest→most-expensive unlock (Ember cheapest, Sprout Sentinel most expensive); any-order, price-bounded. `unlock`/`upgrades` are in SOULS. NO spell effects this sprint — unlocking only flips a spell selectable in the secondary/radial system (effects land next sprint). All costs TUNE. Order in this list = secondary-slot order (slot 2 = first entry … slot 7 = last).",
+    "list": [
+      { "id": "ember", "name": "Ember", "flavor": "A spark of cleansed flame. The first ember of the purified grove.", "unlock": 15, "upgrades": [20, 35, 55] },
+      { "id": "thornlash", "name": "Thornlash", "flavor": "A whip of barbed bramble, lashed from the hedge.", "unlock": 30, "upgrades": [30, 50, 80] },
+      { "id": "bramble_ward", "name": "Bramble Ward", "flavor": "A thorned shield of living hedge that turns the corrupted aside.", "unlock": 55, "upgrades": [45, 75, 110] },
+      { "id": "pollen_bloom", "name": "Pollen Bloom", "flavor": "A choking cloud of golden spores that withers what it touches.", "unlock": 85, "upgrades": [60, 95, 140] },
+      { "id": "wild_growth", "name": "Wild Growth", "flavor": "A verdant surge that knits flesh and root back whole.", "unlock": 125, "upgrades": [80, 120, 170] },
+      { "id": "sprout_sentinel", "name": "Sprout Sentinel", "flavor": "Summon a guardian sprout from the soil to stand the watch.", "unlock": 180, "upgrades": [110, 160, 220] }
+    ]
   }
 }

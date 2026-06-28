@@ -596,6 +596,7 @@ export default class Slime extends Phaser.Physics.Arcade.Sprite {
     EventBus.emit('enemy:died', {
       type: this.slimeType,
       position: { x: this.x, y: this.y },
+      level: this.level, // souls drop scales type × level (Sprint magic-1)
       light: this.isSplitChild // suppress the heavy dark-slime death flash for children
     });
     const idx = this.scene.enemies.indexOf(this);
