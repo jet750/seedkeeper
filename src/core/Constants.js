@@ -200,12 +200,40 @@ export const AUTO_TARGET_DESKTOP_DEFAULT = false; // TUNE
 export const RADIAL_LONGPRESS_MS = 260; // TUNE
 export const RADIAL_TIMESCALE = 0.15; // ~15% speed while the radial is open // TUNE
 
-// Mana scaffold (DORMANT until the spell sprint). The bar renders ONLY after the first
-// spell unlock (none exist yet, so it stays hidden by default). Bar width matches the
-// HP bar; mounts directly beneath it.
+// Mana scaffold (LIVE from Sprint magic-2). The bar renders after the first spell is
+// purified (unlockMana); casting a spell spends mana; mana regenerates passively. Bar
+// width matches the HP bar; mounts directly beneath it.
 export const MANA_BAR_MAX_WIDTH = 240; // matches HP bar width
 export const MANA_BAR_HEIGHT = 12;
-export const MANA_DEFAULT_MAX = 100; // starting mana pool once unlocked // TUNE
+export const MANA_DEFAULT_MAX = 100; // base mana pool once unlocked // TUNE
+
+// --- Mana economy (Sprint magic-2) ----------------------------------------
+// Passive mana regen: a flat base rate, plus a contribution from the red_berry
+// healthRegen node (so the regen stat tree feeds BOTH HP and mana). Max mana gets a
+// small bump from the blue_flower spellPower node. spellPower (0..0.5 at max) also
+// scales spell power/radius (applied per-spell). All TUNE.
+export const MANA_REGEN_PER_SEC = 5; // flat mana/sec regenerated // TUNE
+export const MANA_REGEN_FROM_REGEN_NODE = 2.5; // × red_berry healthRegen (HP/s) → extra mana/s // TUNE
+export const MANA_PER_SPELLPOWER = 40; // × blue_flower spellPower → +max mana (≤ +20 at cap) // TUNE
+export const SPELL_CAST_COOLDOWN_MS = 320; // min interval between casts so mana isn't frame-drained // TUNE
+
+// --- Ember spell (Sprint magic-2) — the implemented template ---------------
+// A semi-homing single-target bolt with a procedural flame-teardrop silhouette + spark
+// trail (distinguishable by SHAPE + MOTION, not colour alone — so a future dark mirror
+// reads as the dark version of this). The upgrade ladder (level 1-4, where level 1 is
+// the unlock): L1 base bolt → L2 +damage → L3 small impact AoE → L4 wide AoE. blue_flower
+// spellPower scales damage + AoE radius. All numbers TUNE.
+export const EMBER_BOLT_SPEED = 430; // px/sec // TUNE
+export const EMBER_BOLT_RANGE = 380; // px before it fizzles // TUNE
+export const EMBER_HOMING_RAD_PER_S = 5.5; // semi-homing turn rate (stronger than the bow's 3.5) // TUNE
+// Per-level tier table (index = level-1). damage = direct-hit damage; aoeRadius = impact
+// blast radius (0 = single-target); aoeDamageMult = blast damage as a fraction of `damage`.
+export const EMBER_TIERS = [
+  { damage: 12, aoeRadius: 0,   aoeDamageMult: 0 },    // L1 — base bolt (the unlock)
+  { damage: 20, aoeRadius: 0,   aoeDamageMult: 0 },    // L2 — +damage
+  { damage: 24, aoeRadius: 52,  aoeDamageMult: 0.6 },  // L3 — small impact AoE on hit
+  { damage: 28, aoeRadius: 112, aoeDamageMult: 0.7 }   // L4 — wide "diameter nuke" AoE
+];
 
 // --- Corrupted souls currency (Sprint magic-1) ----------------------------
 // Souls = corrupted forest spirits, the third currency (alongside plants → stat

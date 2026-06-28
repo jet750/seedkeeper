@@ -157,8 +157,11 @@ export default class MageMartScene extends Phaser.Scene {
   buildSpellRow(spell, x, y, w, h) {
     const gs = this.gameScene;
     const unlocked = gs.isSpellUnlocked(spell.id);
-    const lv = gs.spellUpgradeLevel(spell.id);
-    const max = gs.spellMaxUpgrades(spell.id);
+    const lv = gs.spellUpgradeLevel(spell.id); // upgrades bought (0..N) = level - 1
+    const max = gs.spellMaxUpgrades(spell.id); // upgrade tiers available
+    const level = gs.spellLevel(spell.id); // 1 on unlock, +1 per upgrade (0 if locked)
+    const maxLevel = gs.spellMaxLevel(spell.id); // 1 + max upgrades
+    const manaCost = gs.spellManaCost(spell.id);
     const cy = y + h / 2;
 
     this.track(
@@ -180,7 +183,11 @@ export default class MageMartScene extends Phaser.Scene {
         })
         .setDepth(102)
     );
-    const badge = unlocked ? (max > 0 ? `Tier ${lv}/${max}` : 'Purified') : '🔒 Locked';
+    // Unlock = LEVEL 1 (immediately castable, no double-spend); upgrades climb to maxLevel.
+    // Show the current tier's effect note (e.g. Ember L3 = "impact AoE") so an upgrade's
+    // payoff is legible before buying.
+    const tierNote = unlocked && spell.tierNotes ? `   ·   ${spell.tierNotes[level - 1] || ''}` : '';
+    const badge = unlocked ? `Lv ${level}/${maxLevel}   ·   ${manaCost}✦ mana${tierNote}` : '🔒 Locked';
     this.track(
       this.add
         .text(x + 18, y + h - 26, `${badge}   ·   ${spell.flavor}`, {
@@ -196,6 +203,7 @@ export default class MageMartScene extends Phaser.Scene {
     const btnW = 150;
     const bx = x + w - 14 - btnW / 2;
     if (!unlocked) {
+      // Unlock buys LEVEL 1 outright (immediately castable) — no separate "buy L1".
       const cost = spell.unlock;
       const can = this.souls() >= cost;
       this.track(
@@ -204,7 +212,7 @@ export default class MageMartScene extends Phaser.Scene {
           cy,
           btnW,
           50,
-          can ? `Purify\n${cost}👻` : `Need ${cost}👻`,
+          can ? `Purify → Lv 1\n${cost}👻` : `Need ${cost}👻`,
           can ? COLOR_AFFORD : COLOR_DISABLED,
           can,
           () => this.doUnlock(spell.id),
@@ -212,6 +220,7 @@ export default class MageMartScene extends Phaser.Scene {
         )
       );
     } else if (lv < max) {
+      // Upgrade ladder starts at LEVEL 2 (lv 0 → next is L2).
       const cost = spell.upgrades[lv];
       const can = this.souls() >= cost;
       this.track(
@@ -220,7 +229,7 @@ export default class MageMartScene extends Phaser.Scene {
           cy,
           btnW,
           50,
-          can ? `Upgrade\n${cost}👻` : `Need ${cost}👻`,
+          can ? `Upgrade → Lv ${level + 1}\n${cost}👻` : `Need ${cost}👻`,
           can ? COLOR_AFFORD : COLOR_DISABLED,
           can,
           () => this.doUpgrade(spell.id),

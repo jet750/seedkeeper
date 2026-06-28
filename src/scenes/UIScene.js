@@ -116,6 +116,9 @@ export default class UIScene extends Phaser.Scene {
     // a spell slot joins once purified at the Mage Mart ('secondary:unlocks'). Drives
     // the lock badge / dim in both the desktop strip and the mobile radial.
     this._unlockedSlots = new Set([1]);
+    // Per-slot metadata (Sprint magic-2): { slot → { cost, unlocked, name } } for the
+    // mana-cost + lock labels on the strip + radial ('secondary:meta').
+    this._slotMeta = {};
   }
 
   create() {
@@ -465,7 +468,19 @@ export default class UIScene extends Phaser.Scene {
         })
         .setOrigin(1, 1)
         .setDepth(6);
-      this.secondarySlots.push({ box, glyph, num });
+      // Mana-cost label under each spell slot (Sprint magic-2). Empty for ranged + any
+      // slot we have no meta for yet; filled by refreshSlotMeta. Mana-blue to read as
+      // "this costs mana", distinct from the gold slot index.
+      const meta = this._slotMeta[i + 1];
+      const cost = this.add
+        .text(0, 0, meta && meta.cost != null ? `${meta.cost}` : '', {
+          fontFamily: '"SproutLands", "Courier New", monospace',
+          fontSize: '10px',
+          color: '#7FB0E0'
+        })
+        .setOrigin(0.5, 0)
+        .setDepth(6);
+      this.secondarySlots.push({ box, glyph, num, cost });
     }
     this.refreshSecondary(this._secActive);
   }
@@ -476,9 +491,57 @@ export default class UIScene extends Phaser.Scene {
   refreshUnlocks(slots) {
     this._unlockedSlots = new Set([1, ...(slots || [])]);
     if (this.secondarySlots && this.secondarySlots.length) {
-      this.secondarySlots.forEach((s) => { s.box.destroy(); s.glyph.destroy(); s.num.destroy(); });
+      this.secondarySlots.forEach((s) => { s.box.destroy(); s.glyph.destroy(); s.num.destroy(); s.cost.destroy(); });
       this.buildSecondaryStrip();
       this.layoutAll(this.scale.width, this.scale.height);
+    }
+  }
+
+  // Per-slot mana cost + lock state changed (Sprint magic-2, 'secondary:meta'). Store it
+  // and rebuild the strip so each spell slot shows its cost. Mobile radial reads it live.
+  refreshSlotMeta(meta) {
+    this._slotMeta = {};
+    (meta || []).forEach((m) => { this._slotMeta[m.slot] = m; });
+    if (this.secondarySlots && this.secondarySlots.length) {
+      this.secondarySlots.forEach((s) => { s.box.destroy(); s.glyph.destroy(); s.num.destroy(); s.cost.destroy(); });
+      this.buildSecondaryStrip();
+      this.layoutAll(this.scale.width, this.scale.height);
+    }
+  }
+
+  // Insufficient-mana denial cue (Sprint magic-2): a brief red pulse on the mana bar +
+  // the active spell slot, so a blocked cast reads as "no mana", never a dropped input.
+  flashSpellDenied() {
+    if (this.manaFill && this.manaBorder && this.manaBorder.visible) {
+      this.manaBorder.setStrokeStyle(2, 0xff5a5a);
+      this.tweens.add({
+        targets: this.manaFill,
+        alpha: { from: 1, to: 0.35 },
+        yoyo: true,
+        duration: 90,
+        repeat: 1,
+        onComplete: () => {
+          this.manaFill.setAlpha(1);
+          this.manaBorder.setStrokeStyle(2, 0x9ab4dc);
+        }
+      });
+    }
+    if (this.secondarySlots && this.secondarySlots.length) {
+      const s = this.secondarySlots[this._secActive - 1];
+      if (s && s.box) {
+        s.box.setFillStyle(0x6a2a2a, 0.95);
+        this.tweens.add({
+          targets: s.box,
+          alpha: { from: 1, to: 0.45 },
+          yoyo: true,
+          duration: 90,
+          repeat: 1,
+          onComplete: () => {
+            s.box.setFillStyle(0x2d2926, 0.92);
+            s.box.setAlpha(1);
+          }
+        });
+      }
     }
   }
 
@@ -490,7 +553,7 @@ export default class UIScene extends Phaser.Scene {
     if (!this.secondarySlots || !this.secondarySlots.length) return; // mobile: strip removed
     if (total && total !== this.secondarySlots.length) {
       // Slot count changed (e.g. SECONDARY_SLOT_COUNT retune) — rebuild to match.
-      this.secondarySlots.forEach((s) => { s.box.destroy(); s.glyph.destroy(); s.num.destroy(); });
+      this.secondarySlots.forEach((s) => { s.box.destroy(); s.glyph.destroy(); s.num.destroy(); s.cost.destroy(); });
       this.buildSecondaryStrip();
       this.layoutAll(this.scale.width, this.scale.height);
       return;
@@ -748,6 +811,10 @@ export default class UIScene extends Phaser.Scene {
     this.subscribe('secondary:changed', (d) => this.refreshSecondary(d.slot, d.total));
     // Spell purification (Sprint magic-1): which secondary slots are now selectable.
     this.subscribe('secondary:unlocks', (d) => this.refreshUnlocks(d.slots));
+    // Per-slot mana cost + lock labels (Sprint magic-2).
+    this.subscribe('secondary:meta', (d) => this.refreshSlotMeta(d.meta));
+    // Insufficient-mana denial — grey the active slot + a soft cue, NOT a dropped input.
+    this.subscribe('spell:denied', () => this.flashSpellDenied());
     // Mana scaffold: dormant until the first spell unlock (no spells yet → unused).
     this.subscribe('mana:unlocked', (d) => this.unlockMana(d));
     this.subscribe('mana:changed', (d) => this.refreshMana(d.mana, d.max));
@@ -1372,8 +1439,23 @@ export default class UIScene extends Phaser.Scene {
         })
         .setOrigin(0.5)
         .setDepth(352);
+      // Mana-cost label above each unlocked spell node (Sprint magic-2).
+      const meta = this._slotMeta[i + 1];
+      let costText = null;
+      if (!locked && meta && meta.cost != null) {
+        costText = this.add
+          .text(ox, oy - 22, `${meta.cost}`, {
+            fontFamily: '"SproutLands", "Courier New", monospace',
+            fontSize: '12px',
+            fontStyle: 'bold',
+            color: '#7FB0E0'
+          })
+          .setOrigin(0.5)
+          .setDepth(352);
+      }
       this._radialNodes.push({ box, glyph, ang, locked });
       this._radialObjects.push(box, glyph, num);
+      if (costText) this._radialObjects.push(costText);
     }
     this.highlightRadial();
   }
@@ -1532,6 +1614,7 @@ export default class UIScene extends Phaser.Scene {
         s.box.setPosition(cx, secY);
         s.glyph.setPosition(cx, secY);
         s.num.setPosition(cx + size / 2 - 3, secY + size / 2 - 2);
+        if (s.cost) s.cost.setPosition(cx, secY + size / 2 + 1);
       });
     }
   }

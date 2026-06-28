@@ -44,6 +44,7 @@ import {
   SOUL_DROP_BASE,
   SOUL_DROP_FALLBACK,
   FARMSTAND_MARKUP,
+  SPELL_CAST_COOLDOWN_MS,
   isDevModeActive
 } from '../core/Constants.js';
 import WorldZoneSystem, { RIVER_WIDTH, CREEK_WIDTH } from '../systems/WorldZoneSystem.js';
@@ -59,6 +60,7 @@ import DaySystem from '../systems/DaySystem.js';
 import CombatSystem from '../systems/CombatSystem.js';
 import TargetingSystem from '../systems/TargetingSystem.js';
 import RegionSpawnSystem from '../systems/RegionSpawnSystem.js';
+import SpellSystem from '../systems/SpellSystem.js';
 import ParticleSystem from '../systems/ParticleSystem.js';
 import AudioSystem from '../systems/AudioSystem.js';
 import AchievementSystem from '../systems/AchievementSystem.js';
@@ -371,6 +373,9 @@ export default class GameScene extends Phaser.Scene {
     // Master world time-scale for the mobile radial slow-mo (1 = full speed). Set via
     // setTimeScale(); the radial drives it, NOT a hard pause.
     this.timeScale = 1;
+    // Spell cast cooldown (Sprint magic-2) — min interval between casts so mana can't be
+    // frame-drained; ticked down in update(). Mana is the real limiter, this just paces it.
+    this._spellCooldownRemaining = 0;
     this.seedBagTier = this.saveData.seedBagTier || 0;
     this.gardenBedTier = this.saveData.gardenBedTier || 0;
     this.wateringTier = this.saveData.wateringTier || 0;
@@ -477,6 +482,10 @@ export default class GameScene extends Phaser.Scene {
 
     // --- Projectile pool (Sprint 4 ranged) ---
     this.spawnProjectilePool();
+
+    // --- Spell pipeline (Sprint magic-2) — pooled procedural bolts + enemy overlap +
+    // the cast registry. Needs both enemy groups, the player and targeting (all above).
+    this.spellSystem = new SpellSystem(this);
 
     // --- Plant bundles (Sprint 7) — enemy drops that go straight to the bank ---
     this.bundleGroup = this.physics.add.group();
@@ -737,8 +746,14 @@ export default class GameScene extends Phaser.Scene {
       total: SECONDARY_SLOT_COUNT
     });
     // Re-broadcast spell unlock state now the HUD scene is up, so the strip/radial
-    // show the right locked vs selectable slots on a loaded run (Sprint magic-1).
+    // show the right locked vs selectable slots + per-slot mana costs on a loaded run
+    // (Sprint magic-1 + magic-2).
     this.applySpellUnlocks();
+    // If mana is already live (a loaded save with a purified spell), re-show the bar —
+    // unlockMana() guards re-entry, so the event above may not have reached the HUD.
+    if (this.player.manaUnlocked) {
+      EventBus.emit('mana:unlocked', { mana: this.player.currentMana, max: this.player.maxMana });
+    }
   }
 
   // --- Placeholder textures (Sprint 2 additive — leaves BootScene untouched) -
@@ -3980,6 +3995,28 @@ export default class GameScene extends Phaser.Scene {
     return def && def.upgrades ? def.upgrades.length : 0;
   }
 
+  // Effective spell LEVEL (Sprint magic-2). Unlock = LEVEL 1 (immediately castable); each
+  // bought upgrade adds a level. So level = 1 + upgrades when unlocked, 0 when locked, and
+  // max level = 1 + upgrades.length. This is the no-double-spend model: the unlock buys L1.
+  spellLevel(id) {
+    return this.isSpellUnlocked(id) ? 1 + this.spellUpgradeLevel(id) : 0;
+  }
+
+  spellMaxLevel(id) {
+    return 1 + this.spellMaxUpgrades(id);
+  }
+
+  // Spell id occupying a secondary slot (inverse of spellSlot): slot 2 = catalog[0] … .
+  spellIdForSlot(slot) {
+    const def = this.spellCatalog()[slot - 2];
+    return def ? def.id : null;
+  }
+
+  spellManaCost(id) {
+    const def = this.spellDef(id);
+    return def && def.manaCost != null ? def.manaCost : 0;
+  }
+
   // Cost of the NEXT action on a spell: its unlock price if locked, else the next
   // upgrade tier's price, or null if already fully upgraded.
   spellNextCost(id) {
@@ -4019,14 +4056,91 @@ export default class GameScene extends Phaser.Scene {
 
   // Push the set of selectable secondary slots to the player (gates selectSecondary)
   // and broadcast it so the HUD strip + mobile radial reflect locked vs unlocked.
-  // Slot 1 (ranged) is always selectable; each unlocked spell adds its slot.
+  // Slot 1 (ranged) is always selectable; each unlocked spell adds its slot. Also goes
+  // live on mana the first time ANY spell is purified, and broadcasts per-slot meta
+  // (mana cost + name) so the strip/radial can label each slot (Sprint magic-2).
   applySpellUnlocks() {
     const slots = [1];
+    let anyUnlocked = false;
     this.spellCatalog().forEach((s, i) => {
-      if (this.isSpellUnlocked(s.id)) slots.push(i + 2);
+      if (this.isSpellUnlocked(s.id)) {
+        slots.push(i + 2);
+        anyUnlocked = true;
+      }
     });
     if (this.player && this.player.setUnlockedSecondary) this.player.setUnlockedSecondary(slots);
+    // First purification brings the mana pool online (the HUD bar appears).
+    if (anyUnlocked && this.player && !this.player.manaUnlocked) this.player.unlockMana();
     EventBus.emit('secondary:unlocks', { slots });
+    EventBus.emit('secondary:meta', { meta: this.secondarySlotMeta() });
+  }
+
+  // Per-secondary-slot HUD metadata: slot 1 = ranged, slots 2.. = each catalog spell
+  // with its mana cost + unlock state (Sprint magic-2). Drives the cost/lock labels on
+  // the desktop strip + mobile radial.
+  secondarySlotMeta() {
+    const meta = [{ slot: 1, type: 'ranged', name: 'Ranged', cost: null, unlocked: true }];
+    this.spellCatalog().forEach((s, i) => {
+      meta.push({
+        slot: i + 2,
+        type: 'spell',
+        id: s.id,
+        name: s.name,
+        cost: this.spellManaCost(s.id),
+        unlocked: this.isSpellUnlocked(s.id)
+      });
+    });
+    return meta;
+  }
+
+  // --- Spell casting (Sprint magic-2) ---------------------------------------
+  // The mana-gated cast path. Player.fireSecondary routes a SPELL slot here (slot 1 stays
+  // on the ranged/ammo path). NEVER gated on ammo or bow-equip — only on MANA + a short
+  // cast cooldown. The actual effect is dispatched to the spell registry (Phase C); a
+  // spell with no implemented effect casts a small fizzle (inert-but-owned).
+
+  castSecondarySpell(slot) {
+    const id = this.spellIdForSlot(slot);
+    if (!id || !this.isSpellUnlocked(id)) return; // locked slot — unreachable in normal play
+    if (this._spellCooldownRemaining > 0) return; // mid-cooldown — ignore (not a dropped input)
+    // Inert-but-owned spell (unlocked, but its effect isn't implemented yet — the five
+    // non-Ember spells): a harmless fizzle, and NO mana spent. Only Ember costs mana.
+    if (!this.spellSystem || !this.spellSystem.hasEffect(id)) {
+      this.spellCastFlash(this.player.x, this.player.y, 0x9a6ad0);
+      this._spellCooldownRemaining = SPELL_CAST_COOLDOWN_MS;
+      return;
+    }
+    const cost = this.spellManaCost(id);
+    if (!this.player.canCast(cost)) {
+      // Insufficient mana — legible denial, NOT a silent dropped input.
+      EventBus.emit('spell:denied', { slot, id, cost });
+      return;
+    }
+    this.player.spendMana(cost);
+    this._spellCooldownRemaining = SPELL_CAST_COOLDOWN_MS;
+    this.castSpellEffect(id, this.spellLevel(id));
+  }
+
+  // Dispatch an implemented spell's effect to the spell pipeline (Sprint magic-2). Ember
+  // is the implemented template (semi-homing bolt + tier AoE). Reached only for spells
+  // with a registered behaviour (inert ones short-circuit in castSecondarySpell).
+  castSpellEffect(id, level) {
+    this.spellSystem.cast(id, level);
+    EventBus.emit('spell:cast', { id, level });
+  }
+
+  // A small procedural muzzle/cast flash (a ring that expands + fades). Reused as the
+  // inert-spell fizzle and the cast tell. Procedural only — no sprite sheets.
+  spellCastFlash(x, y, color) {
+    const ring = this.add.circle(x, y, 10, color, 0).setStrokeStyle(3, color, 0.9).setDepth(11).setScale(0.4);
+    this.tweens.add({
+      targets: ring,
+      scale: 2.4,
+      alpha: 0,
+      duration: 240,
+      ease: 'Quad.easeOut',
+      onComplete: () => ring.destroy()
+    });
   }
 
   // --- Coin-funded gear -----------------------------------------------------
@@ -4203,19 +4317,26 @@ export default class GameScene extends Phaser.Scene {
     //   3) mobile with no lock (forced auto, shouldn't happen) — cardinal facing shot.
     // Facing then snaps to the shot direction so the sprite, melee arc and cone follow
     // where the player actually aimed.
+    const aim = this.resolveAim(x, y);
+    p.fire(x, y, facing, damage, range, speed, { angle: aim.angle, target: aim.target });
+    if (this.player) this.player.faceTowardAngle(aim.angle);
+  }
+
+  // Shared aim resolution (Sprint magic-2) for ranged shots AND spell bolts. Priority:
+  //   1) a locked target (manual click-lock or the auto/weak pick) → fire AT it (homing);
+  //   2) desktop with no lock → MOUSE-LED, fire at the cursor's world position;
+  //   3) mobile with no lock (forced auto, rare) → the player's current facing angle.
+  // Returns { angle, target } — target is the homing enemy or null.
+  resolveAim(x, y) {
     const target = this.targetingSystem ? this.targetingSystem.lockTarget() : null;
-    let angle = null;
-    if (target) {
-      angle = Phaser.Math.Angle.Between(x, y, target.x, target.y);
-      p.fire(x, y, facing, damage, range, speed, { angle, target });
-    } else if (!this._mobile) {
+    if (target) return { angle: Phaser.Math.Angle.Between(x, y, target.x, target.y), target };
+    if (!this._mobile) {
       const ptr = this.input.activePointer;
-      angle = Phaser.Math.Angle.Between(x, y, ptr.worldX, ptr.worldY);
-      p.fire(x, y, facing, damage, range, speed, { angle });
-    } else {
-      p.fire(x, y, facing, damage, range, speed); // cardinal fallback
+      return { angle: Phaser.Math.Angle.Between(x, y, ptr.worldX, ptr.worldY), target: null };
     }
-    if (angle != null && this.player) this.player.faceTowardAngle(angle);
+    const FACING_ANGLE = { right: 0, down: Math.PI / 2, left: Math.PI, up: -Math.PI / 2 };
+    const a = FACING_ANGLE[this.player && this.player.facing];
+    return { angle: a != null ? a : Math.PI / 2, target: null };
   }
 
   // --- Combat input helpers (Sprint control-scheme-combat-input) ------------
@@ -4523,6 +4644,7 @@ export default class GameScene extends Phaser.Scene {
     this._playtimeMs += delta;
 
     this.player.update(dt);
+    if (this._spellCooldownRemaining > 0) this._spellCooldownRemaining = Math.max(0, this._spellCooldownRemaining - sdelta);
     // Mobile throttles enemy AI to every Nth frame (passing the scaled dt so
     // timers stay correct); desktop updates every enemy every frame.
     if (this._mobile && this.slimeUpdateInterval > 1) {

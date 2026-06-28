@@ -12,7 +12,10 @@ import {
   GARDEN_TOP,
   GARDEN_BOTTOM,
   SECONDARY_SLOT_COUNT,
-  MANA_DEFAULT_MAX
+  MANA_DEFAULT_MAX,
+  MANA_REGEN_PER_SEC,
+  MANA_REGEN_FROM_REGEN_NODE,
+  MANA_PER_SPELLPOWER
 } from '../core/Constants.js';
 import Seed from './Seed.js';
 
@@ -166,6 +169,7 @@ export default class Player extends Phaser.Physics.Arcade.Sprite {
     this.manaUnlocked = false;
     this.maxMana = 0;
     this.currentMana = 0;
+    this._lastManaEmit = 0; // last whole-mana value broadcast (regen throttle, Sprint magic-2)
 
     // --- Upgrades & gear (Sprint 4; reconciled Sprint 10) ---
     // Stat multipliers/bonuses recomputed from scratch on each upgrade (no drift).
@@ -179,7 +183,7 @@ export default class Player extends Phaser.Physics.Arcade.Sprite {
       critChance: 0, // beanstalk — added crit chance
       harvestBonus: 0, // wheat — seed-collect range %
       rangedDamage: 0, // pineapple — projectile damage %
-      spellPower: 0, // blue_flower — wired now, spells land later
+      spellPower: 0, // blue_flower — scales spell damage/AoE + max mana (Sprint magic-2)
       dashBonus: 0, // cucumber — dash cooldown↓ / distance↑
       healthRegen: 0, // red_berry — passive HP/sec
       timerBonus: 0 // legacy (no tree feeds this)
@@ -372,6 +376,8 @@ export default class Player extends Phaser.Physics.Arcade.Sprite {
 
     // Passive HP regen (red_berry healthRegen tree), paused briefly after a hit.
     this.tickRegen(dtMs);
+    // Passive mana regen (Sprint magic-2) — base rate + red_berry contribution.
+    this.tickManaRegen(dtMs);
 
     // Hold-to-strafe (Shift): persistent enemy-tracking lock (Sprint combat-input-mobile-
     // consolidated). On the rising edge, lock the specific current/nearest enemy; while
@@ -680,6 +686,13 @@ export default class Player extends Phaser.Physics.Arcade.Sprite {
     this.maxHP = effectiveMaxHP;
     this.currentHP = Math.max(1, Math.floor(this.maxHP * hpRatio));
 
+    // Max mana tracks the blue_flower spellPower node once mana is live (Sprint magic-2).
+    if (this.manaUnlocked) {
+      this.maxMana = this.effectiveMaxMana();
+      this.currentMana = Math.min(this.currentMana, this.maxMana);
+      EventBus.emit('mana:changed', { mana: this.currentMana, max: this.maxMana });
+    }
+
     EventBus.emit('player:statsChanged', { maxHP: this.maxHP, currentHP: this.currentHP });
   }
 
@@ -803,16 +816,19 @@ export default class Player extends Phaser.Physics.Arcade.Sprite {
     }
   }
 
-  // Fire the active secondary (R / right-click / mobile Ranged-Magic). Slot 1 routes to
-  // the existing ranged system; slots 2-5 are inert selectors, so firing them is a
-  // deliberate no-op until the spell sprint wires real effects.
+  // Fire the active secondary (R / right-click / mobile Ranged-Magic). Branches on the
+  // loaded ability's TYPE (Sprint magic-2): slot 1 = RANGED → the bow+ammo gate inside
+  // fireRanged()/canFireRanged(); slots 2+ = SPELL → the scene's spell cast, which is
+  // gated on MANA only and NEVER on ammo or bow-equip. A spell with no bow equipped
+  // still casts as long as mana suffices.
   fireSecondary() {
     if (this.activeSecondary === 1) {
       this.fireRanged();
       return;
     }
-    // Inert spell slot — selected, nothing to cast yet. The spell sprint will check
-    // canCast(cost)/spendMana(cost) here for the active slot's spell.
+    // Spell slot — delegate to the scene's spell cast (mana-gated). The scene maps the
+    // slot → spell id, checks unlock + mana, spends, and runs the effect.
+    if (this.scene && this.scene.castSecondarySpell) this.scene.castSecondarySpell(this.activeSecondary);
   }
 
   // --- Mana gating scaffold (Sprint control-scheme-combat-input; DORMANT) ----
@@ -820,10 +836,18 @@ export default class Player extends Phaser.Physics.Arcade.Sprite {
   // unlockMana() is never called in normal play (a dev cheat reveals it for HUD
   // testing), so the bar stays hidden and these gates always read "locked".
 
-  unlockMana(max = MANA_DEFAULT_MAX) {
+  // Max mana = base + a small bump from the blue_flower spellPower node (Sprint magic-2).
+  effectiveMaxMana() {
+    return Math.round(MANA_DEFAULT_MAX + MANA_PER_SPELLPOWER * (this.statBonuses.spellPower || 0));
+  }
+
+  unlockMana() {
+    if (this.manaUnlocked) return; // already live — don't refill on re-unlock
     this.manaUnlocked = true;
-    this.maxMana = max;
-    this.currentMana = max;
+    this.maxMana = this.effectiveMaxMana();
+    this.currentMana = this.maxMana;
+    this._manaRegenAccum = 0;
+    this._lastManaEmit = Math.floor(this.currentMana);
     EventBus.emit('mana:unlocked', { mana: this.currentMana, max: this.maxMana });
   }
 
@@ -834,8 +858,24 @@ export default class Player extends Phaser.Physics.Arcade.Sprite {
   spendMana(cost) {
     if (!this.canCast(cost)) return false;
     this.currentMana = Math.max(0, this.currentMana - cost);
+    this._lastManaEmit = Math.floor(this.currentMana);
     EventBus.emit('mana:changed', { mana: this.currentMana, max: this.maxMana });
     return true;
+  }
+
+  // Passive mana regen (Sprint magic-2), mirroring tickRegen: a flat base rate plus the
+  // red_berry healthRegen node's contribution. Mana is a float; emit only when the
+  // whole-number readout changes so the HUD bar isn't spammed every frame.
+  tickManaRegen(dtMs) {
+    if (!this.manaUnlocked || this.isDead) return;
+    if (this.currentMana >= this.maxMana) return;
+    const rate = MANA_REGEN_PER_SEC + MANA_REGEN_FROM_REGEN_NODE * (this.statBonuses.healthRegen || 0);
+    this.currentMana = Math.min(this.maxMana, this.currentMana + rate * (dtMs / 1000));
+    const whole = Math.floor(this.currentMana);
+    if (whole !== this._lastManaEmit || this.currentMana >= this.maxMana) {
+      this._lastManaEmit = whole;
+      EventBus.emit('mana:changed', { mana: this.currentMana, max: this.maxMana });
+    }
   }
 
   // --- Ranged attack (Sprint 4) ---------------------------------------------
