@@ -61,7 +61,7 @@
   "spells": {
     "_comment": "Spell catalog — souls UNLOCK + UPGRADE these at the Mage Mart (purification). Listed cheapest→most-expensive unlock (Ember cheapest, Sprout Sentinel most expensive); any-order, price-bounded. `unlock`/`upgrades` are in SOULS; `manaCost` is the per-cast MANA. Sprint magic-2: unlock = LEVEL 1 (immediately castable); each `upgrades` entry buys the next level (L2..L4) — so a spell's max level = 1 + upgrades.length. Ember is implemented end-to-end as the reusable template; the other five unlock to inert-but-owned until their cast is implemented against the same seam. Order in this list = secondary-slot order (slot 2 = first entry … slot 7 = last). All numbers TUNE.",
     "list": [
-      { "id": "ember", "name": "Ember", "flavor": "A spark of cleansed flame. The first ember of the purified grove.", "unlock": 15, "upgrades": [20, 35, 55], "manaCost": 12, "tierNotes": ["base bolt", "+damage", "impact AoE", "wide AoE"] },
+      { "id": "ember", "name": "Ember", "flavor": "A spark of cleansed flame. The first ember of the purified grove.", "unlock": 15, "upgrades": [20, 35, 55], "manaCost": 22, "tierNotes": ["base bolt", "+damage", "impact AoE", "wide AoE"] },
       { "id": "thornlash", "name": "Thornlash", "flavor": "A whip of barbed bramble, lashed from the hedge.", "unlock": 30, "upgrades": [30, 50, 80], "manaCost": 16 },
       { "id": "bramble_ward", "name": "Bramble Ward", "flavor": "A thorned shield of living hedge that turns the corrupted aside.", "unlock": 55, "upgrades": [45, 75, 110], "manaCost": 14 },
       { "id": "pollen_bloom", "name": "Pollen Bloom", "flavor": "A choking cloud of golden spores that withers what it touches.", "unlock": 85, "upgrades": [60, 95, 140], "manaCost": 22 },

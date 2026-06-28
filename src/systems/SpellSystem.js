@@ -65,10 +65,11 @@ export default class SpellSystem {
   }
 
   // AoE damage helper: damage every active enemy within `radius` of (x,y), skipping the
-  // direct-hit enemy (it already took the bolt's damage). Plays a procedural blast ring.
-  damageInRadius(x, y, radius, damage, exclude) {
+  // direct-hit enemy (it already took the bolt's damage). Plays a procedural blast ring
+  // sized to `radius` and styled to the casting `tier`.
+  damageInRadius(x, y, radius, damage, exclude, tier) {
     if (radius <= 0 || damage <= 0) {
-      if (radius > 0) this.aoeRingVFX(x, y, radius);
+      if (radius > 0) this.aoeRingVFX(x, y, radius, tier);
       return;
     }
     const r2 = radius * radius;
@@ -79,24 +80,44 @@ export default class SpellSystem {
       const dy = e.y - y;
       if (dx * dx + dy * dy <= r2) e.takeDamage(damage, { x, y });
     }
-    this.aoeRingVFX(x, y, radius);
+    this.aoeRingVFX(x, y, radius, tier);
   }
 
-  // Procedural impact blast — an expanding, fading ring at the hit point. Shape + motion
-  // (a growing ring) reads as a blast regardless of colour.
-  aoeRingVFX(x, y, radius) {
-    const ring = this.scene.add
-      .circle(x, y, radius, 0xff8a3c, 0)
-      .setStrokeStyle(3, 0xffd24a, 0.95)
+  // Procedural impact blast — a double ring + a quick core flash that expand to the blast's
+  // TRUE radius and fade, so the visual lands exactly on the hitbox. The growing-ring SHAPE
+  // and the radius itself (52px L3 vs 112px L4) carry the read for colourblind players; the
+  // tier colour (warm L3 → blue L4, matching the bolt) is a secondary, redundant cue.
+  aoeRingVFX(x, y, radius, tier) {
+    const blue = (tier || 0) >= 4;
+    const stroke = blue ? 0x6cc4ff : 0xffd24a;
+    const fill = blue ? 0x2e7bff : 0xff8a3c;
+    // Outer ring — grows from a tight core to the full blast radius.
+    const outer = this.scene.add
+      .circle(x, y, radius, fill, 0.18)
+      .setStrokeStyle(4, stroke, 0.95)
       .setDepth(11)
-      .setScale(0.2);
+      .setScale(0.22);
     this.scene.tweens.add({
-      targets: ring,
+      targets: outer,
       scale: 1,
       alpha: 0,
-      duration: 260,
+      duration: 380,
       ease: 'Quad.easeOut',
-      onComplete: () => ring.destroy()
+      onComplete: () => outer.destroy()
+    });
+    // Inner ring — a second, lighter ring trailing the outer one for a layered blast read.
+    const inner = this.scene.add
+      .circle(x, y, radius, fill, 0)
+      .setStrokeStyle(2, 0xffffff, 0.8)
+      .setDepth(11)
+      .setScale(0.1);
+    this.scene.tweens.add({
+      targets: inner,
+      scale: 0.7,
+      alpha: 0,
+      duration: 300,
+      ease: 'Quad.easeOut',
+      onComplete: () => inner.destroy()
     });
   }
 }

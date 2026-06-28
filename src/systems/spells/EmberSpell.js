@@ -15,13 +15,15 @@ import { EMBER_TIERS, EMBER_BOLT_SPEED, EMBER_BOLT_RANGE } from '../../core/Cons
 export default class EmberSpell extends Spell {
   cast(system, ctx) {
     const { level, spellPower, x, y, angle, target } = ctx;
-    const tier = EMBER_TIERS[Math.max(0, Math.min(EMBER_TIERS.length - 1, level - 1))];
+    const lvl = Math.max(1, Math.min(EMBER_TIERS.length, level)); // 1..4 (drives tier VFX)
+    const tier = EMBER_TIERS[lvl - 1];
     const power = 1 + (spellPower || 0); // blue_flower magic node (≤ +50%)
     system.spawnBolt({
       x,
       y,
       angle,
       target,
+      tier: lvl, // per-tier bolt size/colour/streak + AoE-ring styling (SpellBolt)
       speed: EMBER_BOLT_SPEED,
       range: EMBER_BOLT_RANGE,
       damage: Math.round(tier.damage * power),

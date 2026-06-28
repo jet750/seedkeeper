@@ -212,7 +212,7 @@ export const MANA_DEFAULT_MAX = 100; // base mana pool once unlocked // TUNE
 // healthRegen node (so the regen stat tree feeds BOTH HP and mana). Max mana gets a
 // small bump from the blue_flower spellPower node. spellPower (0..0.5 at max) also
 // scales spell power/radius (applied per-spell). All TUNE.
-export const MANA_REGEN_PER_SEC = 5; // flat mana/sec regenerated // TUNE
+export const MANA_REGEN_PER_SEC = 3; // flat mana/sec regenerated — lowered from 5 so sustained casting is a real drain (Ember rebalance) // TUNE
 export const MANA_REGEN_FROM_REGEN_NODE = 2.5; // × red_berry healthRegen (HP/s) → extra mana/s // TUNE
 export const MANA_PER_SPELLPOWER = 40; // × blue_flower spellPower → +max mana (≤ +20 at cap) // TUNE
 export const SPELL_CAST_COOLDOWN_MS = 320; // min interval between casts so mana isn't frame-drained // TUNE
@@ -228,11 +228,14 @@ export const EMBER_BOLT_RANGE = 380; // px before it fizzles // TUNE
 export const EMBER_HOMING_RAD_PER_S = 5.5; // semi-homing turn rate (stronger than the bow's 3.5) // TUNE
 // Per-level tier table (index = level-1). damage = direct-hit damage; aoeRadius = impact
 // blast radius (0 = single-target); aoeDamageMult = blast damage as a fraction of `damage`.
+// Damage curve shifted DOWN by 4 from the original 12/20/24/28 (Ember rebalance): the
+// L1→L4 progression (deltas +8/+4/+4) is preserved, but the whole curve drops so Ember is
+// "kill this one thing," not "delete the army" — melee/ranged stay relevant for trash. // TUNE
 export const EMBER_TIERS = [
-  { damage: 12, aoeRadius: 0,   aoeDamageMult: 0 },    // L1 — base bolt (the unlock)
-  { damage: 20, aoeRadius: 0,   aoeDamageMult: 0 },    // L2 — +damage
-  { damage: 24, aoeRadius: 52,  aoeDamageMult: 0.6 },  // L3 — small impact AoE on hit
-  { damage: 28, aoeRadius: 112, aoeDamageMult: 0.7 }   // L4 — wide "diameter nuke" AoE
+  { damage: 8,  aoeRadius: 0,   aoeDamageMult: 0 },    // L1 — base bolt (the unlock)
+  { damage: 16, aoeRadius: 0,   aoeDamageMult: 0 },    // L2 — +damage
+  { damage: 20, aoeRadius: 52,  aoeDamageMult: 0.6 },  // L3 — small impact AoE on hit
+  { damage: 24, aoeRadius: 112, aoeDamageMult: 0.7 }   // L4 — wide "diameter nuke" AoE
 ];
 
 // --- Corrupted souls currency (Sprint magic-1) ----------------------------
