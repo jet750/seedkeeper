@@ -366,7 +366,13 @@ export default class SpellSystem {
       barrier: null
     };
     this._buildFieldDecal(f);
-    if (f.blocks) this._buildBarrier(f);
+    // NO physical barrier (Sprint zone-spell-fix, STRUCTURAL). The L4 `blocks` tier used to
+    // add a static collider the size of the WHOLE zone (_buildBarrier) — Arcade then separated
+    // any enemy overlapping that disc by shoving it to the rim, so an enemy already inside (or
+    // one the zone was dropped ON via the `blocking` placement) was EJECTED on cast. Thornfield
+    // is now a pure zone of control: enemies inside STAY inside, taking the slow (_applySlows,
+    // per frame) + DoT (_tickFields, noKnockback). `blocks` now drives ONLY the denser barrier
+    // VISUAL (a max-tier read), never physics. A real "block" feel is a separate design pass.
     this.fields.push(f);
     return f;
   }
@@ -413,8 +419,11 @@ export default class SpellSystem {
     f.timerRing = ring;
   }
 
-  // Invisible static circular collider that blocks enemy pathing (Thornfield L4).
-  // Added to barrierGroup, which already colliders against both enemy groups.
+  // DORMANT (Sprint zone-spell-fix): no longer called — spawnField stopped building this so
+  // Thornfield never ejects enemies. Kept as the seam for a future, deliberate "block at max
+  // tier" design pass (it would need a thin RING collider, not this full-zone disc, to avoid
+  // shoving enemies already inside). Invisible static circular collider in barrierGroup, which
+  // already colliders against both enemy groups.
   _buildBarrier(f) {
     const b = this.scene.add.circle(f.x, f.y, f.radius, 0x000000, 0);
     this.scene.physics.add.existing(b, true); // static body

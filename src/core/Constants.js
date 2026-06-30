@@ -372,11 +372,14 @@ export const ARC_STRIKE_RANGE = 360; // px the initial auto-lock strike can reac
 // lingering ground-ice FIELD (persistent slow zone w/ floor decal). L4 +radius.
 // slowMult = velocity multiplier while chilled (lower = slower; ~0.3 reads as a
 // near-root). novaRadius 0 = single-target; fieldMs 0 = no lingering field. // TUNE
+// Radii DIALED DOWN (Sprint zone-spell-fix): the old nova 140 / field 190 (× up to 1.5
+// spellPower) rendered far larger than the portrait viewport at the mobile zoom. New values
+// keep the L1<L2<L3<L4 growth but bound the largest zone comfortably sub-screen. // TUNE
 export const FROST_TIERS = [
-  { damage: 6, slowMult: 0.30, slowMs: 1600, novaRadius: 0,   fieldRadius: 0,   fieldMs: 0    }, // L1 — slow+root one
-  { damage: 6, slowMult: 0.30, slowMs: 1600, novaRadius: 120, fieldRadius: 0,   fieldMs: 0    }, // L2 — nova freeze
-  { damage: 6, slowMult: 0.35, slowMs: 1600, novaRadius: 120, fieldRadius: 130, fieldMs: 4000 }, // L3 — lingering field
-  { damage: 6, slowMult: 0.35, slowMs: 1600, novaRadius: 140, fieldRadius: 190, fieldMs: 4500 }  // L4 — +field radius
+  { damage: 6, slowMult: 0.30, slowMs: 1600, novaRadius: 0,  fieldRadius: 0,  fieldMs: 0    }, // L1 — slow+root one
+  { damage: 6, slowMult: 0.30, slowMs: 1600, novaRadius: 52, fieldRadius: 0,  fieldMs: 0    }, // L2 — nova freeze
+  { damage: 6, slowMult: 0.35, slowMs: 1600, novaRadius: 58, fieldRadius: 58, fieldMs: 4000 }, // L3 — lingering field
+  { damage: 6, slowMult: 0.35, slowMs: 1600, novaRadius: 64, fieldRadius: 68, fieldMs: 4500 }  // L4 — +field radius
 ];
 
 // --- Thornfield (ground denial) — "deny this ground" -------------------------
@@ -384,11 +387,15 @@ export const FROST_TIERS = [
 // player). Slows + DoT-damages enemies pathing through; NEVER touches the player
 // (fields only iterate scene.enemies). Ladder: L2 +size, L3 +DoT (more/faster
 // ticks), L4 dense enough to BLOCK pathing (a static collider barrier). // TUNE
+// Radii DIALED DOWN (Sprint zone-spell-fix): old 90→150 (× up to 1.5 spellPower) was larger
+// than the portrait viewport. New values stay sub-screen with the tier growth intact. `blocks`
+// (L4) now drives ONLY the denser barrier VISUAL — the physical eject was removed (see
+// SpellSystem.spawnField). // TUNE
 export const THORNFIELD_TIERS = [
-  { fieldRadius: 90,  fieldMs: 5000, dmgPerTick: 3, tickMs: 700, slowMult: 0.55, blocks: false }, // L1 — vine patch
-  { fieldRadius: 130, fieldMs: 5000, dmgPerTick: 3, tickMs: 700, slowMult: 0.55, blocks: false }, // L2 — +size
-  { fieldRadius: 130, fieldMs: 6000, dmgPerTick: 6, tickMs: 480, slowMult: 0.50, blocks: false }, // L3 — +DoT
-  { fieldRadius: 150, fieldMs: 6000, dmgPerTick: 6, tickMs: 480, slowMult: 0.40, blocks: true  }  // L4 — dense barrier
+  { fieldRadius: 38, fieldMs: 5000, dmgPerTick: 3, tickMs: 700, slowMult: 0.55, blocks: false }, // L1 — vine patch
+  { fieldRadius: 48, fieldMs: 5000, dmgPerTick: 3, tickMs: 700, slowMult: 0.55, blocks: false }, // L2 — +size
+  { fieldRadius: 56, fieldMs: 6000, dmgPerTick: 6, tickMs: 480, slowMult: 0.50, blocks: false }, // L3 — +DoT
+  { fieldRadius: 62, fieldMs: 6000, dmgPerTick: 6, tickMs: 480, slowMult: 0.40, blocks: true  }  // L4 — dense patch (visual only)
 ];
 export const THORNFIELD_AHEAD_DIST = 110; // px ahead of the player to plant when no target is locked // TUNE
 
@@ -398,11 +405,14 @@ export const THORNFIELD_AHEAD_DIST = 110; // px ahead of the player to plant whe
 // the guard ends. L3/L4 are a STATIC invulnerability DOME (cast-and-forget): full
 // invuln for durationMs, attacking locked the whole time. domeRadius drives the
 // pulsing-ring VFX size. // TUNE (all)
+// domeRadius DIALED DOWN (Sprint zone-spell-fix): the dome must read as a PERSONAL shield
+// around the player, not a screen-filling arena (74 at the mobile zoom nearly filled a portrait
+// screen). Smaller, still growing per tier. Not scaled by spellPower (passed as-is). // TUNE
 export const BULWARK_TIERS = [
-  { mode: 'reactive', armMs: 1400, negateMs: 700,  domeRadius: 46 }, // L1 — reactive block
-  { mode: 'reactive', armMs: 1800, negateMs: 1100, domeRadius: 50 }, // L2 — longer block
-  { mode: 'dome',     durationMs: 3000, domeRadius: 62 },            // L3 — invuln dome
-  { mode: 'dome',     durationMs: 4500, domeRadius: 74 }             // L4 — +dome duration
+  { mode: 'reactive', armMs: 1400, negateMs: 700,  domeRadius: 30 }, // L1 — reactive block
+  { mode: 'reactive', armMs: 1800, negateMs: 1100, domeRadius: 34 }, // L2 — longer block
+  { mode: 'dome',     durationMs: 3000, domeRadius: 40 },            // L3 — invuln dome
+  { mode: 'dome',     durationMs: 4500, domeRadius: 46 }             // L4 — +dome duration
 ];
 
 // ════════════════════════════════════════════════════════════════════════════
