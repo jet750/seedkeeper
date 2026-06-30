@@ -80,7 +80,6 @@
       "chaseSpeed": 50,
       "detectRange": 150,
       "loseRange": 300,
-      "bundleDropChance": 0.5,
       "respawnCooldownMs": 180000,
       "levelCurve": {
         "hp": [1, 1.4, 1.9, 2.5, 3.2],
@@ -125,7 +124,6 @@
       "chaseSpeed": 80,
       "detectRange": 120,
       "loseRange": 400,
-      "bundleDropChance": 0.7,
       "respawnCooldownMs": 180000,
       "levelCurve": {
         "hp": [1, 1.35, 1.8, 2.3, 2.9],

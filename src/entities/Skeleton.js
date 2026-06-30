@@ -12,9 +12,6 @@ import EventBus from '../core/EventBus.js';
 import { GARDEN_LEFT, GARDEN_RIGHT, GARDEN_TOP, GARDEN_BOTTOM } from '../core/Constants.js';
 import { spawnEnemyAlert } from './enemyIndicator.js';
 import { createLevelMarker, setMarkerLevel, positionLevelMarker } from './enemyLevelMarker.js';
-import Seed from './Seed.js';
-import PlantBundle from './PlantBundle.js';
-import { getRandomSeedDrop, getRandomBundleDrop } from '../systems/lootTable.js';
 
 // patrol/chase → WIND_UP (red flash + rear-back, committed) → overhead strike →
 // RECOVER (long, vulnerable punish window). The wind-up is dodgeable with a dash
@@ -27,7 +24,6 @@ const KNOCKBACK_VELOCITY = 160; // heavier than a slime — takes less of a shov
 const KNOCKBACK_MS = 250;
 const DAMAGE_TEXT_OFFSET = 24;
 const DEATH_FADE_MS = 400;
-const DROP_SCATTER = 30;
 
 // Drawn at 1x (Sprint 13: halved from 2x to match the player and read correctly
 // against the hand-built world). Visual only — the physics body is set up
@@ -481,9 +477,9 @@ export default class Skeleton extends Phaser.Physics.Arcade.Sprite {
       alpha: 0,
       duration: DEATH_FADE_MS,
       onComplete: () => {
-        this.dropBundle();
-        this.dropSeeds();
-        EventBus.emit('enemy:died', { type: 'skeleton', position: { x: this.x, y: this.y }, level: this.level }); // level → souls drop (Sprint magic-1)
+        // Kill loot (coins + souls + rare full-plant) is handled centrally in
+        // GameScene.onEnemyDied off this event. // coins + souls scale level
+        EventBus.emit('enemy:died', { type: 'skeleton', position: { x: this.x, y: this.y }, level: this.level });
         const idx = this.scene.enemies.indexOf(this);
         if (idx > -1) this.scene.enemies.splice(idx, 1);
         if (this.levelMarker) {
@@ -492,28 +488,6 @@ export default class Skeleton extends Phaser.Physics.Arcade.Sprite {
         }
         this.destroy();
       }
-    });
-  }
-
-  // Skeletons have a high chance to drop a pre-grown plant bundle (Sprint 7).
-  dropBundle() {
-    const threshold = this.scene.gameData.enemies.skeleton.bundleDropChance || 0;
-    if (Math.random() > threshold) return;
-    const plantType = getRandomBundleDrop(this.scene.gameData);
-    new PlantBundle(this.scene, this.x, this.y, plantType, this.scene.gameData);
-  }
-
-  dropSeeds() {
-    // Guaranteed deep-forest magic seed (red_berry) + one weighted-random seed.
-    const drops = ['red_berry', getRandomSeedDrop(this.scene.gameData)];
-    drops.forEach((plantType) => {
-      new Seed(
-        this.scene,
-        this.x + (Math.random() - 0.5) * DROP_SCATTER,
-        this.y + (Math.random() - 0.5) * DROP_SCATTER,
-        plantType,
-        this.scene.gameData
-      );
     });
   }
 

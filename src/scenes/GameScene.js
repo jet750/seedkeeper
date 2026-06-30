@@ -44,6 +44,9 @@ import {
   RADIAL_TIMESCALE,
   SOUL_DROP_BASE,
   SOUL_DROP_FALLBACK,
+  COIN_DROP_BASE,
+  COIN_DROP_FALLBACK,
+  FULL_PLANT_DROP_CHANCE,
   FARMSTAND_MARKUP,
   CHEST_SEED_CAPACITY,
   SPELL_CAST_COOLDOWN_MS,
@@ -58,6 +61,8 @@ import Seed, { SEED_SCALE } from '../entities/Seed.js';
 import GardenBed from '../entities/GardenBed.js';
 import WorldDetail from '../entities/WorldDetail.js';
 import Projectile from '../entities/Projectile.js';
+import PlantBundle from '../entities/PlantBundle.js';
+import { getRandomBundleDrop } from '../systems/lootTable.js';
 import DaySystem from '../systems/DaySystem.js';
 import CombatSystem from '../systems/CombatSystem.js';
 import TargetingSystem from '../systems/TargetingSystem.js';
@@ -3835,15 +3840,37 @@ export default class GameScene extends Phaser.Scene {
   onEnemyDied({ type, position, level, light }) {
     this.runStats.enemiesDefeated++;
     if (this.runStats.killsByType[type] !== undefined) this.runStats.killsByType[type]++;
-    // Corrupted souls drop (Sprint magic-1): BASE[type] × enemy level, banked at once.
-    // Split-children (`light`) award none — they exist for pressure, not income, so
-    // the souls economy can't be farmed by baiting dark-slime splits. // TUNE
+    // Kill loot (Sprint survivability-drops): coins + souls + a rare full-grown plant.
+    // Coins and souls both scale BASE[type] × enemy level, banked at once (coins mirror
+    // the souls faucet). This REPLACES the old enemy seed drops — seeds now come only
+    // from the daily reroll, wild map seeds, and growing. Split-children (`light`) award
+    // nothing: they exist for pressure, not income, so loot can't be farmed by baiting
+    // dark-slime splits. All amounts/chances are TUNE (see Constants).
     if (!light) {
       const lvl = Phaser.Math.Clamp(Math.round(level || 1), 1, 5);
+
       const soulGain = (SOUL_DROP_BASE[type] || SOUL_DROP_FALLBACK) * lvl;
       if (soulGain > 0) {
         this.addSouls(soulGain);
         EventBus.emit('souls:dropped', { amount: soulGain, position });
+      }
+
+      const coinGain = (COIN_DROP_BASE[type] || COIN_DROP_FALLBACK) * lvl;
+      if (coinGain > 0) {
+        this.addCoins(coinGain);
+        EventBus.emit('ui:floatText', {
+          x: position.x,
+          y: position.y - 10,
+          text: `+${coinGain}`,
+          color: '#D4A83F' // accent-gold — reads as coins
+        });
+      }
+
+      // Small chance of a full-grown plant → PlantBundle drops in-world; on pickup it
+      // banks straight to the sellable plant inventory (collectBundle). Pool/weighting
+      // = lootTable bundleDropWeights.
+      if (Math.random() < FULL_PLANT_DROP_CHANCE) {
+        new PlantBundle(this, position.x, position.y, getRandomBundleDrop(this.gameData), this.gameData);
       }
     }
     // Per-type death flourish (Sprint 13) — particles emit from the enemy's spot.
