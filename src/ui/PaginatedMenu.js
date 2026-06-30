@@ -36,6 +36,7 @@
 
 import Phaser from 'phaser';
 import MobileDetect from '../core/MobileDetect.js';
+import { MENU_PORTRAIT_BODY_SCALE, MENU_MIN_WRAP_WIDTH } from '../core/Constants.js';
 
 const FOOTER_DOT_R = 6;
 const FOOTER_DOT_ON = 0xeac34f;
@@ -133,6 +134,13 @@ export default class PaginatedMenu {
     const closeCY = H - safe.bottom - m - 16;
     const dotsY = closeCY - 34;
 
+    // Portrait legibility (Sprint mobile-polish-menus, Phase 3): every consumer reads these so
+    // shop rows shrink text + reserve a sane wrap floor on a narrow phone instead of crushing
+    // it. portrait = touch device in portrait; bodyScale = ×font for body/description text;
+    // wrapWidth(reserved) = a wrap column that never falls below MENU_MIN_WRAP_WIDTH.
+    const portrait = isMobile && H > W;
+    const bodyScale = portrait ? MENU_PORTRAIT_BODY_SCALE : 1;
+
     return {
       scene: this.scene,
       track: this.track.bind(this),
@@ -150,7 +158,10 @@ export default class PaginatedMenu {
       bandH,
       closeCY,
       dotsY,
-      isMobile
+      isMobile,
+      portrait,
+      bodyScale,
+      wrapWidth: (reserved) => Math.max(MENU_MIN_WRAP_WIDTH, innerW - (reserved || 0))
     };
   }
 

@@ -36,6 +36,11 @@ const MARKET_MARGIN = 20;
 const HEADER_H = 52;
 const FOOTER_H = 78;
 const SPELL_ROW_H = 92;
+// Portrait rows are TALLER (Sprint mobile-polish-menus, Phase 3): the spell description (the
+// worst offender — it jumbled/overflowed at the old narrow wrap) now wraps full-width above a
+// bottom-anchored button, so the row needs the extra height. Fewer rows/page → more pagination,
+// which the shared dots/swipe already handle. // TUNE
+const SPELL_ROW_H_PORTRAIT = 150;
 const ROW_GAP = 12;
 
 export default class MageMartScene extends Phaser.Scene {
@@ -103,8 +108,14 @@ export default class MageMartScene extends Phaser.Scene {
     return objs;
   }
 
+  // Row height — taller in portrait so the wrapped spell description fits (Phase 3).
+  rowHeight(frame) {
+    return frame.portrait ? SPELL_ROW_H_PORTRAIT : SPELL_ROW_H;
+  }
+
   buildPages(frame) {
-    const rowsPerPage = Math.max(1, Math.floor((frame.bandH + ROW_GAP) / (SPELL_ROW_H + ROW_GAP)));
+    const rowH = this.rowHeight(frame);
+    const rowsPerPage = Math.max(1, Math.floor((frame.bandH + ROW_GAP) / (rowH + ROW_GAP)));
     const list = this.gameScene.spellCatalog();
     const pages = [];
     for (let i = 0; i < list.length; i += rowsPerPage) pages.push(list.slice(i, i + rowsPerPage));
@@ -146,15 +157,16 @@ export default class MageMartScene extends Phaser.Scene {
 
   renderBody(frame, items) {
     const { left, innerW, contentTop } = frame;
+    const rowH = this.rowHeight(frame);
     items.forEach((spell, i) => {
-      const y = contentTop + i * (SPELL_ROW_H + ROW_GAP);
-      this.buildSpellRow(spell, left, y, innerW, SPELL_ROW_H);
+      const y = contentTop + i * (rowH + ROW_GAP);
+      this.buildSpellRow(spell, left, y, innerW, rowH, frame);
     });
   }
 
   // --- Spell row: name + tier + flavor + Purify / Upgrade / MAX ----------------
 
-  buildSpellRow(spell, x, y, w, h) {
+  buildSpellRow(spell, x, y, w, h, frame) {
     const gs = this.gameScene;
     const unlocked = gs.isSpellUnlocked(spell.id);
     const lv = gs.spellUpgradeLevel(spell.id); // upgrades bought (0..N) = level - 1
@@ -163,6 +175,7 @@ export default class MageMartScene extends Phaser.Scene {
     const maxLevel = gs.spellMaxLevel(spell.id); // 1 + max upgrades
     const manaCost = gs.spellManaCost(spell.id);
     const cy = y + h / 2;
+    const portrait = !!(frame && frame.portrait);
 
     this.track(
       this.add
@@ -177,31 +190,52 @@ export default class MageMartScene extends Phaser.Scene {
       this.add
         .text(x + 18, y + 12, spell.name, {
           fontFamily: FONT,
-          fontSize: '22px',
+          fontSize: portrait ? '20px' : '22px',
           fontStyle: 'bold',
           color: unlocked ? '#F5EFE6' : '#B6ADC4'
         })
         .setDepth(102)
     );
-    // Unlock = LEVEL 1 (immediately castable, no double-spend); upgrades climb to maxLevel.
-    // Show the current tier's effect note (e.g. Ember L3 = "impact AoE") so an upgrade's
-    // payoff is legible before buying.
+
+    // Action button geometry (Purify → Upgrade → MAX). PORTRAIT shrinks it and DROPS it to the
+    // bottom-right corner (by) so the description above can span nearly the full row width
+    // instead of being crushed beside it (Phase 3); landscape keeps it centred on the right.
+    const btnW = portrait ? 132 : 150;
+    const btnH = portrait ? 44 : 50;
+    const bx = x + w - 14 - btnW / 2;
+    const by = portrait ? y + h - 12 - btnH / 2 : cy;
+
+    // Description (badge + flavor). Show the current tier's effect note (e.g. Ember L3 = "impact
+    // AoE") so an upgrade's payoff is legible before buying. PORTRAIT: scaled-down font wrapped
+    // to NEARLY the full row width (the button sits BELOW, not beside it), flavor truncated so it
+    // can never overflow the row. Landscape: the original beside-the-button wrap.
     const tierNote = unlocked && spell.tierNotes ? `   ·   ${spell.tierNotes[level - 1] || ''}` : '';
     const badge = unlocked ? `Lv ${level}/${maxLevel}   ·   ${manaCost}✦ mana${tierNote}` : '🔒 Locked';
+    const descFont = Math.round((portrait ? 13 : 14) * (frame ? frame.bodyScale : 1));
+    let desc = `${badge}   ·   ${spell.flavor}`;
+    let wrapW;
+    let descY;
+    if (portrait) {
+      wrapW = frame.wrapWidth(36); // full row width minus padding, floored (shared helper)
+      descY = y + 40;
+      if (desc.length > 96) desc = `${desc.slice(0, 95)}…`; // hard cap so it can't overflow the row
+    } else {
+      wrapW = Math.max(120, w - 220);
+      descY = y + h - 26;
+    }
     this.track(
       this.add
-        .text(x + 18, y + h - 26, `${badge}   ·   ${spell.flavor}`, {
+        .text(x + 18, descY, desc, {
           fontFamily: FONT,
-          fontSize: '14px',
+          fontSize: `${descFont}px`,
           color: '#9B9389',
-          wordWrap: { width: Math.max(120, w - 220) }
+          wordWrap: { width: wrapW },
+          lineSpacing: 2
         })
         .setDepth(102)
     );
 
-    // Action button (right): Purify (unlock) → Upgrade → MAX.
-    const btnW = 150;
-    const bx = x + w - 14 - btnW / 2;
+    // Action button: Purify (unlock) → Upgrade → MAX.
     if (!unlocked) {
       // Unlock buys LEVEL 1 outright (immediately castable) — no separate "buy L1".
       const cost = spell.unlock;
@@ -209,9 +243,9 @@ export default class MageMartScene extends Phaser.Scene {
       this.track(
         this.makeButton(
           bx,
-          cy,
+          by,
           btnW,
-          50,
+          btnH,
           can ? `Purify → Lv 1\n${cost}👻` : `Need ${cost}👻`,
           can ? COLOR_AFFORD : COLOR_DISABLED,
           can,
@@ -226,9 +260,9 @@ export default class MageMartScene extends Phaser.Scene {
       this.track(
         this.makeButton(
           bx,
-          cy,
+          by,
           btnW,
-          50,
+          btnH,
           can ? `Upgrade → Lv ${level + 1}\n${cost}👻` : `Need ${cost}👻`,
           can ? COLOR_AFFORD : COLOR_DISABLED,
           can,
@@ -237,10 +271,10 @@ export default class MageMartScene extends Phaser.Scene {
         )
       );
     } else {
-      this.track(this.add.rectangle(bx, cy, btnW, 50, COLOR_MAX).setStrokeStyle(2, 0x4d4843).setDepth(101));
+      this.track(this.add.rectangle(bx, by, btnW, btnH, COLOR_MAX).setStrokeStyle(2, 0x4d4843).setDepth(101));
       this.track(
         this.add
-          .text(bx, cy, 'MAX', { fontFamily: FONT, fontSize: '18px', fontStyle: 'bold', color: '#B8D5B1' })
+          .text(bx, by, 'MAX', { fontFamily: FONT, fontSize: '18px', fontStyle: 'bold', color: '#B8D5B1' })
           .setOrigin(0.5)
           .setDepth(102)
       );
