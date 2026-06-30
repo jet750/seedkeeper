@@ -17,6 +17,7 @@ import EventBus from '../core/EventBus.js';
 import GameState from '../core/GameState.js';
 import PaginatedMenu from '../ui/PaginatedMenu.js';
 import { FONT_FAMILY } from '../core/Constants.js';
+import { GRAPHICS_LEVELS, getLevel, setLevel, levelLabel } from '../core/GraphicsQuality.js';
 
 const COLOR_PAGE = 0x141210;
 const HEADER_H = 104;
@@ -132,20 +133,37 @@ export default class PauseScene extends Phaser.Scene {
 
   renderBody(frame) {
     const { cx, contentTop, contentBottom, innerW } = frame;
+    // Graphics (Phase 6): a cycling Low → Medium → High button driving the live VFX budget,
+    // persisted to the lightweight global settings store (NOT the versioned save).
     const opts = [
+      [`Graphics: ${levelLabel()}`, () => this.cycleGraphics()],
       ['Controls', () => this.openControls()],
       ['Settings', () => this.openSettings()],
       ['Return to Menu', () => this.toMenu()]
     ];
     const n = opts.length;
     const w = Math.min(BTN_MAX_W, innerW - 24);
-    const totalH = n * BTN_H + (n - 1) * BTN_GAP;
-    const startCY = (contentTop + contentBottom) / 2 - totalH / 2 + BTN_H / 2;
+    // Shrink the option buttons to fit the content band when it's short (landscape phone).
+    const avail = contentBottom - contentTop;
+    let bh = BTN_H;
+    let gap = BTN_GAP;
+    if (n * bh + (n - 1) * gap > avail) {
+      gap = 10;
+      bh = Math.max(40, (avail - (n - 1) * gap) / n);
+    }
+    const totalH = n * bh + (n - 1) * gap;
+    const startCY = (contentTop + contentBottom) / 2 - totalH / 2 + bh / 2;
     opts.forEach(([label, fn], i) => {
-      this.track(
-        this.makeButton(cx, startCY + i * (BTN_H + BTN_GAP), w, BTN_H, label, 0x36322e, true, fn, '#F5EFE6')
-      );
+      this.track(this.makeButton(cx, startCY + i * (bh + gap), w, bh, label, 0x36322e, true, fn, '#F5EFE6'));
     });
+  }
+
+  // Cycle the graphics quality Low → Medium → High → Low and re-render (the label updates;
+  // ParticleSystem picks up the new VFX budget live on its next particle).
+  cycleGraphics() {
+    const cur = GRAPHICS_LEVELS.indexOf(getLevel());
+    setLevel(GRAPHICS_LEVELS[(cur + 1) % GRAPHICS_LEVELS.length]);
+    this.menu.render();
   }
 
   makeButton(cx, cy, w, h, label, color, enabled, onClick, textColor) {

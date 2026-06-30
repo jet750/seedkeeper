@@ -157,7 +157,9 @@ const SaveSystem = {
   // recent change (menu or in-game) is mirrored here and used as the default for
   // a freshly started run that has no settings yet.
   defaultSettings() {
-    return { masterVolume: 1.0, sfxVolume: 0.8, musicVolume: 0.5, footstepVolume: 0.25, muted: false };
+    // `graphics` (Sprint mobile-polish-menus, Phase 6): VFX quality level Low/Medium/High,
+    // read by GraphicsQuality.js. 'medium' = the prior fixed VFX budget (no behaviour change).
+    return { masterVolume: 1.0, sfxVolume: 0.8, musicVolume: 0.5, footstepVolume: 0.25, muted: false, graphics: 'medium' };
   },
 
   loadSettings() {

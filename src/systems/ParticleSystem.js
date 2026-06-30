@@ -13,7 +13,10 @@
 
 import Phaser from 'phaser';
 import EventBus from '../core/EventBus.js';
-import { MOBILE_VFX_SCALAR, VFX_PARTICLE_CAP } from '../core/Constants.js';
+// VFX budget (combat-particle scalar + concurrent cap) is now LIVE from the player's Graphics
+// setting (Sprint mobile-polish-menus, Phase 6). vfx() reads the current Low/Medium/High level;
+// 'medium' reproduces the prior Constants MOBILE_VFX_SCALAR (0.5) / VFX_PARTICLE_CAP (256).
+import { vfx } from '../core/GraphicsQuality.js';
 
 const POOL_SIZE = 20;
 const FLOAT_RISE = 40; // px the text drifts upward
@@ -112,7 +115,7 @@ export default class ParticleSystem {
   // that particle (a bounded budget, never a hang). Reset covers every property the
   // burst tweens touch (size/fill/scale/alpha/rotation/position/depth).
   _rect(x, y, w, h, tint, depth = BURST_DEPTH) {
-    if (this._liveParticles >= VFX_PARTICLE_CAP) return null;
+    if (this._liveParticles >= vfx().particleCap) return null;
     let r = this._rectPool.find((o) => !o.active);
     if (!r) {
       r = this.scene.add.rectangle(0, 0, 8, 8, 0xffffff);
@@ -136,7 +139,7 @@ export default class ParticleSystem {
   // sized via SCALE (radius / base) — which also leaves the splat's shrink tween, that
   // animates scale → 0, working exactly as before.
   _arc(x, y, radius, tint, depth = BURST_DEPTH) {
-    if (this._liveParticles >= VFX_PARTICLE_CAP) return null;
+    if (this._liveParticles >= vfx().particleCap) return null;
     let a = this._arcPool.find((o) => !o.active);
     if (!a) {
       a = this.scene.add.circle(0, 0, ARC_BASE_R, 0xffffff);
@@ -198,10 +201,11 @@ export default class ParticleSystem {
 
   // Generic radial pop. `diamond` rotates square particles 45° for a sparkle
   // look; `yBias` nudges the spread upward (negative = up).
-  // On mobile, scale the particle budget by MOBILE_VFX_SCALAR (min 1) so juice never
-  // costs framerate. The 0.5 default reproduces the prior hard-coded "/2" — see Constants.
+  // On mobile, scale the particle budget by the live Graphics-setting VFX scalar (min 1) so
+  // juice never costs framerate. The 'medium' default (0.5) reproduces the prior hard-coded
+  // "/2"; Low trims it further, High restores full density. Desktop is unscaled (unchanged).
   _count(n) {
-    return this.mobileMode ? Math.max(1, Math.ceil(n * MOBILE_VFX_SCALAR)) : n;
+    return this.mobileMode ? Math.max(1, Math.ceil(n * vfx().vfxScalar)) : n;
   }
 
   burst(x, y, { count, color, radius, duration, size, diamond = false, yBias = 0 }) {
