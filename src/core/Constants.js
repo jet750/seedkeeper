@@ -239,6 +239,35 @@ export const THREAT_ARROW_MAX = 6;                 // most off-screen threat arr
 export const THREAT_ARROW_MARGIN = 20;             // px inset of the arrow track from the screen / safe-area edge
 export const THREAT_ARROW_SIZE = 13;               // arrowhead half-length (px) on the HUD
 
+// ════════════════════════════════════════════════════════════════════════════
+// Sprint mobile-polish-menus — control fixes + portrait HUD reflow + menu unification.
+// ════════════════════════════════════════════════════════════════════════════
+
+// --- Phase 1: active-spell icon on the fire button ----------------------------
+// The diamond's Ranged-Magic (secondary-fire) button draws the SAME procedural glyph as
+// the radial for the currently-loaded secondary (arrow for ranged, the spell glyph for a
+// spell), so the player sees what's loaded at a glance. This is the glyph half-extent as a
+// fraction of the action-button RADIUS. // TUNE
+export const TOUCH_RANGED_GLYPH_FILL = 0.62;
+
+// --- Phase 2: portrait HUD reflow (PORTRAIT ONLY) -----------------------------
+// In narrow portrait the seed tray drops to a half-size passive fullness indicator in the
+// bottom-centre band, the coin/soul bank indicators move down beside it, and the HP bar
+// condenses to ~1/3 screen width — decongesting the top bar so the timer + weather show.
+// Landscape + desktop are untouched (these only apply in the portrait branch). // TUNE
+export const HUD_PORTRAIT_SEED_SCALE = 0.5;        // seed slot/tray scale vs. the landscape size
+export const HUD_PORTRAIT_HP_WIDTH_FRAC = 0.34;    // HP bar width as a fraction of screen width (~1/3)
+export const HUD_PORTRAIT_HP_HEIGHT = 16;          // condensed HP bar height (px)
+export const HUD_PORTRAIT_CURRENCY_GAP = 16;       // gap between the coin + soul readouts at the bottom
+export const HUD_PORTRAIT_BOTTOM_ROW_GAP = 10;     // gap between the seed tray and the currency row below it
+
+// --- Phase 3: PaginatedMenu portrait legibility -------------------------------
+// Portrait phones smoosh shop rows (Mage Mart spell descriptions worst). The shared menu
+// now exposes a portrait body-scale + a wrap floor so consumers shrink text and reserve a
+// sane minimum wrap width instead of crushing it to a few px. // TUNE
+export const MENU_PORTRAIT_BODY_SCALE = 0.82;      // ×font size for body/description text in portrait
+export const MENU_MIN_WRAP_WIDTH = 150;            // px floor for a wrapped description column
+
 // --- HUD responsive / safe-area refactor (Phase 4) ----------------------------
 // Top bar splits into three env(safe-area)-padded zones (left HP/mana · centre day/zone ·
 // right currencies+timer); the MAP toggle drops below the bar to clear the clock; the

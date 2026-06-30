@@ -34,6 +34,7 @@ import {
 } from '../core/Constants.js';
 import MobileDetect from '../core/MobileDetect.js';
 import TouchControlSystem from '../systems/TouchControlSystem.js';
+import { SPELL_GLYPH_COLORS, drawSpellGlyph } from '../ui/spellGlyphs.js';
 import entitiesData from '../data/entities.json';
 
 const COLOR_NORMAL = '#F5EFE6';
@@ -104,21 +105,11 @@ const MINIMAP_BORDER = 0x4d4843; // frame border (matches UI dividers)
 const MINIMAP_HOME = 0xffd23f; // HOME marker (garden centre)
 const MINIMAP_YOU = 0x00ffff; // live YOU marker (player)
 
-// --- Radial spell glyphs (Sprint pre-merge fix) -----------------------------
-// Per-spell procedural glyphs for the mobile hold-to-switch radial (NO PNG — drawn with
-// Graphics). Shape-distinct AND hue-distinct (double-encoded so they read for colour-
-// blind players): arrow · flame · lightning · snowflake · thorn · shield · sprout. Keyed
-// by spell id (slot 1 = 'ranged'); 'spell' is the generic fallback. // TUNE (colours).
-const RADIAL_GLYPH_COLORS = {
-  ranged: 0xf5efe6,         // arrow — parchment
-  ember: 0xff8a3c,          // flame — orange
-  arc: 0xffe44f,            // lightning — yellow
-  frost: 0x9fe0ff,          // snowflake — ice blue
-  thornfield: 0x4f9e3a,     // thorn — deep green
-  bulwark: 0xa9c6e8,        // shield — steel blue
-  sprout_sentinel: 0x8ae66b,// sprout — leaf green
-  spell: 0xd8c98a           // unknown spell — muted gold
-};
+// --- Radial spell glyphs (Sprint pre-merge fix; extracted Phase 1 mobile-polish-menus) ---
+// The per-spell procedural glyphs (shape + hue distinct, NO PNG) now live in the shared
+// ui/spellGlyphs.js so the TouchControlSystem fire button can draw the SAME glyph as the
+// radial. RADIAL_GLYPH_COLORS aliases the shared map; drawSpellGlyph is the shared drawer.
+const RADIAL_GLYPH_COLORS = SPELL_GLYPH_COLORS;
 const RADIAL_GLYPH_SIZE = 12; // half-extent of a glyph at rest (px) // TUNE
 const RADIAL_FOCUS_SCALE = 1.35; // focused node enlargement (was 1.18) // TUNE
 
@@ -1640,67 +1631,9 @@ export default class UIScene extends Phaser.Scene {
     return slot === 1 ? 'Ranged' : `Slot ${slot}`;
   }
 
-  // Draw a simple, high-contrast, shape-distinct glyph for `kind` into Graphics `g`
-  // (centred on g's local origin so it scales about its own centre). Procedural only —
-  // no sprite/PNG. `s` is the glyph half-extent.
+  // Draw a per-spell glyph into Graphics `g` — delegates to the shared drawer (Phase 1).
   drawSpellGlyph(g, kind, color, s) {
-    g.clear();
-    g.fillStyle(color, 1);
-    g.lineStyle(Math.max(2, s * 0.26), color, 1);
-    switch (kind) {
-      case 'ranged': // arrow pointing up (+ fletching)
-        g.lineBetween(0, s, 0, -s * 0.35);
-        g.fillTriangle(0, -s, -s * 0.5, -s * 0.2, s * 0.5, -s * 0.2);
-        g.lineBetween(0, s, -s * 0.45, s * 0.55);
-        g.lineBetween(0, s, s * 0.45, s * 0.55);
-        break;
-      case 'ember': // flame teardrop (pointed top, fat notched bottom)
-        g.fillPoints(
-          [
-            { x: 0, y: -s }, { x: s * 0.62, y: s * 0.15 }, { x: s * 0.34, y: s * 0.8 },
-            { x: 0, y: s * 0.5 }, { x: -s * 0.34, y: s * 0.8 }, { x: -s * 0.62, y: s * 0.15 }
-          ],
-          true
-        );
-        break;
-      case 'arc': // lightning bolt zigzag
-        g.fillPoints(
-          [
-            { x: s * 0.2, y: -s }, { x: -s * 0.5, y: s * 0.12 }, { x: -s * 0.05, y: s * 0.12 },
-            { x: -s * 0.2, y: s }, { x: s * 0.55, y: -s * 0.18 }, { x: s * 0.08, y: -s * 0.18 }
-          ],
-          true
-        );
-        break;
-      case 'frost': // snowflake — 3 crossing spokes + a small hub
-        for (let k = 0; k < 3; k++) {
-          const a = (k / 3) * Math.PI;
-          g.lineBetween(-Math.cos(a) * s, -Math.sin(a) * s, Math.cos(a) * s, Math.sin(a) * s);
-        }
-        g.fillCircle(0, 0, s * 0.18);
-        break;
-      case 'thornfield': // thorny vine (diagonal stem + two thorns)
-        g.lineBetween(-s * 0.5, s, s * 0.45, -s);
-        g.fillTriangle(-s * 0.08, s * 0.25, -s * 0.6, s * 0.12, -s * 0.18, s * 0.6);
-        g.fillTriangle(s * 0.2, -s * 0.2, s * 0.65, -s * 0.05, s * 0.28, -s * 0.6);
-        break;
-      case 'bulwark': // shield (flat top, pointed bottom)
-        g.fillPoints(
-          [
-            { x: -s * 0.72, y: -s * 0.8 }, { x: s * 0.72, y: -s * 0.8 },
-            { x: s * 0.72, y: s * 0.15 }, { x: 0, y: s }, { x: -s * 0.72, y: s * 0.15 }
-          ],
-          true
-        );
-        break;
-      case 'sprout_sentinel': // sprout — stem + two leaves
-        g.lineBetween(0, s, 0, -s * 0.1);
-        g.fillTriangle(0, -s * 0.05, -s * 0.72, -s * 0.5, -s * 0.05, -s * 0.72);
-        g.fillTriangle(0, -s * 0.05, s * 0.72, -s * 0.5, s * 0.05, -s * 0.72);
-        break;
-      default: // generic spell — a 4-point diamond
-        g.fillPoints([{ x: 0, y: -s }, { x: s * 0.4, y: 0 }, { x: 0, y: s }, { x: -s * 0.4, y: 0 }], true);
-    }
+    drawSpellGlyph(g, kind, color, s);
   }
 
   openRadial({ cx, cy } = {}) {

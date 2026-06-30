@@ -12,6 +12,7 @@
 
 import EventBus from '../core/EventBus.js';
 import MobileDetect from '../core/MobileDetect.js';
+import { SPELL_GLYPH_COLORS, drawSpellGlyph } from '../ui/spellGlyphs.js';
 import {
   TOUCH_JOYSTICK_BASE_RADIUS,
   TOUCH_JOYSTICK_HANDLE_RADIUS,
@@ -28,14 +29,16 @@ import {
   TOUCH_STRAFE_BTN_GAP,
   TOUCH_TAP_MAX_MS,
   TOUCH_TAP_MAX_DIST,
+  TOUCH_RANGED_GLYPH_FILL,
   HUD_TOP_BAR_H,
   HUD_MAP_BTN_BELOW_BAR
 } from '../core/Constants.js';
 
-// Bow glyph (ranged) vs spell glyph — the diamond's ability button swaps between these
-// to reflect which secondary is loaded (Sprint combat-input-mobile-consolidated).
-const RANGED_GLYPH = '\u{1f3f9}';
-const SPELL_GLYPH = '✦'; // ✦
+// Active-spell icon on the diamond's Ranged-Magic button (Sprint mobile-polish-menus,
+// Phase 1). The button now draws the SAME procedural per-spell glyph as the radial for the
+// currently-loaded secondary (arrow for ranged, the spell glyph for a spell) — the only on-
+// HUD cue of what's loaded since the 1-5 strip was removed on mobile. The old emoji label
+// (🏹 / ✦) is retired in favour of the shape+hue-distinct procedural glyph.
 
 // Strafe-lock toggle (Sprint mobile-overnight-batch, Phase 3): a left-thumb latch by the
 // joystick. Lock glyph + colour-state (green when latched, grey when idle).
@@ -385,8 +388,15 @@ export default class TouchControlSystem {
       { id: 'interact', pos: 'top', color: 0x228822, label: 'E', event: 'touch:interact' },
       { id: 'attack', pos: 'left', color: 0xcc2222, label: '⚔', event: 'touch:attack' },
       { id: 'dash', pos: 'right', color: 0x2244cc, label: '⚡', event: 'touch:dash' },
-      { id: 'ranged', pos: 'bottom', color: 0xcc8822, label: RANGED_GLYPH, event: 'touch:ranged' }
+      // Ranged-Magic: no emoji label — a procedural active-spell glyph is drawn over it
+      // (Phase 1, _drawRangedGlyph), reflecting the loaded secondary.
+      { id: 'ranged', pos: 'bottom', color: 0xcc8822, label: '', event: 'touch:ranged' }
     ];
+
+    // Active-secondary glyph state (Phase 1): the loaded slot's kind ('ranged' or a spell id)
+    // + the slot→kind map from secondary:meta, so the fire button can draw the matching glyph.
+    this._rangedKind = 'ranged';
+    this._slotKind = {};
 
     this.touchButtons = {};
 
@@ -428,7 +438,15 @@ export default class TouchControlSystem {
         .setDepth(99)
         .setInteractive();
 
-      const entry = { bg, ring, label, icon, iconBaseScale, hitZone, locked: !!btn.lockedInitially };
+      // Ranged-Magic active-spell glyph (Phase 1): a procedural Graphics glyph drawn over the
+      // button, mirroring the radial's per-spell glyph for the loaded secondary. Drawn/seated
+      // by _drawRangedGlyph (here + on every layout + on select/meta change).
+      let glyph = null;
+      if (btn.id === 'ranged') {
+        glyph = this.scene.add.graphics().setScrollFactor(0).setDepth(102);
+      }
+
+      const entry = { bg, ring, label, icon, iconBaseScale, glyph, hitZone, locked: !!btn.lockedInitially };
       this.touchButtons[btn.id] = entry;
 
       // A locked button renders dimmed and swallows taps until unlocked.
@@ -445,6 +463,7 @@ export default class TouchControlSystem {
         bg.setScale(0.85);
         label.setScale(0.85);
         if (entry.icon) entry.icon.setScale(entry.iconBaseScale * 0.85);
+        if (entry.glyph) entry.glyph.setScale(0.85);
         // The Ranged-Magic button is tap-to-fire / hold-to-radial, so it resolves on
         // RELEASE (see _beginRangedPress). Every other button fires immediately.
         if (btn.id === 'ranged') {
@@ -457,10 +476,14 @@ export default class TouchControlSystem {
         bg.setScale(1);
         label.setScale(1);
         if (entry.icon) entry.icon.setScale(entry.iconBaseScale);
+        if (entry.glyph) entry.glyph.setScale(1);
       };
       hitZone.on('pointerup', relax);
       hitZone.on('pointerout', relax);
     });
+
+    // Seat the initial active-spell glyph on the ranged button (default slot 1 = arrow).
+    this._drawRangedGlyph();
 
     // Long-press radial tracking for the ranged button (Sprint control-scheme-combat-
     // input). The release can land OFF the button (thumb dragged to a radial option),
@@ -479,10 +502,18 @@ export default class TouchControlSystem {
     this._onScene('pointerup', endRanged);
     this._onScene('pointerupoutside', endRanged);
 
-    // The Ranged-Magic button's icon reflects the currently loaded ability (slot 1 =
-    // ranged bow; slots 2-5 = spell glyph). The radial is now the SOLE mobile switcher
-    // (the 1-5 strip was removed on mobile), so this is the only on-HUD cue of what's
-    // loaded. Default slot 1 already shows the bow, so no initial emit is needed.
+    // The Ranged-Magic button's glyph reflects the currently loaded ability (slot 1 =
+    // ranged arrow; slots 2-7 = that spell's glyph). The radial is now the SOLE mobile
+    // switcher (the 1-5 strip was removed on mobile), so this is the only on-HUD cue of
+    // what's loaded. secondary:meta gives the slot→kind map; secondary:changed gives the
+    // active slot — together they pick which glyph to draw (Phase 1).
+    this._onBus('secondary:meta', ({ meta } = {}) => {
+      this._slotKind = {};
+      (meta || []).forEach((m) => {
+        this._slotKind[m.slot] = m.type === 'ranged' ? 'ranged' : m.id || 'spell';
+      });
+      this._drawRangedGlyph();
+    });
     this._onBus('secondary:changed', ({ slot } = {}) => this._setRangedIcon(slot));
   }
 
@@ -510,10 +541,30 @@ export default class TouchControlSystem {
     }
   }
 
+  // Active slot changed → pick its glyph kind and redraw the fire-button glyph (Phase 1).
   _setRangedIcon(slot) {
+    this._rangedKind = this._kindForSlot(slot);
+    this._drawRangedGlyph();
+  }
+
+  // Glyph kind for a secondary slot: the spell id (or 'ranged' for slot 1) from the live
+  // slot→kind meta map, falling back to slot 1 = ranged / others = generic 'spell'.
+  _kindForSlot(slot) {
+    if (this._slotKind && this._slotKind[slot]) return this._slotKind[slot];
+    return slot === 1 ? 'ranged' : 'spell';
+  }
+
+  // Draw the active-spell glyph centred on the Ranged-Magic button, sized to the button
+  // radius (Phase 1). The Graphics is positioned at the button centre with shapes drawn
+  // about its local origin, so press feedback (setScale) and layout() rescale cleanly.
+  _drawRangedGlyph() {
     const r = this.touchButtons && this.touchButtons.ranged;
-    if (!r) return;
-    r.label.setText(slot === 1 ? RANGED_GLYPH : SPELL_GLYPH);
+    if (!r || !r.glyph) return;
+    const btnR = this.buttonRadius || TOUCH_BUTTON_RADIUS;
+    const kind = this._rangedKind || 'ranged';
+    const color = SPELL_GLYPH_COLORS[kind] || SPELL_GLYPH_COLORS.spell;
+    r.glyph.setPosition(r.bg.x, r.bg.y).setScale(1);
+    drawSpellGlyph(r.glyph, kind, color, btnR * TOUCH_RANGED_GLYPH_FILL);
   }
 
   // Ranged-Magic press begins: start the long-press timer. A release before it elapses
@@ -545,6 +596,7 @@ export default class TouchControlSystem {
     if (r) {
       r.bg.setScale(1);
       r.label.setScale(1);
+      if (r.glyph) r.glyph.setScale(1);
     }
     if (this._rangedRadialOpen) {
       EventBus.emit('combat:radialClose', {});
@@ -700,6 +752,9 @@ export default class TouchControlSystem {
         b.icon.setPosition(x, y).setScale(b.iconBaseScale);
       }
     });
+
+    // Re-seat + re-size the ranged active-spell glyph to the (portrait-scaled) button (Phase 1).
+    this._drawRangedGlyph();
 
     // MAP (right, BELOW the top bar to clear the clock — Phase 4) + pause (top-left).
     if (this.mapBtn) {
