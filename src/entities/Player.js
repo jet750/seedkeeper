@@ -416,15 +416,15 @@ export default class Player extends Phaser.Physics.Arcade.Sprite {
     this.tickManaRegen(dtMs);
 
     // Strafe (Shift toggle): persistent enemy-tracking lock (Sprint combat-input-mobile-
-    // consolidated; toggled in Sprint control-polish). When strafe latches on, lock the
-    // specific current/nearest enemy; while latched, re-point facing at THAT same target's
-    // live position every frame so circling or walking past it keeps the aim on it. The lock
-    // holds until Shift is toggled off or the target dies — it never re-picks a different enemy
-    // mid-latch. updateFacing() early-returns while strafing, so movement can't rotate the aim
-    // out from under it. Desktop-only in practice: mobile has no Shift and uses forced auto-
-    // target instead. TUNE: strafe lock mode — this is a TARGET lock (tracks the enemy). For a
-    // fixed directional lock (freeze facing at latch) instead, drop the acquire + per-frame
-    // faceTowardAngle below and just hold _strafing.
+    // consolidated; toggled + unified in Sprint control-polish). While latched, re-point facing
+    // at the locked target's live position every frame so circling or walking past it keeps the
+    // aim on it. The target comes from the shared auto-re-acquiring lock (_strafeLockTarget):
+    // when the locked enemy dies the next-nearest threat is acquired automatically, and walking
+    // up to a new enemy locks it — same on desktop and mobile now (no pick-once-and-hold).
+    // updateFacing() early-returns while strafing, so movement can't rotate the aim out from
+    // under it. TUNE: strafe lock mode — this is a TARGET lock (tracks the enemy). For a fixed
+    // directional lock (freeze facing at latch) instead, drop the per-frame faceTowardAngle
+    // below and just hold _strafing.
     // Desktop Shift is a TOGGLE now (Sprint control-polish): press to latch strafe on, press
     // again to release — matches the mobile strafe latch and is easier on the hand than a hold.
     // Flip on the rising edge; the latched flag (not the live key) then raises the lock.
@@ -433,33 +433,23 @@ export default class Player extends Phaser.Physics.Arcade.Sprite {
     }
     // Desktop Shift toggle OR the mobile strafe-lock toggle (latched) raises the lock.
     const strafeDown = this._strafeToggleDesktop || this._strafeLockMobile;
-    const strafeRising = strafeDown && !this._strafing;
     this._strafing = strafeDown;
     if (!strafeDown) {
       this._strafeTarget = null;
-    } else if (this._strafeLockMobile) {
-      // Mobile strafe-lock shares the UNIFIED lockedTarget (Sprint mobile-polish-menus,
-      // Phase 1): re-derived every frame from the targeting system, so (a) tapping an enemy
-      // (hardTarget) instantly re-aims the strafe to it, and (b) when the locked enemy dies
-      // the next-nearest threat is auto-acquired — no strafe toggle dance. Facing freezes
-      // only when no enemy qualifies. Tap-to-target and strafe thus drive the SAME target.
-      this._strafeTarget = this._mobileLockTarget();
+    } else {
+      // BOTH platforms now drive facing from the SAME unified, auto-re-acquiring lock
+      // (Sprint control-polish): the tap/click hard lock if live, else the threat-weighted
+      // pick — re-read every frame, so (a) tapping/clicking an enemy instantly re-aims the
+      // strafe to it, (b) when the locked enemy dies the next-nearest threat is auto-acquired
+      // (no re-toggle, no stuck wrong-direction), and (c) walking up to a new enemy locks it.
+      // Facing freezes only when no enemy qualifies. Desktop no longer pick-once-and-holds.
+      this._strafeTarget = this._strafeLockTarget();
       if (this._strafeTarget) {
         this.faceTowardAngle(
           Phaser.Math.Angle.Between(this.x, this.y, this._strafeTarget.x, this._strafeTarget.y)
         );
       }
-    } else {
-      // Desktop Shift toggle — pick ONCE when the latch flips on and hold; facing freezes on
-      // the target's death (the established desktop feel — lock-follows-target preserved).
-      if (strafeRising) this._strafeTarget = this.acquireStrafeTarget();
-      if (this._strafeTarget && this._strafeTarget.active && !this._strafeTarget.isDead) {
-        this.faceTowardAngle(
-          Phaser.Math.Angle.Between(this.x, this.y, this._strafeTarget.x, this._strafeTarget.y)
-        );
-      } else {
-        this._strafeTarget = null; // target died — lock ends, facing freezes where it is
-      }
+      // else: nothing qualifies — facing freezes where it is until a threat appears.
     }
 
     // Melee with input buffering (Sprint 12): if the cooldown is still running the
@@ -572,37 +562,17 @@ export default class Player extends Phaser.Physics.Arcade.Sprite {
     else this.facing = 'left';
   }
 
-  // Unified mobile lock target (Sprint mobile-polish-menus, Phase 1). The shared "lockedTarget"
-  // the mobile strafe-lock follows: the tap hard-lock if live, else the threat-weighted auto
-  // target — re-evaluated each frame (via TargetingSystem.lockTarget) so a dead lock auto-re-
-  // acquires the next threat and a tap redirects facing. Returns null when nothing qualifies.
-  _mobileLockTarget() {
+  // Unified strafe lock target for BOTH platforms (Sprint control-polish — was the mobile-only
+  // _mobileLockTarget). The shared "lockedTarget" a strafe lock follows: the tap/click hard-lock
+  // if live, else the threat-weighted pick — re-evaluated each frame (via TargetingSystem
+  // .strafeLockTarget) so a dead lock auto-re-acquires the next nearest threat and a tap/click
+  // redirects facing. Independent of the desktop auto-target (T) toggle, so desktop Shift-strafe
+  // re-acquires the same way mobile does. Returns null when nothing qualifies.
+  _strafeLockTarget() {
     const ts = this.scene.targetingSystem;
     if (!ts) return null;
-    const t = ts.lockTarget ? ts.lockTarget() : ts.hardTarget || ts.activeTarget;
+    const t = ts.strafeLockTarget ? ts.strafeLockTarget() : ts.hardTarget || ts.activeTarget;
     return t && t.active && !t.isDead ? t : null;
-  }
-
-  // The enemy a Shift-strafe locks onto: prefer the current reticle/auto target (so the
-  // lock matches what's highlighted), else the nearest live enemy. Picked ONCE when the
-  // strafe toggle latches on — the latch never re-picks (see update()).
-  acquireStrafeTarget() {
-    const scene = this.scene;
-    const ts = scene.targetingSystem;
-    if (ts && ts.activeTarget && ts.activeTarget.active && !ts.activeTarget.isDead) {
-      return ts.activeTarget;
-    }
-    let best = null;
-    let bestD = Infinity;
-    for (const e of scene.enemies || []) {
-      if (!e || e.isDead || !e.active) continue;
-      const d = Phaser.Math.Distance.Between(this.x, this.y, e.x, e.y);
-      if (d < bestD) {
-        bestD = d;
-        best = e;
-      }
-    }
-    return best;
   }
 
   // Issue a directional anim only when it actually changed (Sprint mobile-control-feel).

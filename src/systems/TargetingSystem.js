@@ -130,6 +130,22 @@ export default class TargetingSystem {
     return t;
   }
 
+  // The target a STRAFE lock follows on BOTH platforms (Sprint control-polish). The manual
+  // click/tap hard lock if it's live, else the threat-weighted pick (nearestThreat) — computed
+  // FRESH every frame so a dead lock auto-re-acquires the next nearest threat and walking up to
+  // a new enemy locks it. Unlike lockTarget(), this does NOT depend on the desktop auto-target
+  // (T) toggle / cached activeTarget: Shift-strafe must auto-re-acquire even with assist OFF, so
+  // it reads nearestThreat directly. On mobile the result equals lockTarget() (activeTarget IS
+  // nearestThreat there), so mobile strafe is behaviourally unchanged.
+  strafeLockTarget() {
+    const hard = (this.hardTarget && this.hardTarget.active && !this.hardTarget.isDead)
+      ? this.hardTarget
+      : null;
+    if (hard) return hard;
+    const t = this.nearestThreat();
+    return t && t.active && !t.isDead ? t : null;
+  }
+
   // Choose the active target. Mobile uses the THREAT-weighted policy (nearestThreat);
   // desktop keeps the cone + mouse-led pick (unchanged this sprint).
   pickTarget() {
