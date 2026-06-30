@@ -63,6 +63,17 @@ export default class DevMenuScene extends Phaser.Scene {
     this.menuOpen = false;
     this._speedOn = false; // dev 2x-speed toggle state (Sprint 7)
     this._noclipOn = false; // dev no-clip toggle state (Sprint 7)
+    // Perf overlay toggle state (Sprint mobile-overnight-batch, Phase 2). Defaults ON
+    // in dev mode to match GameScene's default-visible overlay; kept in sync via the
+    // dev:perfState echo so the button label is correct even after the P-key toggle.
+    // EventBus carries no handler context, so bind the listener as a stored arrow.
+    this._perfOn = isDevModeActive();
+    this._onPerfState = ({ on }) => {
+      this._perfOn = !!on;
+      if (this.menuOpen && this.menu) this.menu.render();
+    };
+    EventBus.on('dev:perfState', this._onPerfState);
+    this.events.once('shutdown', () => EventBus.off('dev:perfState', this._onPerfState));
 
     // Shared full-screen paginated menu. This scene owns its content (getPages) and
     // how each page draws (header + the scale-to-fit body); the controller owns the
@@ -281,7 +292,22 @@ export default class DevMenuScene extends Phaser.Scene {
               { label: 'Clear Save Slot', fill: COLOR_DANGER, onClick: () => this.dispatch('dev:clearSave') },
               { label: 'Force Save', onClick: () => this.dispatch('dev:forceSave') }
             ]
-          }
+          },
+          { type: 'section', label: 'DEBUG' },
+          {
+            type: 'row',
+            buttons: [
+              {
+                label: `PERF OVERLAY [${this._perfOn ? 'ON' : 'OFF'}]`,
+                fill: this._perfOn ? COLOR_TOGGLE_ON : COLOR_BTN,
+                onClick: () => {
+                  this._perfOn = !this._perfOn;
+                  this.dispatch('dev:togglePerf');
+                }
+              }
+            ]
+          },
+          { type: 'note', label: 'FPS + live object counts · desktop: P' }
         ]
       }
     ];

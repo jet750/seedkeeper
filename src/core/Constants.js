@@ -213,6 +213,20 @@ export const TARGETING_AGGRO_BIAS = 0.45;       // score ×bias for an aggroed/p
 export const TARGETING_FACING_BIAS = 0.5;       // soft facing/run-direction weight (0 = ignore aim, higher = pull harder toward it)
 export const TARGETING_CLUSTER_RADIUS = 160;    // Zone (Frost) densest-visible-cluster neighbour radius (px)
 
+// --- VFX performance budget (Sprint mobile-overnight-batch, Phase 2) -----------
+// Combat juice (death bursts, collect pops, splats, confetti) now recycles from a
+// pool instead of create/destroy-per-particle. Two knobs bound the budget; BOTH are
+// deliberately CONSERVATIVE so VFX isn't degraded before the human confirms overdraw
+// on-device (Safari profiling is a human step). // TUNE
+//   MOBILE_VFX_SCALAR — ×combat-particle counts on mobile only. 0.5 CODIFIES the prior
+//     hard-coded mobile "/2"; it is NOT new degradation. Raise toward 1.0 to restore
+//     full mobile VFX, lower to trim further once overdraw is confirmed.
+//   VFX_PARTICLE_CAP  — hard ceiling on concurrently-live pooled particles. A safety
+//     valve only: 256 is far above what normal combat reaches, so it is effectively
+//     OFF until lowered after on-device profiling.
+export const MOBILE_VFX_SCALAR = 0.5; // TUNE
+export const VFX_PARTICLE_CAP = 256;  // TUNE
+
 // Mobile radial secondary-select: hold the Ranged-Magic button this long (ms) to open
 // the radial; a shorter tap fires instead. While open the world runs in slow-motion
 // (timescale below) — NOT a hard pause.

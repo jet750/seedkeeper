@@ -13,6 +13,7 @@
 
 import Phaser from 'phaser';
 import EventBus from '../core/EventBus.js';
+import { MOBILE_VFX_SCALAR, VFX_PARTICLE_CAP } from '../core/Constants.js';
 
 const POOL_SIZE = 20;
 const FLOAT_RISE = 40; // px the text drifts upward
@@ -23,6 +24,7 @@ const BURST_SIZE = 6;
 const BURST_DISTANCE = 40;
 const BURST_DURATION = 600;
 const BURST_DEPTH = 12;
+const ARC_BASE_R = 5; // base radius the pooled splat circle is built at (sized via scale)
 
 export default class ParticleSystem {
   constructor(scene) {
@@ -31,6 +33,18 @@ export default class ParticleSystem {
     // combat doesn't spawn hundreds of tween targets on a mobile GPU. The float
     // damage numbers are untouched (they carry information, not just juice).
     this.mobileMode = false;
+
+    // --- Pooled combat particles (Sprint mobile-overnight-batch, Phase 2) -------
+    // The death bursts / collect pops / splats / confetti below spawned a fresh
+    // GameObject per particle and destroyed it on tween-complete — create/destroy
+    // churn that, in a heavy swarm, is a prime GC-pressure suspect. They now recycle
+    // from per-shape pools (filled rect + filled arc). A hard concurrent cap
+    // (VFX_PARTICLE_CAP) bounds the live count; _liveParticles is read by the dev
+    // perf overlay (Phase 2 instrumentation). Pure recycling — visuals are identical.
+    this._rectPool = [];
+    this._arcPool = [];
+    this._liveParticles = 0;
+
     this.pool = [];
     for (let i = 0; i < POOL_SIZE; i++) {
       const t = scene.add
@@ -91,22 +105,82 @@ export default class ParticleSystem {
     });
   }
 
+  // --- Pooled particle helpers (Sprint mobile-overnight-batch, Phase 2) ------
+
+  // Grab a recycled filled RECTANGLE (or grow the pool), reset to a clean state, and
+  // mark it live. Returns null when the hard concurrent cap is hit so the caller skips
+  // that particle (a bounded budget, never a hang). Reset covers every property the
+  // burst tweens touch (size/fill/scale/alpha/rotation/position/depth).
+  _rect(x, y, w, h, tint, depth = BURST_DEPTH) {
+    if (this._liveParticles >= VFX_PARTICLE_CAP) return null;
+    let r = this._rectPool.find((o) => !o.active);
+    if (!r) {
+      r = this.scene.add.rectangle(0, 0, 8, 8, 0xffffff);
+      this._rectPool.push(r);
+    }
+    r.setSize(w, h)
+      .setFillStyle(tint, 1)
+      .setPosition(x, y)
+      .setDepth(depth)
+      .setRotation(0)
+      .setScale(1)
+      .setAlpha(1)
+      .setActive(true)
+      .setVisible(true);
+    this._liveParticles++;
+    return r;
+  }
+
+  // Same, for a filled CIRCLE (slime splat blobs). Arc.setRadius does NOT rebuild the
+  // shape geometry in Phaser, so the pooled circle is created once at ARC_BASE_R and
+  // sized via SCALE (radius / base) — which also leaves the splat's shrink tween, that
+  // animates scale → 0, working exactly as before.
+  _arc(x, y, radius, tint, depth = BURST_DEPTH) {
+    if (this._liveParticles >= VFX_PARTICLE_CAP) return null;
+    let a = this._arcPool.find((o) => !o.active);
+    if (!a) {
+      a = this.scene.add.circle(0, 0, ARC_BASE_R, 0xffffff);
+      this._arcPool.push(a);
+    }
+    a.setFillStyle(tint, 1)
+      .setPosition(x, y)
+      .setDepth(depth)
+      .setScale(radius / ARC_BASE_R)
+      .setAlpha(1)
+      .setActive(true)
+      .setVisible(true);
+    this._liveParticles++;
+    return a;
+  }
+
+  // Tween onComplete handler — park the particle back in its pool (no destroy).
+  _recycle(obj) {
+    obj.setActive(false).setVisible(false);
+    this._liveParticles = Math.max(0, this._liveParticles - 1);
+  }
+
+  // Live pooled-particle count + active float-text — read by the dev perf overlay.
+  activeCount() {
+    let n = this._liveParticles;
+    for (const t of this.pool) if (t.active) n++;
+    return n;
+  }
+
   // --- Death particle burst -------------------------------------------------
 
   showDeathBurst(x, y, color) {
     const tint = Phaser.Display.Color.HexStringToColor(color).color;
     for (let i = 0; i < BURST_COUNT; i++) {
       const angle = (i / BURST_COUNT) * Math.PI * 2;
-      const particle = this.scene.add
-        .rectangle(x, y, BURST_SIZE, BURST_SIZE, tint)
-        .setDepth(BURST_DEPTH);
+      const particle = this._rect(x, y, BURST_SIZE, BURST_SIZE, tint);
+      if (!particle) break;
       this.scene.tweens.add({
         targets: particle,
         x: x + Math.cos(angle) * BURST_DISTANCE,
         y: y + Math.sin(angle) * BURST_DISTANCE,
         alpha: 0,
         duration: BURST_DURATION,
-        onComplete: () => particle.destroy()
+        onComplete: () => this._recycle(particle)
       });
     }
   }
@@ -124,9 +198,10 @@ export default class ParticleSystem {
 
   // Generic radial pop. `diamond` rotates square particles 45° for a sparkle
   // look; `yBias` nudges the spread upward (negative = up).
-  // Halve the particle budget on mobile (min 1) so juice never costs framerate.
+  // On mobile, scale the particle budget by MOBILE_VFX_SCALAR (min 1) so juice never
+  // costs framerate. The 0.5 default reproduces the prior hard-coded "/2" — see Constants.
   _count(n) {
-    return this.mobileMode ? Math.max(1, Math.ceil(n / 2)) : n;
+    return this.mobileMode ? Math.max(1, Math.ceil(n * MOBILE_VFX_SCALAR)) : n;
   }
 
   burst(x, y, { count, color, radius, duration, size, diamond = false, yBias = 0 }) {
@@ -135,9 +210,8 @@ export default class ParticleSystem {
     for (let i = 0; i < count; i++) {
       const angle = (i / count) * Math.PI * 2 + Math.random() * 0.4;
       const dist = radius * (0.6 + Math.random() * 0.4);
-      const p = this.scene.add
-        .rectangle(x, y, size, size, tint)
-        .setDepth(BURST_DEPTH);
+      const p = this._rect(x, y, size, size, tint);
+      if (!p) break;
       if (diamond) p.setRotation(Math.PI / 4);
       this.scene.tweens.add({
         targets: p,
@@ -147,7 +221,7 @@ export default class ParticleSystem {
         scale: 0.2,
         duration,
         ease: 'Power2',
-        onComplete: () => p.destroy()
+        onComplete: () => this._recycle(p)
       });
     }
   }
@@ -192,7 +266,8 @@ export default class ParticleSystem {
     for (let i = 0; i < n; i++) {
       const angle = (i / n) * Math.PI * 2 + Math.random() * 0.5;
       const dist = 20 + Math.random() * 10;
-      const blob = this.scene.add.circle(x, y, 5, tint).setDepth(BURST_DEPTH);
+      const blob = this._arc(x, y, 5, tint);
+      if (!blob) break;
       this.scene.tweens.add({
         targets: blob,
         x: x + Math.cos(angle) * dist,
@@ -200,7 +275,7 @@ export default class ParticleSystem {
         scale: 0,
         duration: 400,
         ease: 'Quad.easeOut',
-        onComplete: () => blob.destroy()
+        onComplete: () => this._recycle(blob)
       });
     }
   }
@@ -218,10 +293,9 @@ export default class ParticleSystem {
     for (let i = 0; i < count; i++) {
       const angle = Math.random() * Math.PI * 2;
       const dist = 30 + Math.random() * 20;
-      const bone = this.scene.add
-        .rectangle(x, y, 4, 11, 0xe8e2d0)
-        .setDepth(BURST_DEPTH)
-        .setRotation(Math.random() * Math.PI);
+      const bone = this._rect(x, y, 4, 11, 0xe8e2d0);
+      if (!bone) break;
+      bone.setRotation(Math.random() * Math.PI);
       this.scene.tweens.add({
         targets: bone,
         x: x + Math.cos(angle) * dist,
@@ -230,7 +304,7 @@ export default class ParticleSystem {
         alpha: 0,
         duration: 600,
         ease: 'Quad.easeOut',
-        onComplete: () => bone.destroy()
+        onComplete: () => this._recycle(bone)
       });
     }
   }
@@ -243,7 +317,8 @@ export default class ParticleSystem {
     const tint = this.toTint(color);
     const n = this._count(6);
     for (let i = 0; i < n; i++) {
-      const p = this.scene.add.rectangle(position.x, position.y, 6, 6, tint).setDepth(BURST_DEPTH);
+      const p = this._rect(position.x, position.y, 6, 6, tint);
+      if (!p) break;
       const dx = (Math.random() - 0.5) * 60;
       const peakY = position.y - (30 + Math.random() * 30);
       this.scene.tweens.add({
@@ -260,7 +335,7 @@ export default class ParticleSystem {
             angle: 180,
             duration: 400,
             ease: 'Quad.easeIn',
-            onComplete: () => p.destroy()
+            onComplete: () => this._recycle(p)
           });
         }
       });

@@ -749,12 +749,20 @@ export default class GameScene extends Phaser.Scene {
     this.scene.launch('DevMenuScene');
     if (isDevModeActive()) {
       this.setupDevHandlers();
-      // FPS monitor — dev builds only; absent from the production build (Sprint 13).
-      this._fpsText = this.add
-        .text(12, 96, '', { fontFamily: FONT_FAMILY, fontSize: '12px', color: '#00ff00' })
-        .setScrollFactor(0)
-        .setDepth(1000);
     }
+
+    // Perf overlay — FPS + active-object counter (Sprint mobile-overnight-batch,
+    // Phase 2). The instrumentation STAYS IN the build (not stripped) so it can be
+    // toggled on-device: dev key P on desktop, or the dev menu's DEBUG toggle (which
+    // also reaches mobile). Created always but cheap (one text object); only the
+    // per-frame string build runs while it is visible. Defaults visible in dev mode so
+    // the prior always-on dev FPS readout is preserved.
+    this._perfText = this.add
+      .text(12, 96, '', { fontFamily: FONT_FAMILY, fontSize: '12px', color: '#00ff00', lineSpacing: 2 })
+      .setScrollFactor(0)
+      .setDepth(1000)
+      .setVisible(isDevModeActive());
+    this.input.keyboard.on('keydown-P', () => this.togglePerfOverlay());
 
     // Lighten the per-frame load on phones (AI throttle, fewer particles, calmer
     // ambience). No-op on desktop. Runs after the particle system + garden
@@ -4785,6 +4793,39 @@ export default class GameScene extends Phaser.Scene {
     // tutorials): freeze the world + physics while it's open, like the map / pause.
     this.subscribe('dev:menuOpened', () => this.onDevMenuOpened());
     this.subscribe('dev:menuClosed', () => this.onDevMenuClosed());
+    // Perf overlay toggle from the dev menu's DEBUG page (reaches mobile, which has no
+    // P key). Mirrors the desktop keydown-P binding. Sprint mobile-overnight-batch P2.
+    this.subscribe('dev:togglePerf', () => this.togglePerfOverlay());
+  }
+
+  // Flip the FPS + active-object overlay. Available always (instrumentation stays in):
+  // desktop P key, or the dev menu DEBUG toggle. Returns the new visibility so the dev
+  // menu button can reflect it.
+  togglePerfOverlay() {
+    if (!this._perfText) return false;
+    const on = !this._perfText.visible;
+    this._perfText.setVisible(on);
+    EventBus.emit('dev:perfState', { on });
+    return on;
+  }
+
+  // The overlay readout: framerate + a breakdown of live game objects (the things that
+  // churn in heavy combat). Built only while the overlay is visible (see update()).
+  _perfStats() {
+    const fps = Math.round(this.game.loop.actualFps);
+    const enemies = this.enemies ? this.enemies.length : 0;
+    const proj = this.projectiles ? this.projectiles.reduce((n, p) => n + (p.active ? 1 : 0), 0) : 0;
+    const ss = this.spellSystem;
+    const bolts = ss && ss.bolts ? ss.bolts.reduce((n, b) => n + (b.active ? 1 : 0), 0) : 0;
+    const fields = ss && ss.fields ? ss.fields.length : 0;
+    const turrets = ss && ss.sentinels ? ss.sentinels.length : 0;
+    const fx = this.particleSystem ? this.particleSystem.activeCount() : 0;
+    const objs = enemies + proj + bolts + fields + turrets + fx;
+    return (
+      `FPS ${fps}   OBJ ${objs}\n` +
+      `enemy ${enemies}  proj ${proj}  bolt ${bolts}\n` +
+      `field ${fields}  turret ${turrets}  fx ${fx}`
+    );
   }
 
   onDevMenuOpened() {
@@ -4948,7 +4989,9 @@ export default class GameScene extends Phaser.Scene {
   // --- Main loop ------------------------------------------------------------
 
   update(time, delta) {
-    if (this._fpsText) this._fpsText.setText(`FPS: ${Math.round(this.game.loop.actualFps)}`);
+    // Perf overlay: build the FPS + object-count string only while it is visible, so
+    // it costs nothing in normal play (Sprint mobile-overnight-batch, Phase 2).
+    if (this._perfText && this._perfText.visible) this._perfText.setText(this._perfStats());
     if (!GameState.is('PLAYING')) return;
     // Freeze the world (but keep rendering) while a modal overlay (workshop,
     // market, win, achievement log, or seed dictionary) is open. The world-detail
