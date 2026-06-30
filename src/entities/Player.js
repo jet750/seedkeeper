@@ -162,6 +162,10 @@ export default class Player extends Phaser.Physics.Arcade.Sprite {
     // live position every frame while held (persistent tracking lock).
     this._strafing = false;
     this._strafeTarget = null;
+    // Mobile strafe-lock (Sprint mobile-overnight-batch, Phase 3). A LEFT-thumb toggle
+    // (TouchControlSystem) that latches the same strafe lock the desktop Shift holds —
+    // facing freezes while joystick movement continues. ORed into strafeDown in update().
+    this._strafeLockMobile = false;
 
     // --- Mana scaffold (Sprint control-scheme-combat-input; DORMANT) ---
     // No spells exist yet, so mana stays at 0 and `manaUnlocked` false — the HUD bar
@@ -319,11 +323,17 @@ export default class Player extends Phaser.Physics.Arcade.Sprite {
     // The mobile radial (UIScene) and any cross-scene caller set the active secondary
     // via EventBus (selection only — never casts).
     this._onSecondarySelect = ({ slot } = {}) => this.selectSecondary(slot);
+    // Mobile strafe-lock toggle (Sprint mobile-overnight-batch, Phase 3) — the LEFT-thumb
+    // button latches/unlatches the facing lock; we mirror its on/off state here.
+    this._onStrafeLock = ({ on } = {}) => {
+      this._strafeLockMobile = !!on;
+    };
     EventBus.on('touch:move', this._onTouchMove);
     EventBus.on('touch:attack', this._onTouchAttack);
     EventBus.on('touch:dash', this._onTouchDash);
     EventBus.on('touch:ranged', this._onTouchRanged);
     EventBus.on('secondary:select', this._onSecondarySelect);
+    EventBus.on('touch:strafeLock', this._onStrafeLock);
 
     // Clean up listeners when the scene tears down.
     scene.events.once('shutdown', this.cleanup, this);
@@ -401,7 +411,8 @@ export default class Player extends Phaser.Physics.Arcade.Sprite {
     // TUNE: strafe lock mode — this is a TARGET lock (tracks the enemy). For a fixed
     // directional lock (freeze facing at press) instead, drop the acquire + per-frame
     // faceTowardAngle below and just hold _strafing.
-    const strafeDown = this.keys.strafe.isDown;
+    // Desktop Shift (hold) OR the mobile strafe-lock toggle (latched) raises the lock.
+    const strafeDown = this.keys.strafe.isDown || this._strafeLockMobile;
     if (strafeDown && !this._strafing) this._strafeTarget = this.acquireStrafeTarget();
     this._strafing = strafeDown;
     if (!strafeDown) {
@@ -1273,6 +1284,7 @@ export default class Player extends Phaser.Physics.Arcade.Sprite {
     EventBus.off('touch:dash', this._onTouchDash);
     EventBus.off('touch:ranged', this._onTouchRanged);
     EventBus.off('secondary:select', this._onSecondarySelect);
+    EventBus.off('touch:strafeLock', this._onStrafeLock);
     if (this._flashEvent) this._flashEvent.remove(false);
     if (this._invEndEvent) this._invEndEvent.remove(false);
   }

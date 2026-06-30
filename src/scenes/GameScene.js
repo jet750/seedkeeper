@@ -50,6 +50,8 @@ import {
   FARMSTAND_MARKUP,
   CHEST_SEED_CAPACITY,
   SPELL_CAST_COOLDOWN_MS,
+  TOUCH_TAP_TARGET_RADIUS,
+  THREAT_ARROW_MAX,
   isDevModeActive
 } from '../core/Constants.js';
 import WorldZoneSystem, { RIVER_WIDTH, CREEK_WIDTH } from '../systems/WorldZoneSystem.js';
@@ -662,6 +664,10 @@ export default class GameScene extends Phaser.Scene {
       this.input.mouse.disableContextMenu();
       this.input.on('pointerdown', (pointer) => this.onCombatPointer(pointer));
     }
+    // Mobile tap-to-target (Sprint mobile-overnight-batch, Phase 3): TouchControlSystem
+    // emits touch:tapTarget (screen px) for a quick tap that wasn't a control press; a
+    // tap near an enemy hard-locks it. Bus-routed so it stays decoupled from the HUD.
+    this.subscribe('touch:tapTarget', (d) => this.onMobileTapTarget(d));
     // M now toggles the HUD minimap (handled in UIScene, Sprint 10c). Mute moved
     // to the Settings overlay so the two no longer fight over the same key.
     // Esc opens the pause menu during normal play (Sprint 12). Guarded so it
@@ -4726,6 +4732,28 @@ export default class GameScene extends Phaser.Scene {
     else this.targetingSystem.clearHardTarget();
   }
 
+  // Mobile tap-to-target (Sprint mobile-overnight-batch, Phase 3). A quick tap that lands
+  // within TOUCH_TAP_TARGET_RADIUS world px of a live enemy hard-locks it — held until it
+  // dies, after which TargetingSystem falls back to the threat-weighted default (Phase 1).
+  // A tap on empty ground does NOTHING (never clears) so a stray movement tap can't drop
+  // the lock; re-tap another enemy to switch. The locked reticle is the confirmation.
+  onMobileTapTarget({ x, y } = {}) {
+    if (!this.targetingSystem || this._anyCombatModalOpen()) return;
+    if (!GameState.is('PLAYING')) return;
+    const wp = this.cameras.main.getWorldPoint(x, y);
+    let hit = null;
+    let bestD = TOUCH_TAP_TARGET_RADIUS;
+    for (const e of this.enemies) {
+      if (!e || e.isDead || !e.active) continue;
+      const d = Phaser.Math.Distance.Between(wp.x, wp.y, e.x, e.y);
+      if (d <= bestD) {
+        bestD = d;
+        hit = e;
+      }
+    }
+    if (hit) this.targetingSystem.setHardTarget(hit);
+  }
+
   // T key — flip the desktop auto-target preference (mobile ignores it, forced on).
   // Persists immediately so the choice survives a reload (save v5).
   toggleAutoTarget() {
@@ -4826,6 +4854,21 @@ export default class GameScene extends Phaser.Scene {
       `enemy ${enemies}  proj ${proj}  bolt ${bolts}\n` +
       `field ${fields}  turret ${turrets}  fx ${fx}`
     );
+  }
+
+  // Off-screen threat arrows (Sprint mobile-overnight-batch, Phase 3). Compute the unseen-
+  // pursuer directions (TargetingSystem owns the on-screen/aggro test) and hand them to the
+  // HUD over EventBus. Suppressed while not actively playing or a modal owns the screen, so
+  // the arrows clear instead of freezing. Only emits when there is something to draw or a
+  // previous set to clear, so idle exploration adds no per-frame bus traffic.
+  updateThreatArrows() {
+    let arrows = [];
+    if (GameState.is('PLAYING') && !this._anyCombatModalOpen() && this.targetingSystem) {
+      arrows = this.targetingSystem.offScreenThreats(THREAT_ARROW_MAX);
+    }
+    if (arrows.length === 0 && !this._hadThreats) return;
+    this._hadThreats = arrows.length > 0;
+    EventBus.emit('hud:threats', { arrows });
   }
 
   onDevMenuOpened() {
@@ -4992,6 +5035,9 @@ export default class GameScene extends Phaser.Scene {
     // Perf overlay: build the FPS + object-count string only while it is visible, so
     // it costs nothing in normal play (Sprint mobile-overnight-batch, Phase 2).
     if (this._perfText && this._perfText.visible) this._perfText.setText(this._perfStats());
+    // Off-screen threat arrows (Phase 3) — emitted to the HUD even across the guards
+    // below so they clear correctly when paused / a modal opens / the player dies.
+    this.updateThreatArrows();
     if (!GameState.is('PLAYING')) return;
     // Freeze the world (but keep rendering) while a modal overlay (workshop,
     // market, win, achievement log, or seed dictionary) is open. The world-detail

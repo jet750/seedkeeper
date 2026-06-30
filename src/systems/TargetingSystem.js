@@ -295,6 +295,29 @@ export default class TargetingSystem {
     };
   }
 
+  // Off-screen threat directions (Sprint mobile-overnight-batch, Phase 3). The HUD draws
+  // an edge arrow per entry pointing where an unseen pursuer is. Returns up to maxCount
+  // { angle, dist } for AGGROED enemies that are OFF-screen, nearest first. World-space
+  // angle == screen-space direction (the camera is axis-aligned / unrotated), so the HUD
+  // places each arrow by angle alone.
+  offScreenThreats(maxCount) {
+    const scene = this.scene;
+    const player = scene.player;
+    if (!player || player.isDead || !scene.enemies || scene.enemies.length === 0) return [];
+    const view = this._worldView();
+    const out = [];
+    for (const e of scene.enemies) {
+      if (!e || e.isDead || !e.active) continue;
+      if (!this._isThreat(e)) continue; // only active pursuers
+      if (this._onScreen(e, view)) continue; // only the UNSEEN ones
+      const dx = e.x - player.x;
+      const dy = e.y - player.y;
+      out.push({ angle: Math.atan2(dy, dx), dist: Math.hypot(dx, dy) });
+    }
+    out.sort((a, b) => a.dist - b.dist);
+    return maxCount ? out.slice(0, maxCount) : out;
+  }
+
   // --- threat-policy helpers ------------------------------------------------
 
   // The camera's world-space view rect (or null pre-camera). Used for the on-screen test.

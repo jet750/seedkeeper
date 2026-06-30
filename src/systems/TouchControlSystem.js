@@ -23,13 +23,26 @@ import {
   TOUCH_DIAMOND_CENTER_X,
   TOUCH_CLUSTER_BOTTOM_GAP,
   TOUCH_BOTTOM_SAFE_MIN,
-  RADIAL_LONGPRESS_MS
+  RADIAL_LONGPRESS_MS,
+  TOUCH_STRAFE_BTN_RADIUS_SCALE,
+  TOUCH_STRAFE_BTN_GAP,
+  TOUCH_TAP_MAX_MS,
+  TOUCH_TAP_MAX_DIST
 } from '../core/Constants.js';
 
 // Bow glyph (ranged) vs spell glyph — the diamond's ability button swaps between these
 // to reflect which secondary is loaded (Sprint combat-input-mobile-consolidated).
 const RANGED_GLYPH = '\u{1f3f9}';
 const SPELL_GLYPH = '✦'; // ✦
+
+// Strafe-lock toggle (Sprint mobile-overnight-batch, Phase 3): a left-thumb latch by the
+// joystick. Lock glyph + colour-state (green when latched, grey when idle).
+const STRAFE_GLYPH = '\u{1f512}'; // 🔒 padlock — "facing locked"
+const STRAFE_ON_COLOR = 0x2f9e44; // latched — green
+const STRAFE_OFF_COLOR = 0x444444; // idle — dim grey
+// A press whose Y is within this many px of the top safe inset is treated as the HUD band
+// (MAP / pause / minimap / readouts) and never fires a target tap.
+const TOP_HUD_TAP_GUARD = 56;
 
 // Interact-button icon (Sprint mobile-control-feel). Interact is used mostly on plants,
 // so a small sprout reads as the obvious "use" button — replacing the "E" glyph. Uses a
@@ -58,8 +71,10 @@ export default class TouchControlSystem {
     this.safe = this.computeSafeArea();
 
     this.createJoystick();
+    this.createStrafeToggle();
     this.createActionButtons();
     this.createMobileHUDAdjustments();
+    this.wireTapToTarget();
 
     // Seat every control at the current viewport. UIScene also calls layout() right
     // after constructing us (and on every Scale 'resize'), but doing it here keeps
@@ -150,6 +165,9 @@ export default class TouchControlSystem {
     // 1600 base — under RESIZE pointer coords are in screen px. Tracked by pointer.id
     // so a second finger never hijacks it.
     this._onScene('pointerdown', (pointer) => {
+      // The strafe toggle sits in the left half by the joystick; a press on it must NOT
+      // also grab the stick (Sprint mobile-overnight-batch, Phase 3).
+      if (this._isOnStrafeButton(pointer.x, pointer.y)) return;
       if (pointer.x < this.scene.scale.width / 2 && this.joystickPointer === null) {
         this.joystickPointer = pointer.id;
         this.joystickActive = true;
@@ -220,6 +238,124 @@ export default class TouchControlSystem {
     this.dirGfx.fillTriangle(cx - r + inset, cy, cx - r + inset + a * 1.5, cy - a, cx - r + inset + a * 1.5, cy + a);
     // right
     this.dirGfx.fillTriangle(cx + r - inset, cy, cx + r - inset - a * 1.5, cy - a, cx + r - inset - a * 1.5, cy + a);
+  }
+
+  // --- Strafe-lock toggle (LEFT thumb, by the joystick) ---------------------
+  // Sprint mobile-overnight-batch, Phase 3. A small LATCHING toggle seated just up-and-
+  // right of the joystick (reachable by the same left thumb) — NOT a 5th right-cluster
+  // button. Tapping it freezes the player's facing while joystick movement continues
+  // (Player._strafeLockMobile). Active = green + bright; idle = dim. Emits touch:strafeLock
+  // { on } so the Player mirrors the latched state; the joystick pointer-claim excludes it.
+  createStrafeToggle() {
+    this._strafeOn = false;
+    const r = TOUCH_BUTTON_RADIUS * TOUCH_STRAFE_BTN_RADIUS_SCALE;
+    this.strafeRadius = r;
+    // Seated for real in layout(); these are placeholder coords until the first reflow.
+    const x = this.joystick.baseX;
+    const y = this.joystick.baseY - this.joystickBaseRadius - r - TOUCH_STRAFE_BTN_GAP;
+
+    const bg = this.scene.add.circle(x, y, r, STRAFE_OFF_COLOR, 0.6).setScrollFactor(0).setDepth(100);
+    const ring = this.scene.add.graphics().setScrollFactor(0).setDepth(100);
+    const label = this.scene.add
+      .text(x, y, STRAFE_GLYPH, { fontSize: TOUCH_BUTTON_LABEL_PX, color: '#ffffff' })
+      .setOrigin(0.5)
+      .setScrollFactor(0)
+      .setDepth(101);
+    const hitZone = this.scene.add
+      .circle(x, y, r + 10, 0x000000, 0.001)
+      .setScrollFactor(0)
+      .setDepth(99)
+      .setInteractive();
+
+    this.strafeToggle = { bg, ring, label, hitZone, x, y, r };
+    this._drawStrafeRing();
+    this._applyStrafeVisual();
+
+    hitZone.on('pointerdown', (pointer) => {
+      if (pointer.id === this.joystickPointer) return;
+      this._strafeOn = !this._strafeOn;
+      this._applyStrafeVisual();
+      bg.setScale(0.85);
+      label.setScale(0.85);
+      EventBus.emit('touch:strafeLock', { on: this._strafeOn });
+    });
+    const relax = () => {
+      bg.setScale(1);
+      label.setScale(1);
+    };
+    hitZone.on('pointerup', relax);
+    hitZone.on('pointerout', relax);
+  }
+
+  _drawStrafeRing() {
+    const s = this.strafeToggle;
+    if (!s) return;
+    s.ring.clear();
+    s.ring.lineStyle(2, this._strafeOn ? 0xffffff : 0xffffff, this._strafeOn ? 0.85 : 0.4);
+    s.ring.strokeCircle(s.x, s.y, s.r);
+  }
+
+  // Reflect the latched state: bright green fill + label when locked, dim grey when idle.
+  _applyStrafeVisual() {
+    const s = this.strafeToggle;
+    if (!s) return;
+    s.bg.setFillStyle(this._strafeOn ? STRAFE_ON_COLOR : STRAFE_OFF_COLOR, this._strafeOn ? 0.85 : 0.55);
+    s.label.setAlpha(this._strafeOn ? 1 : 0.7);
+    this._drawStrafeRing();
+  }
+
+  // True when (x,y) lands on the strafe toggle — used to keep the joystick claim and the
+  // tap-to-target gesture off it.
+  _isOnStrafeButton(x, y) {
+    const s = this.strafeToggle;
+    if (!s) return false;
+    return Math.hypot(x - s.x, y - s.y) <= s.r + 10;
+  }
+
+  // --- Tap-to-target gesture (Phase 3) --------------------------------------
+  // A quick tap (short + barely moved) that did NOT begin on a control emits
+  // touch:tapTarget with its screen position; GameScene converts to world space and hard-
+  // locks the nearest enemy. Tracked per pointer id at scene level so it coexists with the
+  // joystick (a left-half quick tap can target; a drag just moves) and the action buttons.
+  wireTapToTarget() {
+    this._tapDown = {}; // pointer.id -> { x, y, t, onControl }
+    this._onScene('pointerdown', (pointer) => {
+      this._tapDown[pointer.id] = {
+        x: pointer.x,
+        y: pointer.y,
+        t: this.scene.time.now,
+        onControl: this._isOnControl(pointer.x, pointer.y)
+      };
+    });
+    const settle = (pointer) => {
+      const d = this._tapDown[pointer.id];
+      if (!d) return;
+      delete this._tapDown[pointer.id];
+      if (d.onControl) return; // taps that began on a control are theirs, never a target tap
+      const moved = Math.hypot(pointer.x - d.x, pointer.y - d.y);
+      const dur = this.scene.time.now - d.t;
+      if (dur <= TOUCH_TAP_MAX_MS && moved <= TOUCH_TAP_MAX_DIST) {
+        EventBus.emit('touch:tapTarget', { x: pointer.x, y: pointer.y });
+      }
+    };
+    this._onScene('pointerup', settle);
+    this._onScene('pointerupoutside', settle);
+  }
+
+  // Did this press begin on a control (action button, strafe toggle, or the top HUD zone)?
+  // Such presses are owned by that control and must not also fire a target tap. The
+  // joystick base is deliberately NOT excluded — a quick tap there can still target.
+  _isOnControl(x, y) {
+    // Top HUD band (MAP / pause / minimap / readouts).
+    if (y <= this.safe.top + TOP_HUD_TAP_GUARD) return true;
+    if (this._isOnStrafeButton(x, y)) return true;
+    const btns = this.touchButtons || {};
+    const pad = (this.buttonRadius || TOUCH_BUTTON_RADIUS) + 12;
+    for (const id in btns) {
+      const b = btns[id];
+      if (b && b.bg && Math.hypot(x - b.bg.x, y - b.bg.y) <= pad) return true;
+    }
+    return false;
   }
 
   // --- Action buttons (bottom-right cluster) --------------------------------
@@ -513,6 +649,25 @@ export default class TouchControlSystem {
     if (!this.joystickActive) {
       this.joystickHandle.setPosition(jx, jy).setRadius(handleR);
       this.joystickDot.setPosition(jx, jy);
+    }
+
+    // Strafe-lock toggle — seated just up-and-right (NE) of the joystick ring, outside the
+    // stick's travel, scaled with the rest of the controls (Phase 3).
+    if (this.strafeToggle) {
+      const sr = TOUCH_BUTTON_RADIUS * cs * TOUCH_STRAFE_BTN_RADIUS_SCALE;
+      const off = baseR + sr + TOUCH_STRAFE_BTN_GAP;
+      const sx = jx + off * 0.707;
+      const sy = jy - off * 0.707;
+      const s = this.strafeToggle;
+      s.x = sx;
+      s.y = sy;
+      s.r = sr;
+      this.strafeRadius = sr;
+      const sLabelPx = `${Math.round(parseInt(TOUCH_BUTTON_LABEL_PX, 10) * cs)}px`;
+      s.bg.setPosition(sx, sy).setRadius(sr);
+      s.label.setPosition(sx, sy).setFontSize(sLabelPx);
+      s.hitZone.setPosition(sx, sy).setRadius(sr + 10);
+      this._drawStrafeRing();
     }
 
     // Action buttons — diamond cluster (bottom-right, inset past a right notch + the home

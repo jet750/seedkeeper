@@ -227,6 +227,18 @@ export const TARGETING_CLUSTER_RADIUS = 160;    // Zone (Frost) densest-visible-
 export const MOBILE_VFX_SCALAR = 0.5; // TUNE
 export const VFX_PARTICLE_CAP = 256;  // TUNE
 
+// --- Mobile strafe-lock / tap-target / threat arrows (Phase 3) ----------------
+// A LEFT-thumb strafe-lock toggle (by the joystick, NOT a 5th right-cluster button),
+// tap-to-target, and edge-of-screen arrows pointing at off-screen pursuers. // TUNE
+export const TOUCH_STRAFE_BTN_RADIUS_SCALE = 0.72; // strafe toggle size as a fraction of an action button
+export const TOUCH_STRAFE_BTN_GAP = 8;             // px gap between the joystick ring and the strafe toggle
+export const TOUCH_TAP_MAX_MS = 220;               // a press shorter than this (and barely moved) is a TAP, not a drag/hold
+export const TOUCH_TAP_MAX_DIST = 18;              // px of travel under which a press still counts as a tap (screen px)
+export const TOUCH_TAP_TARGET_RADIUS = 90;         // world px around a tap that can grab an enemy hard-lock
+export const THREAT_ARROW_MAX = 6;                 // most off-screen threat arrows drawn at once (nearest pursuers win)
+export const THREAT_ARROW_MARGIN = 20;             // px inset of the arrow track from the screen / safe-area edge
+export const THREAT_ARROW_SIZE = 13;               // arrowhead half-length (px) on the HUD
+
 // Mobile radial secondary-select: hold the Ranged-Magic button this long (ms) to open
 // the radial; a shorter tap fires instead. While open the world runs in slow-motion
 // (timescale below) — NOT a hard pause.

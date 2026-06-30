@@ -16,7 +16,9 @@ import {
   WORLD_HEIGHT,
   GARDEN_CENTER_X,
   GARDEN_CENTER_Y,
-  WORLD_MAP_TEXTURE_KEY
+  WORLD_MAP_TEXTURE_KEY,
+  THREAT_ARROW_MARGIN,
+  THREAT_ARROW_SIZE
 } from '../core/Constants.js';
 import MobileDetect from '../core/MobileDetect.js';
 import TouchControlSystem from '../systems/TouchControlSystem.js';
@@ -27,6 +29,12 @@ const COLOR_WARNING = '#ffaa00';
 const COLOR_URGENT = '#ff3333';
 const HP_BAR_MAX_WIDTH = 240;
 const HP_BAR_HEIGHT = 22;
+
+// Off-screen threat arrows (Sprint mobile-overnight-batch, Phase 3). Edge-of-screen
+// markers pointing at unseen pursuers; drawn above the HUD readouts but below the touch
+// controls (depth 99+) so the joystick/buttons always sit on top.
+const THREAT_ARROW_DEPTH = 95;
+const THREAT_ARROW_COLOR = 0xff5a3c; // threat red-orange (matches the targeting reticle)
 
 // HP bar fill colour by current-health fraction (Task 3). Green when healthy,
 // yellow when wounded, red when critical. Thresholds are inclusive lower bounds:
@@ -193,6 +201,13 @@ export default class UIScene extends Phaser.Scene {
     this.input.keyboard.on('keydown-ESC', () => {
       if (this._worldDetailObjs) this.closeWorldDetail();
     });
+
+    // Off-screen threat arrows (Sprint mobile-overnight-batch, Phase 3). GameScene emits
+    // hud:threats — an array of { angle, dist } for AGGROED enemies currently off-screen —
+    // and we draw one edge arrow per entry pointing where each unseen pursuer is. Stays
+    // EventBus-only, so UIScene still never imports GameScene.
+    this._threatGfx = this.add.graphics().setScrollFactor(0).setDepth(THREAT_ARROW_DEPTH);
+    this.subscribe('hud:threats', ({ arrows }) => this._drawThreatArrows(arrows));
 
     // Mobile control layer (joystick + buttons + orientation gate). Built last so
     // it draws over the HUD, and only on touch devices — desktop stays untouched.
@@ -588,6 +603,59 @@ export default class UIScene extends Phaser.Scene {
     const px = x + (this._playerPos.x / WORLD_WIDTH) * size;
     const py = y + (this._playerPos.y / WORLD_HEIGHT) * size;
     this.minimapYou.setPosition(px, py).setVisible(true);
+  }
+
+  // --- Off-screen threat arrows (Sprint mobile-overnight-batch, Phase 3) -----
+  // Draw one edge arrow per unseen pursuer at the screen boundary, pointing where it is.
+  // `arrows` is GameScene's { angle, dist } list (world angle == screen direction, since
+  // the camera is unrotated). Procedural Graphics — no textures. Placement: cast a ray
+  // from the centre of an inset "arrow track" rect (safe insets + margin) out to the rect
+  // boundary along each angle, then draw an arrowhead there pointing outward. An empty/
+  // missing list clears the layer.
+  _drawThreatArrows(arrows) {
+    const g = this._threatGfx;
+    if (!g) return;
+    g.clear();
+    if (!arrows || arrows.length === 0) return;
+
+    const insets = MobileDetect.isMobile()
+      ? MobileDetect.getRawInsets()
+      : { top: 0, right: 0, bottom: 0, left: 0 };
+    const m = THREAT_ARROW_MARGIN;
+    const left = insets.left + m;
+    const right = this.scale.width - insets.right - m;
+    const top = insets.top + m;
+    const bottom = this.scale.height - insets.bottom - m;
+    const cx = (left + right) / 2;
+    const cy = (top + bottom) / 2;
+    const hw = (right - left) / 2;
+    const hh = (bottom - top) / 2;
+    if (hw <= 0 || hh <= 0) return;
+    const sz = THREAT_ARROW_SIZE;
+
+    for (const a of arrows) {
+      const cos = Math.cos(a.angle);
+      const sin = Math.sin(a.angle);
+      // Ray-vs-rect: shortest scale that reaches either the vertical or horizontal edge.
+      const tx = cos !== 0 ? hw / Math.abs(cos) : Infinity;
+      const ty = sin !== 0 ? hh / Math.abs(sin) : Infinity;
+      const t = Math.min(tx, ty);
+      const ex = cx + cos * t;
+      const ey = cy + sin * t;
+      // Arrowhead: tip at the edge pointing outward (along the angle); base behind it.
+      const px = -sin; // unit perpendicular
+      const py = cos;
+      const bx = ex - cos * sz * 1.6;
+      const by = ey - sin * sz * 1.6;
+      const lx = bx + px * sz * 0.9;
+      const ly = by + py * sz * 0.9;
+      const rx = bx - px * sz * 0.9;
+      const ry = by - py * sz * 0.9;
+      g.fillStyle(THREAT_ARROW_COLOR, 0.9);
+      g.fillTriangle(ex, ey, lx, ly, rx, ry);
+      g.lineStyle(1.5, 0x000000, 0.5);
+      g.strokeTriangle(ex, ey, lx, ly, rx, ry);
+    }
   }
 
   // --- Secondary-slot strip (Sprint control-scheme-combat-input) ------------
