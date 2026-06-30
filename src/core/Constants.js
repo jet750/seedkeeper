@@ -252,6 +252,16 @@ export const RADIAL_NODE_RADIUS = 30;              // option node radius incl. i
 export const RADIAL_FAN_ARC_DEG = 250;             // when the hub is off-centre, fan the options across this arc toward the interior
 export const RADIAL_FAN_MIN_OFFSET = 60;           // hub must be at least this far from screen centre to fan directionally (else full ring)
 
+// --- Notification queue (Phase 5) ---------------------------------------------
+// One slim banner at a time, queued under the top bar, priority-ordered: objective/
+// tutorial > dictionary > achievement (vanity never covers an objective). Low-priority
+// banners + the redundant swap-hint are suppressed while the seed-swap menu is open. // TUNE
+export const NOTIF_BELOW_BAR = 14;          // gap below the top bar for the banner row (px)
+export const NOTIF_HOLD_OBJECTIVE = 4500;   // ms an objective/tutorial/system banner holds
+export const NOTIF_HOLD_DICTIONARY = 2800;  // ms a dictionary/weather banner holds
+export const NOTIF_HOLD_ACHIEVEMENT = 4000; // ms an achievement banner holds
+export const NOTIF_GAP_MS = 220;            // gap between consecutive banners
+
 // Mobile radial secondary-select: hold the Ranged-Magic button this long (ms) to open
 // the radial; a shorter tap fires instead. While open the world runs in slow-motion
 // (timescale below) — NOT a hard pause.

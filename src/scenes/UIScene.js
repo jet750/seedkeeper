@@ -25,7 +25,12 @@ import {
   RADIAL_RING_RADIUS,
   RADIAL_NODE_RADIUS,
   RADIAL_FAN_ARC_DEG,
-  RADIAL_FAN_MIN_OFFSET
+  RADIAL_FAN_MIN_OFFSET,
+  NOTIF_BELOW_BAR,
+  NOTIF_HOLD_OBJECTIVE,
+  NOTIF_HOLD_DICTIONARY,
+  NOTIF_HOLD_ACHIEVEMENT,
+  NOTIF_GAP_MS
 } from '../core/Constants.js';
 import MobileDetect from '../core/MobileDetect.js';
 import TouchControlSystem from '../systems/TouchControlSystem.js';
@@ -42,6 +47,14 @@ const HP_BAR_HEIGHT = 22;
 // controls (depth 99+) so the joystick/buttons always sit on top.
 const THREAT_ARROW_DEPTH = 95;
 const THREAT_ARROW_COLOR = 0xff5a3c; // threat red-orange (matches the targeting reticle)
+
+// Unified notification queue (Sprint mobile-overnight-batch, Phase 5). One slim banner at a
+// time under the top bar, priority-ordered. Higher wins: a higher-priority banner preempts a
+// lower one on screen and a lower one never covers a higher one (vanity never covers an
+// objective). objective = tutorials + system notices; dictionary = new entries + weather;
+// achievement = vanity unlocks.
+const NOTIF_PRIORITY = { objective: 3, dictionary: 2, achievement: 1 };
+const NOTIF_DEPTH = 320;
 
 // HP bar fill colour by current-health fraction (Task 3). Green when healthy,
 // yellow when wounded, red when critical. Thresholds are inclusive lower bounds:
@@ -156,14 +169,13 @@ export default class UIScene extends Phaser.Scene {
     this._minimapRect = null;
     this._pulseTween = null;
     this._promptTween = null;
-    this._banner = null; // transient top-center banner (weather/notice/dict)
-    this._bannerEvent = null;
     this._worldDetailObjs = null; // examine popup
     this._worldDetailTimer = null;
-    this._toastQueue = [];
-    this._toastActive = false;
-    this._tutorialQueue = []; // Sprint 12 first-run hint pills
-    this._tutorialActive = false;
+    // Unified notification queue (Sprint mobile-overnight-batch, Phase 5). Replaces the old
+    // separate top-centre banner, top-right achievement toasts and tutorial pills with ONE
+    // priority-ordered slim banner under the top bar (see pushNotification).
+    this._notifQueue = [];
+    this._notifActive = null; // { item, obj, p, timer } currently on screen, or null
     this._comboFadeEvent = null; // Sprint 13 combo counter
     this._swapOpen = false;
     this._swapObjects = [];
@@ -1074,7 +1086,11 @@ export default class UIScene extends Phaser.Scene {
     this.subscribe('weather:changed', (d) => this.onWeather(d));
     this.subscribe('worlddetail:opened', (d) => this.showWorldDetail(d));
     this.subscribe('dictionary:newEntry', (d) => this.showDictToast(d.plantType));
-    this.subscribe('ui:notice', (d) => this.showBanner(d.text, 4500, COLOR_NORMAL));
+    // System notices (save reset, auto-target toggle …) ride the objective band so a vanity
+    // toast never buries them (Phase 5).
+    this.subscribe('ui:notice', (d) =>
+      this.pushNotification({ text: d.text, color: COLOR_NORMAL, priority: 'objective' })
+    );
   }
 
   // --- Weather, banners, world-detail popup (Sprint 11) ---------------------
@@ -1088,53 +1104,128 @@ export default class UIScene extends Phaser.Scene {
       this.weatherIcon.setText(weather.icon || '');
     }
     if (isNewDay) {
-      this.showBanner(`${weather.icon} ${weather.name}\n"${weather.description}"`, 5000, '#EDD49A');
+      this.pushNotification({
+        text: `${weather.icon} ${weather.name} — "${weather.description}"`,
+        color: '#EDD49A',
+        priority: 'dictionary'
+      });
     }
   }
 
   showDictToast(plantType) {
     const name = entitiesData.plants[plantType] ? entitiesData.plants[plantType].name : plantType;
-    this.showBanner(`📖 New entry: ${name}`, 2600, '#8AB87E');
+    this.pushNotification({ text: `📖 New entry: ${name}`, color: '#8AB87E', priority: 'dictionary' });
   }
 
-  // Single transient top-center banner. A new banner replaces the previous one.
-  showBanner(text, holdMs, color) {
-    if (this._banner) {
-      this._banner.destroy();
-      this._banner = null;
+  // === Unified notification queue (Sprint mobile-overnight-batch, Phase 5) =====
+  // One slim banner at a time under the top bar, priority-ordered: objective/tutorial >
+  // dictionary > achievement. Items: { text, color, holdMs, priority, suppressible, swapHint }.
+  // A strictly-higher-priority arrival PREEMPTS a lower one already on screen (the lower one
+  // is requeued, so vanity never *covers* an objective); equal/lower arrivals queue FIFO
+  // within their band. While the seed-swap menu is open, low-priority banners are HELD and
+  // the redundant swap-hint is DROPPED (modal suppression).
+  pushNotification({ text, color, holdMs, priority = 'achievement', swapHint = false } = {}) {
+    if (!text) return;
+    const p = NOTIF_PRIORITY[priority] || NOTIF_PRIORITY.achievement;
+    const hold =
+      holdMs != null
+        ? holdMs
+        : p >= NOTIF_PRIORITY.objective
+          ? NOTIF_HOLD_OBJECTIVE
+          : p === NOTIF_PRIORITY.dictionary
+            ? NOTIF_HOLD_DICTIONARY
+            : NOTIF_HOLD_ACHIEVEMENT;
+    const item = {
+      text,
+      color: color || COLOR_NORMAL,
+      holdMs: hold,
+      p,
+      // Low-priority (dictionary + achievement) banners are suppressed while a modal owns the
+      // screen; objectives are not. The swap-hint is suppressed regardless of its band.
+      suppressible: p < NOTIF_PRIORITY.objective,
+      swapHint
+    };
+    // Preempt a strictly-lower-priority banner currently on screen — requeue it to show after.
+    if (this._notifActive && p > this._notifActive.p) {
+      const preempted = this._notifActive.item;
+      this._clearActiveNotification();
+      this._insertNotif(preempted);
     }
-    if (this._bannerEvent) {
-      this._bannerEvent.remove(false);
-      this._bannerEvent = null;
+    this._insertNotif(item);
+    if (!this._notifActive) this._showNextNotification();
+  }
+
+  // Insert by priority (higher ahead), FIFO within a band.
+  _insertNotif(item) {
+    let i = 0;
+    while (i < this._notifQueue.length && this._notifQueue[i].p >= item.p) i++;
+    this._notifQueue.splice(i, 0, item);
+  }
+
+  _showNextNotification() {
+    while (this._notifQueue.length) {
+      const next = this._notifQueue[0];
+      if (this._swapOpen) {
+        // Modal suppression: drop the now-redundant swap-hint; hold low-priority banners.
+        if (next.swapHint) {
+          this._notifQueue.shift();
+          continue;
+        }
+        if (next.suppressible) break; // leave it queued until the menu closes
+      }
+      this._notifQueue.shift();
+      this._renderNotification(next);
+      return;
     }
+    this._notifActive = null;
+  }
+
+  _renderNotification(item) {
     const { w, safe } = this._vp();
+    const y = safe.top + HUD_TOP_BAR_H + NOTIF_BELOW_BAR;
     const t = this.add
-      .text(w / 2, 150 + safe.top, text, {
+      .text(w / 2, y, item.text, {
         fontFamily: '"SproutLands", "Courier New", monospace',
-        fontSize: '20px',
-        color: color || COLOR_NORMAL,
+        fontSize: '18px',
+        color: item.color,
         align: 'center',
         backgroundColor: 'rgba(20,18,16,0.85)',
-        padding: { x: 18, y: 10 },
+        padding: { x: 16, y: 8 },
         stroke: '#141210',
         strokeThickness: 2
       })
       .setOrigin(0.5, 0)
-      .setDepth(320)
+      .setDepth(NOTIF_DEPTH)
       .setAlpha(0);
-    this._banner = t;
-    this.tweens.add({ targets: t, alpha: 1, duration: 200 });
-    this._bannerEvent = this.time.delayedCall(holdMs, () => {
-      this.tweens.add({
-        targets: t,
-        alpha: 0,
-        duration: 400,
-        onComplete: () => {
-          t.destroy();
-          if (this._banner === t) this._banner = null;
-        }
-      });
+    this._notifActive = { item, obj: t, p: item.p, timer: null };
+    this.tweens.add({ targets: t, alpha: 1, duration: 180 });
+    this._notifActive.timer = this.time.delayedCall(item.holdMs, () => this._fadeNotification());
+  }
+
+  _fadeNotification() {
+    const a = this._notifActive;
+    if (!a) return;
+    this.tweens.add({
+      targets: a.obj,
+      alpha: 0,
+      duration: 300,
+      onComplete: () => {
+        a.obj.destroy();
+        this._notifActive = null;
+        this.time.delayedCall(NOTIF_GAP_MS, () => {
+          if (!this._notifActive) this._showNextNotification();
+        });
+      }
     });
+  }
+
+  // Tear down the on-screen banner immediately (preemption / scene teardown) — no fade.
+  _clearActiveNotification() {
+    const a = this._notifActive;
+    if (!a) return;
+    if (a.timer) a.timer.remove(false);
+    if (a.obj) a.obj.destroy();
+    this._notifActive = null;
   }
 
   showWorldDetail({ title, text }) {
@@ -1194,145 +1285,31 @@ export default class UIScene extends Phaser.Scene {
     }
   }
 
-  // --- Achievement toasts (Sprint 6) ----------------------------------------
-  // Slide in from the top-right, hold 4s, fade out. Concurrent unlocks queue
-  // and play one at a time (max depth 5 — oldest dropped on overflow).
-
+  // --- Achievement unlocks (Sprint 6 → Phase 5 unified queue) ----------------
+  // Vanity unlocks ride the LOWEST priority band — they queue behind objectives and
+  // dictionary entries and are suppressed while the seed-swap menu is open, so a popped
+  // achievement can never bury an objective hint. Rendered as a slim banner like the rest.
   enqueueToast(achievement) {
     if (!achievement) return;
-    this._toastQueue.push(achievement);
-    if (this._toastQueue.length > 5) this._toastQueue.shift();
-    if (!this._toastActive) this.showNextToast();
-  }
-
-  showNextToast() {
-    if (this._toastQueue.length === 0) {
-      this._toastActive = false;
-      return;
-    }
-    this._toastActive = true;
-    this.buildToast(this._toastQueue.shift());
-  }
-
-  buildToast(a) {
-    const vp = this._vp();
-    const w = 380;
-    const h = 96;
-    const pad = 24;
-    const y = 160 + vp.safe.top; // below the timer / mute / NG+ indicators (clear a notch)
-    const xHidden = vp.w + w;
-    const xShown = vp.w - pad - vp.safe.right - w / 2;
-
-    const container = this.add.container(xHidden, y).setDepth(300);
-    const bg = this.add
-      .rectangle(0, 0, w, h, 0x221e1b, 0.97)
-      .setStrokeStyle(2, 0xd4a83f);
-    const icon = this.add.text(-w / 2 + 30, 0, a.icon, { fontSize: '34px' }).setOrigin(0.5);
-    const title = this.add
-      .text(-w / 2 + 60, -28, 'ACHIEVEMENT UNLOCKED', {
-        fontFamily: '"SproutLands", "Courier New", monospace',
-        fontSize: '12px',
-        fontStyle: 'bold',
-        color: '#D4A83F'
-      })
-      .setOrigin(0, 0.5);
-    const name = this.add
-      .text(-w / 2 + 60, -6, a.name, {
-        fontFamily: '"SproutLands", "Courier New", monospace',
-        fontSize: '18px',
-        fontStyle: 'bold',
-        color: '#F5EFE6'
-      })
-      .setOrigin(0, 0.5);
-    const flavor = this.add
-      .text(-w / 2 + 60, 22, `"${a.flavor}"`, {
-        fontFamily: '"SproutLands", "Courier New", monospace',
-        fontSize: '12px',
-        color: '#9B9389',
-        wordWrap: { width: w - 80 }
-      })
-      .setOrigin(0, 0.5);
-
-    container.add([bg, icon, title, name, flavor]);
-
-    this.tweens.add({ targets: container, x: xShown, duration: 350, ease: 'Back.easeOut' });
-    this.time.delayedCall(4000, () => {
-      this.tweens.add({
-        targets: container,
-        x: xHidden,
-        alpha: 0,
-        duration: 400,
-        onComplete: () => {
-          container.destroy();
-          this.showNextToast();
-        }
-      });
+    this.pushNotification({
+      text: `🏆 ${achievement.name}`,
+      color: '#EDD49A',
+      priority: 'achievement'
     });
   }
 
-  // --- Tutorial hint pills (Sprint 12) --------------------------------------
-  // Small non-blocking pills that teach the first-run loop. Queued so two hints
-  // never overlap (500ms gap), fade in 300ms, hold, fade out 500ms. Each id only
-  // ever arrives once (TutorialSystem dedupes against the save).
-
+  // --- First-run tutorial hints (Sprint 12 → Phase 5 unified queue) ----------
+  // Tutorials are OBJECTIVES (highest band) — they preempt vanity/dictionary banners. The
+  // 'slots_full' hint is the swap-hint: flagged so the queue drops it while the swap menu
+  // (which IS the swap UI) is open. Each id only ever arrives once (TutorialSystem dedupes).
   enqueueTutorial(hint) {
     if (!hint || !hint.text) return;
-    this._tutorialQueue.push(hint);
-    if (!this._tutorialActive) this.showNextTutorial();
-  }
-
-  showNextTutorial() {
-    if (this._tutorialQueue.length === 0) {
-      this._tutorialActive = false;
-      return;
-    }
-    this._tutorialActive = true;
-    this.buildTutorialPill(this._tutorialQueue.shift());
-  }
-
-  tutorialPosition(position) {
-    const { w, h, safe } = this._vp();
-    switch (position) {
-      case 'center':
-        return { x: w / 2, y: h / 2 - 90 };
-      case 'bottom_center':
-        return { x: w / 2, y: h - 150 - safe.bottom };
-      case 'top_center':
-      default:
-        return { x: w / 2, y: 200 + safe.top };
-    }
-  }
-
-  buildTutorialPill(hint) {
-    const pos = this.tutorialPosition(hint.position);
-    const pill = this.add
-      .text(pos.x, pos.y, hint.text, {
-        fontFamily: '"SproutLands", "Courier New", monospace',
-        fontSize: '18px',
-        fontStyle: 'bold',
-        color: '#F5EFE6',
-        align: 'center',
-        backgroundColor: 'rgba(20,18,16,0.78)',
-        padding: { x: 16, y: 9 },
-        stroke: '#141210',
-        strokeThickness: 2
-      })
-      .setOrigin(0.5)
-      .setDepth(330)
-      .setAlpha(0);
-
-    this.tweens.add({ targets: pill, alpha: 1, duration: 300 });
-    this.time.delayedCall(300 + (hint.duration || 4000), () => {
-      this.tweens.add({
-        targets: pill,
-        alpha: 0,
-        duration: 500,
-        onComplete: () => {
-          pill.destroy();
-          // 500ms gap before the next pill so they never run together.
-          this.time.delayedCall(500, () => this.showNextTutorial());
-        }
-      });
+    this.pushNotification({
+      text: hint.text,
+      color: '#F5EFE6',
+      holdMs: hint.duration,
+      priority: 'objective',
+      swapHint: hint.id === 'slots_full'
     });
   }
 
@@ -1353,6 +1330,15 @@ export default class UIScene extends Phaser.Scene {
     if (filled.length === 0) return;
     this._swapOpen = true;
     this._setSeedTrayActive(true); // the tray is now interactable — go solid (Phase 4)
+    // Modal suppression (Phase 5): pull a low-priority / swap-hint banner off screen while
+    // the swap menu owns the interaction. A requeued low-priority one re-shows on close; the
+    // redundant swap-hint is dropped.
+    if (this._notifActive && (this._notifActive.item.suppressible || this._notifActive.item.swapHint)) {
+      const it = this._notifActive.item;
+      this._clearActiveNotification();
+      if (!it.swapHint) this._insertNotif(it);
+      this._showNextNotification();
+    }
     if (this.interactPrompt) this.interactPrompt.setAlpha(0);
 
     const newName = entitiesData.plants[newPlantType]
@@ -1384,6 +1370,8 @@ export default class UIScene extends Phaser.Scene {
     this._swapObjects = [];
     this._swapOpen = false;
     this._setSeedTrayActive(false); // back to translucent at rest (Phase 4)
+    // Resume any low-priority banner held while the menu was open (Phase 5).
+    if (!this._notifActive) this._showNextNotification();
   }
 
   // Seed tray opacity (Phase 4): near-solid while the seed-swap menu is interactable,
