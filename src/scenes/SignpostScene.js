@@ -1,30 +1,28 @@
 // SignpostScene.js
 //
-// The achievement-log overlay (Sprint 6), opened from the garden signpost.
-// Full-screen dim panel mirroring UpgradeScene. Reads unlock state + per-
-// achievement unlock day live from GameScene's AchievementSystem and renders
-// all achievements grouped into four chapters. The hidden Chapter IV only
-// appears once at least one of its achievements is unlocked. ESC or [Close]
-// dismisses and emits 'signpost:closed' so GameScene un-freezes.
+// The achievement-log overlay (Sprint 6), opened from the garden signpost. Reads unlock state
+// + per-achievement unlock day live from GameScene's AchievementSystem and renders all
+// achievements grouped into four chapters. The hidden Chapter IV only appears once at least
+// one of its achievements is unlocked. ESC / [Close] / swipe-down dismisses and emits
+// 'signpost:closed' so GameScene un-freezes.
+//
+// Sprint mobile-polish-menus (Phase 4): ported onto the shared PaginatedMenu controller — the
+// old fitCameraToVirtual + hand-rolled mask/scrollbar rendered tiny under the mobile RESIZE
+// scale mode. Chapters are PRESERVED as labeled pages (each page carries its chapter title);
+// the bespoke scroll is replaced by the shared dots/swipe/◀▶ pagination, and the chip grid is
+// responsive (1 column portrait, 2-4 landscape/desktop).
 
 import Phaser from 'phaser';
-import { fitCameraToVirtual } from '../core/ViewportFit.js';
 import EventBus from '../core/EventBus.js';
-import { VIRTUAL_WIDTH, VIRTUAL_HEIGHT } from '../core/Constants.js';
+import PaginatedMenu from '../ui/PaginatedMenu.js';
 import { ACHIEVEMENTS, ACHIEVEMENT_COUNT, TIER_LABELS } from '../data/achievements.js';
 
-const MARGIN = 40;
-const COLS = 4;
-const GAP = 16;
-const CHIP_H = 58;
-const ROW_GAP = 8;
-const HEADER_H = 30;
-
-// Scroll viewport — chapter content is clipped to this band and scrolls within
-// it so the log never overflows the bottom of the screen (40+ achievements
-// exceed a single fixed page).
-const VIEWPORT_TOP = 100;
-const VIEWPORT_BOTTOM = VIRTUAL_HEIGHT - 24;
+const FONT = '"SproutLands", "Courier New", monospace';
+const HEADER_H = 60;
+const FOOTER_H = 78;
+const CHIP_H = 66;
+const CHIP_GAP = 10;
+const LABEL_H = 36; // chapter-title band at the top of each page
 
 export default class SignpostScene extends Phaser.Scene {
   constructor() {
@@ -32,225 +30,189 @@ export default class SignpostScene extends Phaser.Scene {
   }
 
   create() {
-    fitCameraToVirtual(this);
     const gameScene = this.scene.get('GameScene');
     const as = gameScene && gameScene.achievementSystem;
     this.unlocked = as ? as.unlockedIds : new Set();
     this.days = as ? as.achievementDays : {};
 
-    // Dim, click-swallowing backdrop.
-    this.add
-      .rectangle(0, 0, VIRTUAL_WIDTH, VIRTUAL_HEIGHT, 0x000000, 0.88)
-      .setOrigin(0, 0)
-      .setDepth(100)
-      .setInteractive();
+    this.menu = new PaginatedMenu(this, {
+      margin: 20,
+      headerH: HEADER_H,
+      footerH: FOOTER_H,
+      depth: 100,
+      backdropColor: 0x141210,
+      backdropAlpha: 0.96,
+      closeW: 220,
+      closeColor: 0x36322e,
+      closeLabelMobile: 'Close',
+      closeLabelDesktop: 'Close   ·   Esc',
+      arrowColor: 0x2d2926,
+      arrowDisabledColor: 0x201d1a,
+      closeOnEsc: true,
+      dismissOnSwipeDown: true,
+      swipeEnabled: () => true,
+      onClose: () => this.close(),
+      getPages: (frame) => this.buildPages(frame),
+      renderHeader: (frame) => this.renderHeader(frame),
+      renderBody: (frame, page) => this.renderBody(frame, page),
+      button: (cx, cy, w, h, label, fill, onClick, enabled, textColor) =>
+        this.track(this.makeButton(cx, cy, w, h, label, fill, enabled, onClick, textColor))
+    });
+    this.menu.attachInput();
+    this.menu.render();
 
-    this.add
-      .text(MARGIN, 28, 'ACHIEVEMENT LOG', {
-        fontFamily: '"SproutLands", "Courier New", monospace',
-        fontSize: '32px',
-        fontStyle: 'bold',
-        color: '#EDD49A'
-      })
-      .setDepth(101);
-
-    this.add
-      .text(MARGIN, 70, `${this.unlocked.size} / ${ACHIEVEMENT_COUNT} Unlocked`, {
-        fontFamily: '"SproutLands", "Courier New", monospace',
-        fontSize: '18px',
-        color: '#9B9389'
-      })
-      .setDepth(101);
-
-    this.layout();
-    this.setupScroll();
-
-    this.makeButton(VIRTUAL_WIDTH - MARGIN - 110, 44, 220, 40, '[ Close ]   Esc', () =>
-      this.close()
-    );
-
-    this.input.keyboard.on('keydown-ESC', () => this.close());
+    this.scale.on('resize', this.onResize, this);
+    this.events.once('shutdown', () => {
+      this.scale.off('resize', this.onResize, this);
+      this.menu.destroy();
+    });
   }
 
-  layout() {
-    // All chapter content lives in one scrollable container so it can be
-    // clipped and panned within the viewport band.
-    this.content = this.add.container(0, 0).setDepth(101);
-    this.scrollY = 0;
+  onResize() {
+    this.menu.render();
+  }
 
-    const chipW = (VIRTUAL_WIDTH - MARGIN * 2 - GAP * (COLS - 1)) / COLS;
-    let y = 108;
+  track(objs) {
+    this.menu.track(...(Array.isArray(objs) ? objs : [objs]));
+    return objs;
+  }
 
+  // --- Chapters → responsive grid → labeled pages ----------------------------
+
+  gridCols(frame) {
+    return frame.portrait ? 1 : frame.W < 760 ? 2 : frame.W < 1200 ? 3 : 4;
+  }
+
+  buildPages(frame) {
+    const cols = this.gridCols(frame);
+    const rows = Math.max(1, Math.floor((frame.bandH - LABEL_H + CHIP_GAP) / (CHIP_H + CHIP_GAP)));
+    const per = Math.max(1, cols * rows);
+    const pages = [];
     [1, 2, 3, 4].forEach((tier) => {
       const entries = ACHIEVEMENTS.filter((a) => a.tier === tier);
-      const anyHiddenUnlocked = entries.some((a) => this.unlocked.has(a.id));
-
       // Chapter IV stays fully concealed until one of its secrets is found.
-      if (tier === 4 && !anyHiddenUnlocked) return;
-
-      const header = this.add.text(MARGIN, y, TIER_LABELS[tier], {
-        fontFamily: '"SproutLands", "Courier New", monospace',
-        fontSize: '20px',
-        fontStyle: 'bold',
-        color: '#D4A83F'
-      });
-      this.content.add(header);
-      y += HEADER_H;
-
-      entries.forEach((a, i) => {
-        const col = i % COLS;
-        const row = Math.floor(i / COLS);
-        const x = MARGIN + col * (chipW + GAP);
-        const chipY = y + row * (CHIP_H + ROW_GAP);
-        this.buildChip(a, x, chipY, chipW);
-      });
-
-      const rows = Math.ceil(entries.length / COLS);
-      y += rows * (CHIP_H + ROW_GAP) + 14;
-    });
-
-    this.contentBottom = y;
-  }
-
-  setupScroll() {
-    const viewportH = VIEWPORT_BOTTOM - VIEWPORT_TOP;
-
-    // Clip chapter content to the viewport so scrolled rows never paint over
-    // the title bar or run past the bottom edge.
-    const maskShape = this.make.graphics({ x: 0, y: 0, add: false });
-    maskShape.fillStyle(0xffffff);
-    maskShape.fillRect(0, VIEWPORT_TOP, VIRTUAL_WIDTH, viewportH);
-    this.content.setMask(maskShape.createGeometryMask());
-
-    if (this.contentBottom <= VIEWPORT_BOTTOM) return; // everything fits — no scroll needed
-
-    // Scrollbar: faint track + accent thumb on the right gutter.
-    const barX = VIRTUAL_WIDTH - 18;
-    this.add
-      .rectangle(barX, VIEWPORT_TOP, 6, viewportH, 0x000000, 0.35)
-      .setOrigin(0, 0)
-      .setDepth(103);
-    const thumbH = Math.max(40, (viewportH * viewportH) / (this.contentBottom - VIEWPORT_TOP));
-    this.scrollThumb = this.add
-      .rectangle(barX, VIEWPORT_TOP, 6, thumbH, 0xedd49a, 0.7)
-      .setOrigin(0, 0)
-      .setDepth(104);
-    this.thumbTravel = viewportH - thumbH;
-
-    // Mouse wheel.
-    this.input.on('wheel', (pointer, over, dx, dy) => this.applyScroll(this.scrollY - dy));
-
-    // Click / touch drag.
-    let dragging = false;
-    let lastY = 0;
-    this.input.on('pointerdown', (pointer) => {
-      if (pointer.y >= VIEWPORT_TOP && pointer.y <= VIEWPORT_BOTTOM) {
-        dragging = true;
-        lastY = pointer.y;
+      if (tier === 4 && !entries.some((a) => this.unlocked.has(a.id))) return;
+      const label = TIER_LABELS[tier];
+      for (let i = 0; i < entries.length; i += per) {
+        pages.push({ label, entries: entries.slice(i, i + per) });
       }
     });
-    this.input.on('pointermove', (pointer) => {
-      if (!dragging) return;
-      this.applyScroll(this.scrollY + (pointer.y - lastY));
-      lastY = pointer.y;
+    return pages.length ? pages : [{ label: '', entries: [] }];
+  }
+
+  renderHeader(frame) {
+    const { left, right, headerTop } = frame;
+    this.track(
+      this.add
+        .text(left, headerTop, 'ACHIEVEMENT LOG', { fontFamily: FONT, fontSize: '30px', fontStyle: 'bold', color: '#EDD49A' })
+        .setOrigin(0, 0)
+        .setDepth(101)
+    );
+    this.track(
+      this.add
+        .text(right, headerTop + 6, `${this.unlocked.size} / ${ACHIEVEMENT_COUNT} Unlocked`, {
+          fontFamily: FONT,
+          fontSize: '18px',
+          fontStyle: 'bold',
+          color: '#9B9389'
+        })
+        .setOrigin(1, 0)
+        .setDepth(101)
+    );
+  }
+
+  renderBody(frame, page) {
+    const { left, innerW, contentTop } = frame;
+    this.track(
+      this.add
+        .text(left, contentTop, page.label, { fontFamily: FONT, fontSize: '20px', fontStyle: 'bold', color: '#D4A83F' })
+        .setDepth(101)
+    );
+    const cols = this.gridCols(frame);
+    const chipW = (innerW - CHIP_GAP * (cols - 1)) / cols;
+    const gridTop = contentTop + LABEL_H;
+    page.entries.forEach((a, i) => {
+      const col = i % cols;
+      const row = Math.floor(i / cols);
+      const x = left + col * (chipW + CHIP_GAP);
+      const y = gridTop + row * (CHIP_H + CHIP_GAP);
+      this.buildChip(a, x, y, chipW, CHIP_H);
     });
-    const stopDrag = () => {
-      dragging = false;
-    };
-    this.input.on('pointerup', stopDrag);
-    this.input.on('pointerupoutside', stopDrag);
   }
 
-  applyScroll(targetY) {
-    const minY = Math.min(0, VIEWPORT_BOTTOM - this.contentBottom);
-    this.scrollY = Phaser.Math.Clamp(targetY, minY, 0);
-    this.content.y = this.scrollY;
-    if (this.scrollThumb && minY < 0) {
-      this.scrollThumb.y = VIEWPORT_TOP + (this.scrollY / minY) * this.thumbTravel;
-    }
-  }
-
-  buildChip(a, x, y, w) {
+  buildChip(a, x, y, w, h) {
     const isUnlocked = this.unlocked.has(a.id);
     const concealed = !isUnlocked && a.hidden; // hidden + locked → everything is "???"
 
-    const bg = this.add
-      .rectangle(x, y, w, CHIP_H, isUnlocked ? 0x2d2926 : 0x201d1a)
-      .setOrigin(0, 0)
-      .setStrokeStyle(2, isUnlocked ? 0x4d4843 : 0x2f2b27)
-      .setDepth(101);
-    bg.setAlpha(isUnlocked ? 1 : 0.85);
-    this.content.add(bg);
+    this.track(
+      this.add
+        .rectangle(x, y, w, h, isUnlocked ? 0x2d2926 : 0x201d1a)
+        .setOrigin(0, 0)
+        .setStrokeStyle(2, isUnlocked ? 0x4d4843 : 0x2f2b27)
+        .setDepth(101)
+        .setAlpha(isUnlocked ? 1 : 0.85)
+    );
 
-    const iconChar = concealed ? '❔' : a.icon;
     const icon = this.add
-      .text(x + 26, y + CHIP_H / 2, iconChar, { fontSize: '28px' })
+      .text(x + 26, y + h / 2, concealed ? '❔' : a.icon, { fontSize: '26px' })
       .setOrigin(0.5)
       .setDepth(102);
     if (!isUnlocked) icon.setAlpha(0.4);
-    this.content.add(icon);
+    this.track(icon);
 
-    const nameText = concealed ? '???' : a.name;
-    const name = this.add
-      .text(x + 52, y + 12, nameText, {
-        fontFamily: '"SproutLands", "Courier New", monospace',
-        fontSize: '15px',
-        fontStyle: 'bold',
-        color: isUnlocked ? '#F5EFE6' : '#7a746c'
-      })
-      .setDepth(102);
-    this.content.add(name);
+    this.track(
+      this.add
+        .text(x + 52, y + 12, concealed ? '???' : a.name, {
+          fontFamily: FONT,
+          fontSize: '15px',
+          fontStyle: 'bold',
+          color: isUnlocked ? '#F5EFE6' : '#7a746c'
+        })
+        .setDepth(102)
+    );
 
-    let flavorText;
-    if (isUnlocked) flavorText = `"${a.flavor}"`;
-    else if (a.hidden) flavorText = '???';
-    else flavorText = '???';
-
-    const flavor = this.add
-      .text(x + 52, y + 32, flavorText, {
-        fontFamily: '"SproutLands", "Courier New", monospace',
-        fontSize: '11px',
-        color: isUnlocked ? '#9B9389' : '#57514b',
-        wordWrap: { width: w - 64 }
-      })
-      .setDepth(102);
-    this.content.add(flavor);
+    this.track(
+      this.add
+        .text(x + 52, y + 34, isUnlocked ? `"${a.flavor}"` : '???', {
+          fontFamily: FONT,
+          fontSize: '11px',
+          color: isUnlocked ? '#9B9389' : '#57514b',
+          wordWrap: { width: w - 64 }
+        })
+        .setDepth(102)
+    );
 
     if (isUnlocked) {
       const day = this.days[a.id];
       if (day !== undefined) {
-        const dayText = this.add
-          .text(x + w - 10, y + 10, `Day ${day}`, {
-            fontFamily: '"SproutLands", "Courier New", monospace',
-            fontSize: '11px',
-            color: '#8AB87E'
-          })
-          .setOrigin(1, 0)
-          .setDepth(102);
-        this.content.add(dayText);
+        this.track(
+          this.add
+            .text(x + w - 10, y + 10, `Day ${day}`, { fontFamily: FONT, fontSize: '11px', color: '#8AB87E' })
+            .setOrigin(1, 0)
+            .setDepth(102)
+        );
       }
     }
   }
 
-  makeButton(cx, cy, w, h, label, onClick) {
+  makeButton(cx, cy, w, h, label, baseColor, enabled, onClick, textColor) {
     const rect = this.add
-      .rectangle(cx, cy, w, h, 0x36322e)
+      .rectangle(cx, cy, w, h, baseColor)
       .setStrokeStyle(2, 0x000000)
-      .setDepth(101)
-      .setInteractive({ useHandCursor: true });
-    this.add
-      .text(cx, cy, label, {
-        fontFamily: '"SproutLands", "Courier New", monospace',
-        fontSize: '15px',
-        fontStyle: 'bold',
-        color: '#F5EFE6'
-      })
+      .setDepth(101);
+    const text = this.add
+      .text(cx, cy, label, { fontFamily: FONT, fontSize: '15px', fontStyle: 'bold', color: textColor || '#F5EFE6' })
       .setOrigin(0.5)
       .setDepth(102);
-    rect.on('pointerover', () => rect.setStrokeStyle(2, 0xeac34f));
-    rect.on('pointerout', () => rect.setStrokeStyle(2, 0x000000));
-    rect.on('pointerup', onClick);
-    return rect;
+    if (enabled) {
+      rect.setInteractive({ useHandCursor: true });
+      rect.on('pointerover', () => rect.setStrokeStyle(2, 0xeac34f));
+      rect.on('pointerout', () => rect.setStrokeStyle(2, 0x000000));
+      rect.on('pointerup', onClick);
+    } else {
+      rect.setAlpha(0.6);
+    }
+    return [rect, text];
   }
 
   close() {
