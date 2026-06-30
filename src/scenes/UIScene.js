@@ -20,6 +20,11 @@ import {
   THREAT_ARROW_MARGIN,
   THREAT_ARROW_SIZE,
   HUD_TOP_BAR_H,
+  HUD_PORTRAIT_SEED_SCALE,
+  HUD_PORTRAIT_HP_WIDTH_FRAC,
+  HUD_PORTRAIT_HP_HEIGHT,
+  HUD_PORTRAIT_CURRENCY_GAP,
+  HUD_PORTRAIT_BOTTOM_ROW_GAP,
   SEED_TRAY_ALPHA_IDLE,
   SEED_TRAY_ALPHA_ACTIVE,
   RADIAL_RING_RADIUS,
@@ -297,7 +302,10 @@ export default class UIScene extends Phaser.Scene {
       .setOrigin(0, 0)
       .setDepth(-1);
 
-    // TOP LEFT — HP bar
+    // TOP LEFT — HP bar. _hpMaxWidth/_hpBarHeight are the live (portrait-condensable) bar
+    // metrics refreshHP reads; default to the full landscape size until layoutHUD sets them.
+    this._hpMaxWidth = HP_BAR_MAX_WIDTH;
+    this._hpBarHeight = HP_BAR_HEIGHT;
     this.hpFill = this.add
       .rectangle(pad, 40, HP_BAR_MAX_WIDTH, HP_BAR_HEIGHT, 0xff3333)
       .setOrigin(0, 0.5);
@@ -945,6 +953,7 @@ export default class UIScene extends Phaser.Scene {
   refreshSeedSlots(slots) {
     if (slots.length !== this.slotCount) {
       this.buildSeedSlots(slots.length);
+      this.repositionSeedSlots(); // re-apply portrait scale + current anchor to the rebuilt row
     }
     slots.forEach((plantType, i) => {
       const slot = this.seedSlots[i];
@@ -1813,10 +1822,17 @@ export default class UIScene extends Phaser.Scene {
     // bar was removed in Sprint mobile-playability-2).
     if (this.topBar) this.topBar.setPosition(0, 0).setSize(width, 80);
 
-    // TOP LEFT — HP + mana + water + coins (clear a left notch and the top bar).
-    if (this.hpFill) this.hpFill.setPosition(pad + sl, 40 + st);
-    if (this.hpBorder) this.hpBorder.setPosition(pad + sl, 40 + st);
-    if (this.hpText) this.hpText.setPosition(pad + sl, 60 + st);
+    // TOP LEFT — HP + mana + water (clear a left notch and the top bar). PORTRAIT condenses
+    // the HP bar to ~1/3 screen width + a slimmer height (Phase 2) so the top-left cluster
+    // takes less of the narrow width; landscape/desktop keep the full 240px bar.
+    const hpW = portrait ? Math.round(width * HUD_PORTRAIT_HP_WIDTH_FRAC) : HP_BAR_MAX_WIDTH;
+    const hpH = portrait ? HUD_PORTRAIT_HP_HEIGHT : HP_BAR_HEIGHT;
+    this._hpMaxWidth = hpW;
+    this._hpBarHeight = hpH;
+    if (this.hpFill) this.hpFill.setPosition(pad + sl, 40 + st).setSize(hpW, hpH);
+    if (this.hpBorder) this.hpBorder.setPosition(pad + sl, 40 + st).setSize(hpW, hpH);
+    if (this.hpFill) this.refreshHP(); // re-apply the depletion ratio against the new max width
+    if (this.hpText) this.hpText.setPosition(pad + sl, (portrait ? 52 : 60) + st);
     // Mana bar scaffold sits directly under the HP readout (Sprint control-scheme-
     // combat-input). Hidden by default (dormant); when revealed it pushes the water
     // counter down so nothing overlaps.
@@ -1829,10 +1845,10 @@ export default class UIScene extends Phaser.Scene {
     if (this.dayText) this.dayText.setPosition(width / 2, 30 + st);
     if (this.zoneBadge) this.zoneBadge.setPosition(width / 2, 66 + st);
     if (this.weatherIcon) {
-      this.weatherIcon.setPosition(
-        width / 2 + (this._weatherIsSprite ? 96 : 92),
-        (this._weatherIsSprite ? 46 : 32) + st
-      );
+      // Portrait tucks the weather icon closer to the day text so it stays in the centre zone
+      // clear of the right-edge timer on a narrow width (Phase 2).
+      const wxOff = this._weatherIsSprite ? (portrait ? 70 : 96) : (portrait ? 66 : 92);
+      this.weatherIcon.setPosition(width / 2 + wxOff, (this._weatherIsSprite ? 46 : 32) + st);
     }
     if (this.ngPlusIndicator) this.ngPlusIndicator.setPosition(width / 2, 96 + st);
 
@@ -1846,9 +1862,16 @@ export default class UIScene extends Phaser.Scene {
     if (this.timerText) this.timerText.setPosition(rightEdge, 30 + st);
     if (this.overtimeText) this.overtimeText.setPosition(rightEdge, 96 + st);
     if (this.muteIndicator) this.muteIndicator.setPosition(rightEdge, 120 + st);
-    this._currencyAnchorX = rightEdge;
-    this._currencyY = 62 + st;
-    this._layoutCurrencies();
+    // Currencies: PORTRAIT moves the coin/soul pair DOWN to the bottom band beside the seed
+    // tray (Phase 2) — decongesting the top bar so the timer + weather are no longer crowded
+    // by the currency icons. They are seated in the bottom block below. Landscape/desktop keep
+    // them right-aligned in this top-right zone (unchanged).
+    this._currencyPortrait = portrait;
+    if (!portrait) {
+      this._currencyAnchorX = rightEdge;
+      this._currencyY = 62 + st;
+      this._layoutCurrencies();
+    }
 
     // TOP RIGHT (corner) — desktop pause/menu button (Sprint controls-access). Desktop
     // only (menuBtnRect is undefined on mobile, so menuReserve above is 0 there).
@@ -1864,11 +1887,27 @@ export default class UIScene extends Phaser.Scene {
     // of the joystick/buttons and the home indicator (portrait lifts it above the
     // control band); desktop keeps the bottom-left anchor so the desktop HUD is
     // unchanged. Re-anchoring _slotBaseX/Y means later satchel rebuilds land in place.
+    // PORTRAIT (Phase 2): the tray drops to a HALF-SIZE passive fullness indicator low in the
+    // bottom-centre band (between the joystick + button thumb clusters), with the coin/soul
+    // pair on a row just below it. Landscape centres a full-size row above the control band;
+    // desktop keeps the bottom-left anchor — both unchanged.
+    const seedScale = portrait ? HUD_PORTRAIT_SEED_SCALE : 1;
+    this._seedScale = seedScale;
+    const effSlot = this._slotSize * seedScale;
+    const effGap = this._slotGap * seedScale;
     const slotCount = this.seedSlots ? this.seedSlots.length : 3;
-    const rowW = slotCount * this._slotSize + (slotCount - 1) * this._slotGap;
+    const rowW = slotCount * effSlot + (slotCount - 1) * effGap;
+    const trayPad = 12 * seedScale;
+    const trayH = effSlot + trayPad * 2;
     if (portrait) {
-      this._slotBaseX = Math.max(pad + sl, (width - rowW) / 2);
-      this._slotBaseY = bandTop - 28;
+      // Stack from the bottom up: currency row at the bottom (clear of the home indicator),
+      // the half-size seed tray just above it, both centred between the thumb clusters.
+      const currencyY = height - sb - 20;
+      this._slotBaseX = (width - rowW) / 2;
+      this._slotBaseY = currencyY - 14 - HUD_PORTRAIT_BOTTOM_ROW_GAP - trayH / 2;
+      this._currencyAnchorX = width / 2;
+      this._currencyY = currencyY;
+      this._layoutCurrencies();
     } else if (isMobile) {
       this._slotBaseX = Math.max(pad + sl, (width - rowW) / 2);
       this._slotBaseY = height - 48 - sb;
@@ -1878,10 +1917,9 @@ export default class UIScene extends Phaser.Scene {
     }
     this.repositionSeedSlots();
     if (this.seedTray) {
-      const trayPad = 12;
       this.seedTray
         .setPosition(this._slotBaseX + rowW / 2, this._slotBaseY)
-        .setSize(rowW + trayPad * 2, this._slotSize + trayPad * 2);
+        .setSize(rowW + trayPad * 2, trayH);
     }
     if (this.seedsLabel) {
       this.seedsLabel.setPosition(this._slotBaseX, this._slotBaseY + 28);
@@ -1928,12 +1966,15 @@ export default class UIScene extends Phaser.Scene {
   // until the next inventory:changed). Mirrors the cx formula in buildSeedSlots.
   repositionSeedSlots() {
     if (!this.seedSlots) return;
-    const size = this._slotSize;
-    const gap = this._slotGap;
+    // _seedScale shrinks the whole row in portrait (Phase 2) via setScale on each slot's box +
+    // fill — no rebuild, so each fill colour is preserved. The spacing math uses the scaled size.
+    const s = this._seedScale || 1;
+    const size = this._slotSize * s;
+    const gap = this._slotGap * s;
     this.seedSlots.forEach((slot, i) => {
       const cx = this._slotBaseX + i * (size + gap) + size / 2;
-      slot.box.setPosition(cx, this._slotBaseY);
-      slot.fill.setPosition(cx, this._slotBaseY);
+      slot.box.setPosition(cx, this._slotBaseY).setScale(s);
+      slot.fill.setPosition(cx, this._slotBaseY).setScale(s);
     });
   }
 
@@ -1994,6 +2035,18 @@ export default class UIScene extends Phaser.Scene {
     if (this._currencyAnchorX == null) return;
     const x = this._currencyAnchorX;
     const y = this._currencyY;
+    // PORTRAIT (Phase 2): coin + soul sit as a horizontal pair GROUP-CENTRED at the anchor
+    // (bottom-centre band, beside the seed tray), reading left→right as coin then soul.
+    if (this._currencyPortrait) {
+      const coinW = this.coinText ? this.coinText.width : 0;
+      const soulW = this.soulsText ? this.soulsText.width : 0;
+      const totalW = coinW + HUD_PORTRAIT_CURRENCY_GAP + soulW;
+      const startX = x - totalW / 2;
+      if (this.coinText) this.coinText.setOrigin(0, 0.5).setPosition(startX, y);
+      if (this.soulsText) this.soulsText.setOrigin(0, 0.5).setPosition(startX + coinW + HUD_PORTRAIT_CURRENCY_GAP, y);
+      return;
+    }
+    // Landscape/desktop: right-aligned pair anchored at the top-right zone edge (unchanged).
     if (this.soulsText) this.soulsText.setOrigin(1, 0.5).setPosition(x, y);
     if (this.coinText) {
       const soulW = this.soulsText ? this.soulsText.width : 0;
@@ -2005,7 +2058,7 @@ export default class UIScene extends Phaser.Scene {
 
   refreshHP() {
     const ratio = Phaser.Math.Clamp(this.hp / this.maxHP, 0, 1);
-    this.hpFill.width = HP_BAR_MAX_WIDTH * ratio;
+    this.hpFill.width = (this._hpMaxWidth || HP_BAR_MAX_WIDTH) * ratio;
     // Colour the fill by health band: green (healthy) → yellow (wounded) → red.
     const color =
       ratio >= HP_THRESHOLD_HIGH ? HP_COLOR_HIGH
