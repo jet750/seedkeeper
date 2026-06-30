@@ -20,6 +20,12 @@ export const TILE_SIZE = 16;
 export const USE_TILED_WORLD = true;
 export const TILED_WORLD_KEY = 'world_v1';
 
+// Global texture key for the cached downscaled real-world map (Sprint minimap-realmap-
+// seed-chest). GameScene generates it once at world load; the persistent minimap
+// (UIScene) and the full-screen MapScene both sample it so they show the REAL world
+// and stay consistent. Shared here so all three reference one key.
+export const WORLD_MAP_TEXTURE_KEY = 'world_map_render';
+
 // Zones
 export const GARDEN_ZONE_HEIGHT = 800; // legacy band height — still used for enemy/tree spawn gating
 
@@ -368,6 +374,13 @@ export const SOUL_DROP_FALLBACK = 1; // any enemy type not listed above
 // a HEAVY markup so rebuying a crop to feed a different stat tree is real friction (a
 // rebalancing valve), never a free swap. Sell stays at economy.json sellPrices. // TUNE
 export const FARMSTAND_MARKUP = 4;
+
+// --- Seed storage chest (Sprint minimap-realmap-seed-chest) ----------------
+// Garden interactable that holds seed overflow beyond the carry satchel. Deposit/
+// withdraw between satchel and chest; contents persist in save (v7). Capacity is the
+// total number of seeds the chest can hold across all types — deliberately GENEROUS
+// so it reads as "bottomless storage" relative to the 3-8 slot satchel. // TUNE
+export const CHEST_SEED_CAPACITY = 200;
 
 // --- Shared UI styling (Sprint 12 visual-consistency pass) ---
 // Every text object in the game already renders with this family; referencing the

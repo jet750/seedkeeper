@@ -11,7 +11,12 @@ import {
   VIRTUAL_HEIGHT,
   SECONDARY_SLOT_COUNT,
   MANA_BAR_MAX_WIDTH,
-  MANA_BAR_HEIGHT
+  MANA_BAR_HEIGHT,
+  WORLD_WIDTH,
+  WORLD_HEIGHT,
+  GARDEN_CENTER_X,
+  GARDEN_CENTER_Y,
+  WORLD_MAP_TEXTURE_KEY
 } from '../core/Constants.js';
 import MobileDetect from '../core/MobileDetect.js';
 import TouchControlSystem from '../systems/TouchControlSystem.js';
@@ -57,6 +62,20 @@ const CHOICE_ROW_PAD = 16; // inset of a row inside the panel
 const ACCENT_GOLD = 0xd4a83f;
 const ACCENT_BOTANICAL = 0x8ab87e;
 
+// --- Persistent minimap (Sprint minimap-realmap-seed-chest) -----------------
+// The small corner minimap (removed in a prior mobile sprint for colliding with the
+// touch buttons) re-added, now showing the REAL world via the cached world-map
+// texture. Top-LEFT, below the stat-bar cluster — the opposite end of the screen from
+// the bottom control clusters (joystick + diamond), so the old collision can't recur.
+const MINIMAP_SIZE = 116; // on-screen square size (desktop / where space allows)
+const MINIMAP_TOP = 116; // gap from the top inset to clear the HP/mana/water cluster
+const MINIMAP_PAD = 32; // left inset (matches the HUD pad)
+const MINIMAP_MIN = 64; // floor when a short landscape screen squeezes it
+const MINIMAP_BG = 0x141210; // backing fill (shown before the world texture exists)
+const MINIMAP_BORDER = 0x4d4843; // frame border (matches UI dividers)
+const MINIMAP_HOME = 0xffd23f; // HOME marker (garden centre)
+const MINIMAP_YOU = 0x00ffff; // live YOU marker (player)
+
 function formatTime(ms) {
   const totalSec = Math.max(0, Math.ceil(ms / 1000));
   const m = Math.floor(totalSec / 60);
@@ -81,6 +100,11 @@ export default class UIScene extends Phaser.Scene {
     this.urgentTime = entitiesData.daySystem.urgentTime;
     this.passOutFloorMs = entitiesData.daySystem.passOutFloorMs || 0; // Sprint 12 overtime floor
     this._busHandlers = [];
+    // Persistent minimap (Sprint minimap-realmap-seed-chest). Player starts at the
+    // garden centre; the live YOU marker tracks 'player:moved'. _minimapRect is the
+    // current on-screen {x,y,size} the markers map world coords onto.
+    this._playerPos = { x: GARDEN_CENTER_X, y: GARDEN_CENTER_Y };
+    this._minimapRect = null;
     this._pulseTween = null;
     this._promptTween = null;
     this._banner = null; // transient top-center banner (weather/notice/dict)
@@ -431,6 +455,79 @@ export default class UIScene extends Phaser.Scene {
     // strip is redundant there and removing it clears the strip-over-buttons (landscape)
     // and strip-over-tray (portrait) overlaps.
     if (!MobileDetect.isMobile()) this.buildSecondaryStrip();
+
+    // Persistent minimap (Sprint minimap-realmap-seed-chest) — built last so it draws
+    // over the top backing bar; layoutMinimap seats + sizes it from the live viewport.
+    this.buildMinimap();
+  }
+
+  // --- Persistent minimap (Sprint minimap-realmap-seed-chest) ----------------
+  // Build the corner minimap objects once: a backing fill, the cached real-world image
+  // (created only once GameScene's texture exists — guarded so it never renders as a
+  // missing-texture swatch), a frame border, the static HOME marker and the live YOU
+  // marker. All positioning/sizing happens in layoutMinimap so it reflows on resize.
+  buildMinimap() {
+    this.minimapBg = this.add.rectangle(0, 0, MINIMAP_SIZE, MINIMAP_SIZE, MINIMAP_BG, 0.85).setOrigin(0, 0).setDepth(5);
+    this.minimapImg = this.textures.exists(WORLD_MAP_TEXTURE_KEY)
+      ? this.add.image(0, 0, WORLD_MAP_TEXTURE_KEY).setOrigin(0, 0).setDepth(6)
+      : null;
+    this.minimapBorder = this.add
+      .rectangle(0, 0, MINIMAP_SIZE, MINIMAP_SIZE)
+      .setOrigin(0, 0)
+      .setStrokeStyle(2, MINIMAP_BORDER)
+      .setFillStyle()
+      .setDepth(7);
+    this.minimapHome = this.add.rectangle(0, 0, 7, 7, MINIMAP_HOME).setDepth(8).setVisible(false);
+    this.minimapYou = this.add.circle(0, 0, 4, MINIMAP_YOU).setStrokeStyle(1.5, 0xffffff).setDepth(9).setVisible(false);
+  }
+
+  // The world texture became available (or was regenerated) after the minimap was
+  // built — create the image now and re-seat everything.
+  onWorldMapReady() {
+    if (!this.minimapImg && this.textures.exists(WORLD_MAP_TEXTURE_KEY)) {
+      this.minimapImg = this.add.image(0, 0, WORLD_MAP_TEXTURE_KEY).setOrigin(0, 0).setDepth(6);
+    }
+    this.layoutAll(this.scale.width, this.scale.height);
+  }
+
+  // Seat + size the minimap top-left, below the stat cluster and clear of the bottom
+  // control band in BOTH orientations (the size is clamped against the space left above
+  // the controls so a short landscape screen can't push it under the joystick).
+  layoutMinimap(width, height, safe) {
+    if (!this.minimapBg) return;
+    const isMobile = MobileDetect.isMobile();
+    const portrait = isMobile && width < height;
+    // Reach (px up from the bottom) the control clusters / home indicator occupy. Zero
+    // on desktop (no touch controls); a portrait reserves the full control band.
+    const controlReach = portrait ? 230 : isMobile ? 150 : 0;
+    const top = safe.top + MINIMAP_TOP;
+    const bottomLimit = height - safe.bottom - controlReach - 12;
+    const size = Math.max(MINIMAP_MIN, Math.min(MINIMAP_SIZE, bottomLimit - top));
+    const x = safe.left + MINIMAP_PAD;
+    const y = top;
+
+    this._minimapRect = { x, y, size };
+    this.minimapBg.setPosition(x, y).setSize(size, size);
+    this.minimapBorder.setPosition(x, y).setSize(size, size);
+    if (this.minimapImg) this.minimapImg.setPosition(x, y).setDisplaySize(size, size).setVisible(true);
+
+    // HOME marker — static, at the garden centre.
+    const hx = x + (GARDEN_CENTER_X / WORLD_WIDTH) * size;
+    const hy = y + (GARDEN_CENTER_Y / WORLD_HEIGHT) * size;
+    this.minimapHome.setPosition(hx, hy).setVisible(true);
+
+    // YOU marker — live; seat it at the last known player position.
+    this.updateMinimapPlayer();
+  }
+
+  // Reposition the live YOU dot from the last 'player:moved' broadcast. Cheap — a single
+  // marker move, the only per-update work the minimap does (the map itself is cached).
+  updateMinimapPlayer() {
+    if (!this.minimapYou || !this._minimapRect) return;
+    const { x, y, size } = this._minimapRect;
+    const px = x + (this._playerPos.x / WORLD_WIDTH) * size;
+    const py = y + (this._playerPos.y / WORLD_HEIGHT) * size;
+    this.minimapYou.setPosition(px, py).setVisible(true);
   }
 
   // --- Secondary-slot strip (Sprint control-scheme-combat-input) ------------
@@ -824,6 +921,14 @@ export default class UIScene extends Phaser.Scene {
     this.subscribe('combat:radialClose', () => this.closeRadial());
 
     // --- Sprint 11 — weather, world details, dictionary, notices ---
+    // Persistent minimap (Sprint minimap-realmap-seed-chest): live YOU marker + a
+    // rebuild hook if the world texture lands after the HUD was built.
+    this.subscribe('player:moved', (d) => {
+      this._playerPos = { x: d.x, y: d.y };
+      this.updateMinimapPlayer();
+    });
+    this.subscribe('worldmap:ready', () => this.onWorldMapReady());
+
     this.subscribe('weather:changed', (d) => this.onWeather(d));
     this.subscribe('worlddetail:opened', (d) => this.showWorldDetail(d));
     this.subscribe('dictionary:newEntry', (d) => this.showDictToast(d.plantType));
@@ -1617,6 +1722,9 @@ export default class UIScene extends Phaser.Scene {
         if (s.cost) s.cost.setPosition(cx, secY + size / 2 + 1);
       });
     }
+
+    // TOP LEFT (below the stat cluster) — persistent minimap.
+    this.layoutMinimap(width, height, safe);
   }
 
   // Move existing seed-slot graphics to the current _slotBaseX/_slotBaseY without a

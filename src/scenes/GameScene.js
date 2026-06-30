@@ -29,6 +29,7 @@ import {
   TILE_SIZE,
   USE_TILED_WORLD,
   TILED_WORLD_KEY,
+  WORLD_MAP_TEXTURE_KEY,
   CAMERA_ZOOM,
   MOBILE_CAMERA_ZOOM,
   CAMERA_LERP,
@@ -44,6 +45,7 @@ import {
   SOUL_DROP_BASE,
   SOUL_DROP_FALLBACK,
   FARMSTAND_MARKUP,
+  CHEST_SEED_CAPACITY,
   SPELL_CAST_COOLDOWN_MS,
   isDevModeActive
 } from '../core/Constants.js';
@@ -233,6 +235,13 @@ const BEDS_PER_ROW = 4;
 // Workshop chest — lower-right of the garden interior.
 const CHEST_X = 3340;
 const CHEST_Y = GARDEN_TOP + 660; // was 860
+
+// Seed storage chest (Sprint minimap-realmap-seed-chest). East-centre open patch of
+// the garden, clear of the bed grid, well, sleep bed, Workshop, signpost/book and the
+// southern shop row (verified >120px rendered from each). gardenScaled() tightens it
+// toward the centre like every other garden prop.
+const SEED_CHEST_X = 3480;
+const SEED_CHEST_Y = GARDEN_TOP + 500; // 3300 authored
 // Shop building row (Sprint magic-1 → shop-row fix). The three new shops line up as
 // ONE horizontal row along the SOUTHERN part of the compound — Farmstand · Blacksmith ·
 // Mage Mart, west→east — evenly spaced so neither the buildings nor their [E] interact
@@ -256,6 +265,28 @@ const CHEST_OPEN_FRAME = 4;
 // (work_station, 32x32) over the old chest sprite. Scaled to ~72px so it keeps
 // the chest's former footprint at the same garden spot.
 const WORKBENCH_SCALE = 2.25;
+
+// --- Cached world-map render (Sprint minimap-realmap-seed-chest) -------------
+// A DOWNSCALED snapshot of the REAL world, generated ONCE at world load and cached
+// to a global canvas texture both map surfaces sample (the persistent minimap on
+// UIScene + the full-screen MapScene). STRUCTURAL: the render is a tile-type→colour
+// "blip" map (not a scaled RenderTexture of the 6400² tile layers) — every authored
+// tile paints its highest-priority feature colour into the matching downscaled pixel,
+// with priority compositing so a 1-tile river/path still reads at this scale. The key
+// is global so it crosses scenes (WORLD_MAP_TEXTURE_KEY, Constants.js); both surfaces
+// map world(x,y)→pixel uniformly, so their markers line up. Palette/size are perception
+// knobs, not gameplay // TUNE.
+const WORLD_MAP_RENDER_SIZE = 200; // px square cached snapshot of the 6400² world // TUNE
+const WORLD_MAP_COLORS = {
+  void:      [26, 32, 20],    // outside the authored area
+  ground:    [74, 122, 60],   // grass / soil base
+  fence:     [150, 120, 70],  // garden fence line (outlines the homestead)
+  path:      [176, 144, 96],  // dirt paths
+  tree:      [30, 58, 26],    // forest canopy
+  water:     [44, 96, 150],   // river + creeks + water props
+  bridge:    [140, 104, 56],  // crossings
+  structure: [168, 150, 120]  // buildings / shops / well
+};
 
 export default class GameScene extends Phaser.Scene {
   constructor() {
@@ -365,6 +396,10 @@ export default class GameScene extends Phaser.Scene {
     // (selectable secondary slots) in applySpellUnlocks(), called once on load.
     this.spellUnlocks = { ...(this.saveData.spellUnlocks || {}) };
     this.spellUpgrades = { ...(this.saveData.spellUpgrades || {}) };
+    // Seed storage chest (Sprint minimap-realmap-seed-chest, save v7) — { plantType:
+    // count } of seeds stowed beyond the carry satchel. Deposited/withdrawn at the
+    // garden chest; persisted in buildCurrentState().
+    this.seedChest = { ...(this.saveData.seedChest || {}) };
     // Desktop auto-target preference (Sprint control-scheme-combat-input; save v5).
     // Mobile ignores it (forced on). Undefined on a pre-v5 save → fall back to default.
     this.autoTargetDesktop = this.saveData.autoTargetDesktop != null
@@ -393,6 +428,11 @@ export default class GameScene extends Phaser.Scene {
 
     this.ensurePlaceholderTextures();
     this.buildWorld();
+    // Cache the downscaled real-world map ONCE (Sprint minimap-realmap-seed-chest),
+    // now that the tile layers (or the procedural fallback's zone system) exist. Both
+    // the persistent minimap and the MapScene sample this global texture. Built before
+    // UIScene launches so the minimap can read it directly on create.
+    this.buildWorldMapTexture();
     // Read the Tiled `markers` object layer so the functional garden can snap its
     // interior objects to the authored positions (Sprint 10 de-dup). Must run after
     // buildWorld() sets this.tiledMap and before spawnGardenBeds/Structures.
@@ -803,6 +843,113 @@ export default class GameScene extends Phaser.Scene {
     this.addZoneLabel('MEADOW', 1000, '#3d6b28', 0.30);
     this.addZoneLabel('FOREST', 1380, '#24412a', 0.35);
     this.addZoneLabel('DEEP WOODS', 2120, '#16280c', 0.45);
+  }
+
+  // --- Cached world-map render (Sprint minimap-realmap-seed-chest) -----------
+  // Generate the downscaled real-world snapshot ONCE into a global canvas texture
+  // (WORLD_MAP_TEXTURE_KEY). Called at world load — never per frame. The tiled world
+  // paints from its real tile layers; the procedural fallback paints from the same
+  // WorldZoneSystem it was built from, so both stay truthful to what the player walks.
+  // The texture is global (survives scene restart), so it is removed first to avoid a
+  // stale render carrying over from a prior run. Emits 'worldmap:ready' for any surface
+  // that wants to (re)build off it.
+  buildWorldMapTexture() {
+    const R = WORLD_MAP_RENDER_SIZE;
+    if (this.textures.exists(WORLD_MAP_TEXTURE_KEY)) this.textures.remove(WORLD_MAP_TEXTURE_KEY);
+    const canvas = this.textures.createCanvas(WORLD_MAP_TEXTURE_KEY, R, R);
+    if (!canvas) return; // texture manager refused — both surfaces fall back gracefully
+    const ctx = canvas.getContext();
+    const img = ctx.createImageData(R, R);
+    const data = img.data;
+    const prio = new Int8Array(R * R).fill(-1);
+
+    // Base fill: the void colour for any pixel no tile maps onto (outside the world).
+    const V = WORLD_MAP_COLORS.void;
+    for (let i = 0; i < R * R; i++) {
+      const o = i * 4;
+      data[o] = V[0]; data[o + 1] = V[1]; data[o + 2] = V[2]; data[o + 3] = 255;
+    }
+
+    // Paint a pixel only when this feature outranks whatever is already there, so the
+    // most meaningful feature in each downscaled cell wins (water/structure over grass).
+    const paint = (rx, ry, color, p) => {
+      const idx = ry * R + rx;
+      if (p <= prio[idx]) return;
+      prio[idx] = p;
+      const o = idx * 4;
+      data[o] = color[0]; data[o + 1] = color[1]; data[o + 2] = color[2]; data[o + 3] = 255;
+    };
+
+    if (this._tiledWorldActive && this.tiledLayers) {
+      this.paintTiledWorldMap(R, paint);
+    } else {
+      this.paintProceduralWorldMap(R, paint);
+    }
+
+    ctx.putImageData(img, 0, 0);
+    canvas.refresh();
+    // Crisp blocky scaling (the global pixelArt default doesn't always reach a
+    // runtime canvas texture), so the blip map reads sharp at any display size.
+    if (canvas.setFilter) canvas.setFilter(Phaser.Textures.FilterMode.NEAREST);
+    EventBus.emit('worldmap:ready', { key: WORLD_MAP_TEXTURE_KEY, size: R });
+  }
+
+  // Real tiled world → blip map. Reads each layer's raw tile-data grid and, per tile,
+  // resolves the single highest-priority feature, painting it into the matching pixel.
+  paintTiledWorldMap(R, paint) {
+    const C = WORLD_MAP_COLORS;
+    const cols = this.tiledMap.width;
+    const rows = this.tiledMap.height;
+    const grids = {};
+    [
+      'structures', 'bridges', 'water', 'props_water', 'props_trees',
+      'paths_main', 'paths_spur', 'ground', 'props_ground', 'fences'
+    ].forEach((name) => {
+      const L = this.tiledLayers[name];
+      grids[name] = L && L.layer ? L.layer.data : null;
+    });
+    const has = (name, tx, ty) => {
+      const g = grids[name];
+      if (!g || !g[ty]) return false;
+      const t = g[ty][tx];
+      return !!t && t.index >= 0;
+    };
+    for (let ty = 0; ty < rows; ty++) {
+      const ry = ((ty * R) / rows) | 0;
+      for (let tx = 0; tx < cols; tx++) {
+        const rx = ((tx * R) / cols) | 0;
+        let color;
+        let p;
+        if (has('structures', tx, ty)) { color = C.structure; p = 6; }
+        else if (has('bridges', tx, ty)) { color = C.bridge; p = 5; }
+        else if (has('water', tx, ty) || has('props_water', tx, ty)) { color = C.water; p = 4; }
+        else if (has('props_trees', tx, ty)) { color = C.tree; p = 3; }
+        else if (has('paths_main', tx, ty) || has('paths_spur', tx, ty)) { color = C.path; p = 2; }
+        else if (has('fences', tx, ty)) { color = C.fence; p = 1; }
+        else if (has('ground', tx, ty) || has('props_ground', tx, ty)) { color = C.ground; p = 0; }
+        else continue;
+        paint(rx, ry, color, p);
+      }
+    }
+  }
+
+  // Procedural fallback → blip map sampled from the WorldZoneSystem the fallback world
+  // is generated from (river first, then the biome zone colour). One sample per pixel.
+  paintProceduralWorldMap(R, paint) {
+    const C = WORLD_MAP_COLORS;
+    const wz = this.worldZoneSystem;
+    for (let ry = 0; ry < R; ry++) {
+      const wy = ((ry + 0.5) * WORLD_HEIGHT) / R;
+      for (let rx = 0; rx < R; rx++) {
+        const wx = ((rx + 0.5) * WORLD_WIDTH) / R;
+        if (wz.isNearRiver(wx, wy, 0)) {
+          paint(rx, ry, C.water, 4);
+          continue;
+        }
+        const hex = wz.getZoneColor(wz.getZoneAt(wx, wy));
+        paint(rx, ry, [(hex >> 16) & 255, (hex >> 8) & 255, hex & 255], 0);
+      }
+    }
   }
 
   // --- Hand-built Tiled world (Sprint 9) ------------------------------------
@@ -2372,6 +2519,24 @@ export default class GameScene extends Phaser.Scene {
     this.blacksmith = this.makeShopBuilding(SHOP_ROW_CENTER_X, SHOP_ROW_Y, 0x6b6b73, 0x3a3a40, 0x8a8a92, 'BLACKSMITH  [F]', '#E5B69A');
     this.mageMart = this.makeShopBuilding(SHOP_ROW_CENTER_X + SHOP_ROW_GAP, SHOP_ROW_Y, 0x6b3fa0, 0x3a2a4a, 0xc29be0, 'MAGE MART  [F]', '#C29BE0');
 
+    // Seed storage chest (Sprint minimap-realmap-seed-chest) — opens the deposit/
+    // withdraw UI. Real obj_chest sprite (closed frame) when present, else a botanical-
+    // toned placeholder so it never reads as nothing; the Workshop prefers work_station
+    // art, so obj_chest is free for this literal chest. East-centre, clear of all props.
+    const seedChestPos = this.gardenScaled(SEED_CHEST_X, SEED_CHEST_Y);
+    if (this.textures.exists('obj_chest')) {
+      this.seedChestObj = this.add
+        .sprite(seedChestPos.x, seedChestPos.y, 'obj_chest', CHEST_CLOSED_FRAME)
+        .setScale(1.5 * GARDEN_PROP_SCALE)
+        .setDepth(2);
+    } else {
+      this.seedChestObj = this.add
+        .rectangle(seedChestPos.x, seedChestPos.y, 60 * GARDEN_PROP_SCALE, 44 * GARDEN_PROP_SCALE, 0x6a8a4a)
+        .setStrokeStyle(3, 0xb8d5b1)
+        .setDepth(2);
+    }
+    this.addStructureLabel(seedChestPos.x, seedChestPos.y, seedChestPos.x, seedChestPos.y - 36, 'SEED CHEST  [F]', '#B8D5B1');
+
     // Solid garden props get a small static collider so the player routes around
     // them (Sprint 10c). Interaction stays distance-based, so this never blocks
     // the [F] prompt — only the body of the object is impassable.
@@ -2380,6 +2545,7 @@ export default class GameScene extends Phaser.Scene {
     this.addPropCollision(this.blacksmith, 56 * GARDEN_PROP_SCALE, 24 * GARDEN_PROP_SCALE);
     this.addPropCollision(this.mageMart, 56 * GARDEN_PROP_SCALE, 24 * GARDEN_PROP_SCALE);
     this.addPropCollision(this.farmstand, 56 * GARDEN_PROP_SCALE, 24 * GARDEN_PROP_SCALE);
+    this.addPropCollision(this.seedChestObj, 36 * GARDEN_PROP_SCALE, 22 * GARDEN_PROP_SCALE);
   }
 
   // Draw a placeholder shop stall (counter base + body + awning) at a world point and
@@ -2458,6 +2624,7 @@ export default class GameScene extends Phaser.Scene {
     };
 
     consider(this.chest, INTERACT_RANGE, () => ({ text: '[F] Open Workshop', actionable: true }));
+    consider(this.seedChestObj, INTERACT_RANGE, () => ({ text: '[F] Open Seed Chest', actionable: true }));
     consider(this.blacksmith, INTERACT_RANGE, () => ({ text: '[F] Open Blacksmith', actionable: true }));
     consider(this.farmstand, INTERACT_RANGE, () => ({ text: '[F] Open Farmstand', actionable: true }));
     consider(this.mageMart, INTERACT_RANGE, () => ({ text: '[F] Open Mage Mart', actionable: true }));
@@ -2731,6 +2898,10 @@ export default class GameScene extends Phaser.Scene {
     // deterministic.
     if (this.chest && this.within(this.chest, INTERACT_RANGE)) {
       this.openUpgrade();
+      return;
+    }
+    if (this.seedChestObj && this.within(this.seedChestObj, INTERACT_RANGE)) {
+      this.openSeedChest();
       return;
     }
     if (this.blacksmith && this.within(this.blacksmith, INTERACT_RANGE)) {
@@ -3733,6 +3904,56 @@ export default class GameScene extends Phaser.Scene {
     this._marketOpen = false;
   }
 
+  // --- Seed storage chest (Sprint minimap-realmap-seed-chest) ----------------
+  // Modal deposit/withdraw overlay (ChestScene) on the shared PaginatedMenu. It reuses
+  // the generic shop machinery (_marketOpen freeze + the 'shop:closed' clear), so the
+  // chest is one more full-screen menu the existing freeze/guard checks already cover.
+
+  openSeedChest() {
+    this.openShop('ChestScene');
+  }
+
+  // Total seeds currently stored in the chest (across all types).
+  seedChestCount() {
+    return Object.values(this.seedChest).reduce((sum, n) => sum + n, 0);
+  }
+
+  // Satchel → chest. Moves up to `qty` seeds of plantType out of the satchel and into
+  // the chest, stopping at the chest's capacity. Returns the number actually moved.
+  depositSeed(plantType, qty = 1) {
+    let moved = 0;
+    while (moved < qty && this.seedChestCount() < CHEST_SEED_CAPACITY) {
+      const idx = this.player.seedSlots.indexOf(plantType);
+      if (idx === -1) break; // no more of this seed in the satchel
+      this.player.seedSlots[idx] = null;
+      this.seedChest[plantType] = (this.seedChest[plantType] || 0) + 1;
+      moved++;
+    }
+    if (moved > 0) this._afterChestChange();
+    return moved;
+  }
+
+  // Chest → satchel. Moves up to `qty` seeds of plantType back into the satchel,
+  // stopping when the chest type empties or the satchel is full. Returns count moved.
+  withdrawSeed(plantType, qty = 1) {
+    let moved = 0;
+    while (moved < qty && (this.seedChest[plantType] || 0) > 0 && this.player.hasEmptySlot()) {
+      this.seedChest[plantType] -= 1;
+      if (this.seedChest[plantType] <= 0) delete this.seedChest[plantType];
+      this.player.addSeed(plantType); // emits inventory:changed
+      moved++;
+    }
+    if (moved > 0) this._afterChestChange();
+    return moved;
+  }
+
+  // Shared post-mutation: refresh the satchel HUD, notify the chest UI, and persist.
+  _afterChestChange() {
+    EventBus.emit('inventory:changed', { slots: [...this.player.seedSlots] });
+    EventBus.emit('chest:changed', { chest: { ...this.seedChest } });
+    this.autoSave();
+  }
+
   // Plant sell value scales with grow time (economy.json.sellPrices, keyed by
   // growthDays). Returns coins per unit.
   sellPrice(plantType) {
@@ -4262,6 +4483,8 @@ export default class GameScene extends Phaser.Scene {
       souls: this.souls,
       spellUnlocks: { ...this.spellUnlocks },
       spellUpgrades: { ...this.spellUpgrades },
+      // Seed storage chest contents (Sprint minimap-realmap-seed-chest, save v7).
+      seedChest: { ...this.seedChest },
       upgrades: JSON.parse(JSON.stringify(this.upgradeLevels)),
       equippedGear: { ...this.player.equippedGear },
       seedBagTier: this.seedBagTier,
