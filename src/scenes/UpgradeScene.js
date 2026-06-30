@@ -39,8 +39,12 @@ const MENU_MARGIN = 20;
 const HEADER_H = 56; // title + subtitle (no tabs — single list)
 const FOOTER_H = 78;
 const ROW_H = 80;
+// Portrait rows are TALLER (Sprint mobile-polish-menus, Phase 5 sweep fix): the stat line
+// wraps full-width above a bottom-anchored action button instead of being crushed beside it
+// (the old narrow reserve overflowed the row into the next one). // TUNE
+const ROW_H_PORTRAIT = 132;
 const ROW_GAP = 12;
-const RIGHT_RESERVE = 214; // space kept clear on the right for the action cluster
+const RIGHT_RESERVE = 214; // space kept clear on the right for the action cluster (landscape)
 
 function hexToNum(hex) {
   return parseInt(hex.replace('#', ''), 16);
@@ -121,8 +125,14 @@ export default class UpgradeScene extends Phaser.Scene {
 
   // --- Pages -----------------------------------------------------------------
 
+  // Row height — taller in portrait so the wrapped stat line fits (Phase 5 sweep fix).
+  rowHeight(frame) {
+    return frame.portrait ? ROW_H_PORTRAIT : ROW_H;
+  }
+
   buildPages(frame) {
-    const rowsPerPage = Math.max(1, Math.floor((frame.bandH + ROW_GAP) / (ROW_H + ROW_GAP)));
+    const rowH = this.rowHeight(frame);
+    const rowsPerPage = Math.max(1, Math.floor((frame.bandH + ROW_GAP) / (rowH + ROW_GAP)));
     const pages = [];
     for (let i = 0; i < PLANT_ORDER.length; i += rowsPerPage) {
       pages.push(PLANT_ORDER.slice(i, i + rowsPerPage));
@@ -163,28 +173,36 @@ export default class UpgradeScene extends Phaser.Scene {
       );
       return;
     }
+    const rowH = this.rowHeight(frame);
     items.forEach((pt, i) => {
-      const y = contentTop + i * (ROW_H + ROW_GAP);
-      this.buildRow(pt, left, y, innerW, ROW_H);
+      const y = contentTop + i * (rowH + ROW_GAP);
+      this.buildRow(pt, left, y, innerW, rowH, frame);
     });
   }
 
   // --- Row: one plant stat tree ----------------------------------------------
+  // PORTRAIT (Phase 5 sweep fix): name + full-width wrapped stat line stacked at the top, the
+  // action cluster dropped to the bottom-right — instead of the landscape "text left, action
+  // centred right" which crushed the stat line into a narrow column that overflowed the row.
 
-  buildRow(pt, x, y, w, h) {
+  buildRow(pt, x, y, w, h, frame) {
     const plant = this.gameData.plants[pt];
+    const portrait = !!(frame && frame.portrait);
     const cy = y + h / 2;
 
     this.track(this.add.rectangle(x, y, w, h, COLOR_PANEL).setOrigin(0, 0).setStrokeStyle(2, 0x4d4843).setDepth(101));
-    this.track(this.add.circle(x + 30, cy, 15, hexToNum(plant.color)).setDepth(102));
+    this.track(this.add.circle(x + 30, portrait ? y + 30 : cy, 15, hexToNum(plant.color)).setDepth(102));
 
     const textLeft = x + 52;
-    const textW = Math.max(90, x + w - RIGHT_RESERVE - textLeft);
+    const textW = portrait
+      ? Math.max(120, x + w - 18 - textLeft) // full width minus the icon column + right padding
+      : Math.max(90, x + w - RIGHT_RESERVE - textLeft);
+    const statFont = `${Math.round(15 * (frame ? frame.bodyScale : 1))}px`;
     this.track(
       this.add
         .text(textLeft, y + 13, plant.name, {
           fontFamily: FONT,
-          fontSize: '22px',
+          fontSize: portrait ? '20px' : '22px',
           fontStyle: 'bold',
           color: '#F5EFE6',
           wordWrap: { width: textW }
@@ -193,16 +211,17 @@ export default class UpgradeScene extends Phaser.Scene {
     );
     this.track(
       this.add
-        .text(textLeft, y + h - 26, this.statLine(pt), {
+        .text(textLeft, portrait ? y + 44 : y + h - 26, this.statLine(pt), {
           fontFamily: FONT,
-          fontSize: '15px',
+          fontSize: portrait ? statFont : '15px',
           color: '#9B9389',
-          wordWrap: { width: textW }
+          wordWrap: { width: textW },
+          lineSpacing: 2
         })
         .setDepth(102)
     );
 
-    this.buildRowAction(pt, x, cy, w);
+    this.buildRowAction(pt, x, portrait ? y + h - 12 - 21 : cy, w);
   }
 
   // Right-aligned action cluster: pending confirm (✓ Spend / ✗), MAXED label, or BUY.

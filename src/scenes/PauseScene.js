@@ -44,7 +44,7 @@ export default class PauseScene extends Phaser.Scene {
       footerH: FOOTER_H,
       depth: 300,
       backdropColor: COLOR_PAGE,
-      backdropAlpha: 0.96,
+      backdropAlpha: 0.97,
       closeW: BTN_MAX_W,
       closeH: 56,
       closeColor: 0x3a7d44, // green — the footer Close IS Resume
@@ -55,7 +55,9 @@ export default class PauseScene extends Phaser.Scene {
       dismissOnSwipeDown: false,
       closeOnEsc: false, // own Esc handler below (guards child overlays)
       onClose: () => this.resumeGame(),
-      getPages: () => [null], // single page — the option list
+      // Single page — a non-null sentinel so PaginatedMenu actually calls renderBody (it
+      // skips the body when the page datum is null).
+      getPages: () => [{}],
       renderHeader: (frame) => this.renderHeader(frame),
       renderBody: (frame) => this.renderBody(frame),
       button: (cx, cy, w, h, label, fill, onClick, enabled, textColor) =>

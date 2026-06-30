@@ -147,6 +147,10 @@ export default class ControlsScene extends Phaser.Scene {
     const pg = PAGES[this.page];
     const bindings = pg.bindings;
     const n = bindings.length;
+    // PORTRAIT (Phase 5 sweep fix): stack each binding's value UNDER its action instead of the
+    // side-by-side action-left / value-right layout, which collided in the middle of the narrow
+    // portrait panel (long values like "🏹 button — diamond RIGHT (tap)" overlapped the label).
+    const portrait = MobileDetect.isMobile() && w < h;
 
     // Full-bleed dim backdrop. A clean tap (no drag) closes; a swipe is left for the
     // page/dismiss handlers, so the close fires only when the pointer barely moved.
@@ -164,10 +168,12 @@ export default class ControlsScene extends Phaser.Scene {
     const availTop = safe.top + MARGIN;
     const availBottom = h - safe.bottom - MARGIN;
     const availH = availBottom - availTop;
-    let rowH = ROW_H;
+    // Portrait stacks two text lines per row, so it needs a taller base + higher floor.
+    let rowH = portrait ? 52 : ROW_H;
+    const rowMin = portrait ? 40 : ROW_H_MIN;
     const chromeH = HEADER_H + FOOTER_H;
     if (n * rowH + (n - 1) * ROW_GAP > availH - chromeH) {
-      rowH = Math.max(ROW_H_MIN, (availH - chromeH - (n - 1) * ROW_GAP) / n);
+      rowH = Math.max(rowMin, (availH - chromeH - (n - 1) * ROW_GAP) / n);
     }
     const rowsH = n * rowH + (n - 1) * ROW_GAP;
     const panelW = Math.min(w - 2 * MARGIN, PANEL_MAX_W);
@@ -217,27 +223,41 @@ export default class ControlsScene extends Phaser.Scene {
           this.add.rectangle(cx, ry, panelW - 28, rowH, 0x2d2926, 0.5).setDepth(361)
         );
       }
-      this._objs.push(
-        this.add
-          .text(left, ry, action, {
-            fontFamily: FONT_FAMILY,
-            fontSize: labelPx,
-            color: '#F5EFE6'
-          })
-          .setOrigin(0, 0.5)
-          .setDepth(362)
-      );
-      this._objs.push(
-        this.add
-          .text(right, ry, keys, {
-            fontFamily: FONT_FAMILY,
-            fontSize: labelPx,
-            color: '#8AB87E',
-            align: 'right'
-          })
-          .setOrigin(1, 0.5)
-          .setDepth(362)
-      );
+      if (portrait) {
+        // Stacked: action on top, value below — both left-aligned, value wrapped to the panel
+        // width so a long binding can never collide with the label.
+        const valuePx = `${Math.max(11, Math.round(Math.min(15, rowH * 0.3)))}px`;
+        this._objs.push(
+          this.add
+            .text(left, ry - rowH * 0.22, action, { fontFamily: FONT_FAMILY, fontSize: labelPx, color: '#F5EFE6' })
+            .setOrigin(0, 0.5)
+            .setDepth(362)
+        );
+        this._objs.push(
+          this.add
+            .text(left, ry + rowH * 0.24, keys, {
+              fontFamily: FONT_FAMILY,
+              fontSize: valuePx,
+              color: '#8AB87E',
+              wordWrap: { width: right - left }
+            })
+            .setOrigin(0, 0.5)
+            .setDepth(362)
+        );
+      } else {
+        this._objs.push(
+          this.add
+            .text(left, ry, action, { fontFamily: FONT_FAMILY, fontSize: labelPx, color: '#F5EFE6' })
+            .setOrigin(0, 0.5)
+            .setDepth(362)
+        );
+        this._objs.push(
+          this.add
+            .text(right, ry, keys, { fontFamily: FONT_FAMILY, fontSize: labelPx, color: '#8AB87E', align: 'right' })
+            .setOrigin(1, 0.5)
+            .setDepth(362)
+        );
+      }
     });
 
     this.buildFooter(cx, panelTop, panelH, panelW);

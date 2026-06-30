@@ -155,4 +155,8 @@ function setupViewportSizing(game) {
 loadGameFonts().finally(() => {
   const game = new Phaser.Game(config);
   if (isMobile) setupViewportSizing(game);
+  // Dev-only debug handle for headless menu/HUD sweeps (Sprint mobile-polish-menus, Phase 5).
+  // `import.meta.env.DEV` is statically false in the production build, so this whole line is
+  // tree-shaken out — the handle never ships, it only exists under `vite dev`.
+  if (import.meta.env.DEV) window.__game = game;
 });
