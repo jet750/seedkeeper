@@ -334,6 +334,7 @@ export default class GameScene extends Phaser.Scene {
     this._marketOpen = false; // Sprint 3 — marketplace overlay open
     this._winOpen = false;
     this._signpostOpen = false;
+    this._controlsSignOpen = false; // Sprint controls-access — garden controls sign overlay open
     this._lastPromptText = null; // contextual F-prompt dedupe (Sprint 9)
     this._dictionaryOpen = false;
     this._worldDetailOpen = false;
@@ -686,6 +687,10 @@ export default class GameScene extends Phaser.Scene {
     // --- Achievements & signpost (Sprint 6) ---
     this.subscribe('save:requested', () => this.autoSave());
     this.subscribe('signpost:closed', () => this.onSignpostClosed());
+    // Garden controls sign (Sprint controls-access): ControlsScene emits this on close.
+    // Guarded by _controlsSignOpen so the pause-menu Controls path (PauseScene also
+    // listens) doesn't trip the world-resume here.
+    this.subscribe('controls:closed', () => this.onControlsSignClosed());
 
     // --- Enemy drops & swap picker (Sprint 7) ---
     this.subscribe('bundle:collected', (d) => this.onBundleCollected(d));
@@ -2027,6 +2032,7 @@ export default class GameScene extends Phaser.Scene {
       this._marketOpen ||
       this._winOpen ||
       this._signpostOpen ||
+      this._controlsSignOpen ||
       this._dictionaryOpen ||
       this._worldDetailOpen ||
       this._swapPickerOpen ||
@@ -2083,6 +2089,7 @@ export default class GameScene extends Phaser.Scene {
       this._marketOpen ||
       this._winOpen ||
       this._signpostOpen ||
+      this._controlsSignOpen ||
       this._dictionaryOpen ||
       this._worldDetailOpen ||
       this._swapPickerOpen ||
@@ -2520,6 +2527,25 @@ export default class GameScene extends Phaser.Scene {
       .setDepth(2);
     this.addStructureLabel(bookPos.x, bookPos.y, bookPos.x, bookPos.y - 34, 'FIELD NOTES  [F]', '#ABC4DE');
 
+    // Controls sign (Sprint controls-access) — opens the shared ControlsScene display
+    // (the same two-page layout the pause-menu Controls uses). Reuses the signpost's
+    // `signs` board sprite (frame 0) + interactable pattern — no new PNG. Placed one
+    // even step EAST of the achievement signpost so the furniture row reads as
+    // book → LOG → CONTROLS; its proximity label disambiguates it from the LOG sign.
+    const CONTROLS_SIGN_X = 3240; // // TUNE — one 120-step east of the signpost (3120)
+    const CONTROLS_SIGN_Y = GARDEN_TOP + 660; // // TUNE — same furniture row as book/signpost
+    const controlsSignPos = this.gardenScaled(CONTROLS_SIGN_X, CONTROLS_SIGN_Y);
+    if (this.textures.exists('signs')) {
+      this.controlsSign = this.add.sprite(controlsSignPos.x, controlsSignPos.y, 'signs', 0).setScale(3 * GARDEN_PROP_SCALE).setDepth(2);
+    } else {
+      this.add.rectangle(controlsSignPos.x, controlsSignPos.y + 14 * GARDEN_PROP_SCALE, 8 * GARDEN_PROP_SCALE, 40 * GARDEN_PROP_SCALE, 0x6e4a22).setDepth(2); // post
+      this.controlsSign = this.add
+        .rectangle(controlsSignPos.x, controlsSignPos.y - 8 * GARDEN_PROP_SCALE, 48 * GARDEN_PROP_SCALE, 30 * GARDEN_PROP_SCALE, 0x8a6a3a)
+        .setStrokeStyle(2, 0x5a3a22)
+        .setDepth(2);
+    }
+    this.addStructureLabel(controlsSignPos.x, controlsSignPos.y, controlsSignPos.x, controlsSignPos.y - 36, 'CONTROLS  [F]', '#EDD49A');
+
     // Three shop buildings (Sprint magic-1) — the old single Market stall split into
     // the FARMSTAND (coins ↔ plants), BLACKSMITH (coins → gear/capacity) and MAGE MART
     // (souls → spell purification). Placeholder toned stalls until real shop art lands.
@@ -2555,6 +2581,7 @@ export default class GameScene extends Phaser.Scene {
     // them (Sprint 10c). Interaction stays distance-based, so this never blocks
     // the [F] prompt — only the body of the object is impassable.
     this.addPropCollision(this.signpost, 10 * GARDEN_PROP_SCALE, 20 * GARDEN_PROP_SCALE);
+    this.addPropCollision(this.controlsSign, 10 * GARDEN_PROP_SCALE, 20 * GARDEN_PROP_SCALE);
     this.addPropCollision(this.book, 24 * GARDEN_PROP_SCALE, 16 * GARDEN_PROP_SCALE);
     this.addPropCollision(this.blacksmith, 56 * GARDEN_PROP_SCALE, 24 * GARDEN_PROP_SCALE);
     this.addPropCollision(this.mageMart, 56 * GARDEN_PROP_SCALE, 24 * GARDEN_PROP_SCALE);
@@ -2643,6 +2670,7 @@ export default class GameScene extends Phaser.Scene {
     consider(this.farmstand, INTERACT_RANGE, () => ({ text: '[F] Open Farmstand', actionable: true }));
     consider(this.mageMart, INTERACT_RANGE, () => ({ text: '[F] Open Mage Mart', actionable: true }));
     consider(this.signpost, INTERACT_RANGE, () => ({ text: '[F] View achievements', actionable: true }));
+    consider(this.controlsSign, INTERACT_RANGE, () => ({ text: '[F] View controls', actionable: true }));
     consider(this.sleepObject, INTERACT_RANGE, () => ({
       text: `[F] Sleep — advance to Day ${this.daySystem.dayNumber + 1}`,
       actionable: true
@@ -2932,6 +2960,10 @@ export default class GameScene extends Phaser.Scene {
     }
     if (this.signpost && this.within(this.signpost, INTERACT_RANGE)) {
       this.openSignpost();
+      return;
+    }
+    if (this.controlsSign && this.within(this.controlsSign, INTERACT_RANGE)) {
+      this.openControlsSign();
       return;
     }
     if (this.book && this.within(this.book, INTERACT_RANGE)) {
@@ -4067,6 +4099,28 @@ export default class GameScene extends Phaser.Scene {
     this._signpostOpen = false;
   }
 
+  // --- Garden controls sign (Sprint controls-access) ------------------------
+  // Opens the shared ControlsScene (the same two-page display the pause-menu
+  // Controls option uses) directly over the live garden. Mirrors openSignpost:
+  // the world freezes (update() returns early while _controlsSignOpen) and ESC
+  // is gated so a close-press doesn't also trip the pause menu.
+
+  openControlsSign() {
+    if (this._controlsSignOpen) return;
+    this._controlsSignOpen = true;
+    this.player.setVelocity(0, 0);
+    if (this._swapPickerOpen) this.closeSwapPicker(false);
+    this.scene.launch('ControlsScene');
+    this.scene.bringToTop('ControlsScene');
+  }
+
+  // ControlsScene emits 'controls:closed' on dismiss. Guard on our own flag so the
+  // pause-menu Controls path (opened by PauseScene, world already PAUSED) no-ops here.
+  onControlsSignClosed() {
+    if (!this._controlsSignOpen) return;
+    this._controlsSignOpen = false;
+  }
+
   // Called by UpgradeScene (the workshop chest). v2: STAT upgrades only — plants
   // buy stat levels here; gear + capacity are coin-funded elsewhere. Validates
   // affordability, deducts plants, applies the effect, and broadcasts the change.
@@ -4589,6 +4643,7 @@ export default class GameScene extends Phaser.Scene {
       this._marketOpen ||
       this._winOpen ||
       this._signpostOpen ||
+      this._controlsSignOpen ||
       this._dictionaryOpen ||
       this._worldDetailOpen ||
       this._swapPickerOpen ||
@@ -4871,7 +4926,7 @@ export default class GameScene extends Phaser.Scene {
     // Freeze the world (but keep rendering) while a modal overlay (workshop,
     // market, win, achievement log, or seed dictionary) is open. The world-detail
     // popup is non-modal, so it deliberately does NOT freeze the world.
-    if (this._upgradeOpen || this._marketOpen || this._winOpen || this._signpostOpen || this._dictionaryOpen || this._devMenuOpen) return;
+    if (this._upgradeOpen || this._marketOpen || this._winOpen || this._signpostOpen || this._controlsSignOpen || this._dictionaryOpen || this._devMenuOpen) return;
 
     // Slow-mo (mobile radial) scales gameplay dt + system deltas together; physics is
     // scaled via world.timeScale in setTimeScale(). Real playtime stays on raw delta.

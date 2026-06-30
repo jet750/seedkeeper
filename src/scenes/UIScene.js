@@ -94,6 +94,18 @@ const RADIAL_GLYPH_COLORS = {
 const RADIAL_GLYPH_SIZE = 12; // half-extent of a glyph at rest (px) // TUNE
 const RADIAL_FOCUS_SCALE = 1.35; // focused node enlargement (was 1.18) // TUNE
 
+// --- Desktop pause/menu button (Sprint controls-access) ---------------------
+// Mobile already surfaces a ⏸ button (TouchControlSystem, top-left); desktop only had
+// the Esc key, so the pause menu (Resume / Controls / Settings / Menu) was undiscoverable.
+// Mirror the mobile button's role with a visible TOP-RIGHT HUD button that emits the same
+// 'game:pauseRequested' GameScene already handles (Esc still works). Desktop-only — built
+// only when !isMobile, so the touch build is untouched. The timer cluster reserves space to
+// its left (MENU_BTN_RESERVE) so the corner button never overlaps the forest countdown.
+const MENU_BTN_W = 116; // // TUNE — button width
+const MENU_BTN_H = 36; // // TUNE — button height
+const MENU_BTN_MARGIN = 18; // // TUNE — gap from the top-right screen corner
+const MENU_BTN_RESERVE = MENU_BTN_W + MENU_BTN_MARGIN + 8; // right-side space the timer keeps clear
+
 function formatTime(ms) {
   const totalSec = Math.max(0, Math.ceil(ms / 1000));
   const m = Math.floor(totalSec / 60);
@@ -477,6 +489,36 @@ export default class UIScene extends Phaser.Scene {
     // Persistent minimap (Sprint minimap-realmap-seed-chest) — built last so it draws
     // over the top backing bar; layoutMinimap seats + sizes it from the live viewport.
     this.buildMinimap();
+
+    // Desktop pause/menu button (Sprint controls-access) — mobile already has a ⏸
+    // (TouchControlSystem), so build this only on desktop. layoutHUD seats it.
+    if (!MobileDetect.isMobile()) this.buildMenuButton();
+  }
+
+  // --- Desktop pause/menu button (Sprint controls-access) --------------------
+  // A visible top-right HUD button that opens the pause menu, so desktop players can
+  // reach Controls / Settings / Resume without knowing the Esc shortcut. Emits the
+  // same 'game:pauseRequested' as the mobile ⏸ and the Esc key. layoutHUD positions it.
+  buildMenuButton() {
+    this.menuBtnRect = this.add
+      .rectangle(0, 0, MENU_BTN_W, MENU_BTN_H, 0x221e1b, 0.92)
+      .setStrokeStyle(2, 0x57514b)
+      .setDepth(50)
+      .setInteractive({ useHandCursor: true });
+    this.menuBtnText = this.add
+      .text(0, 0, '⏸ Menu', {
+        fontFamily: '"SproutLands", "Courier New", monospace',
+        fontSize: '18px',
+        fontStyle: 'bold',
+        color: '#F5EFE6'
+      })
+      .setOrigin(0.5)
+      .setDepth(51);
+    this.menuBtnRect.on('pointerover', () => this.menuBtnRect.setStrokeStyle(2, 0xeac34f));
+    this.menuBtnRect.on('pointerout', () => this.menuBtnRect.setStrokeStyle(2, 0x57514b));
+    // GameScene.tryOpenPause is gated to PLAYING, so a stray press while a modal/pause
+    // overlay owns the screen is a harmless no-op.
+    this.menuBtnRect.on('pointerup', () => EventBus.emit('game:pauseRequested', {}));
   }
 
   // --- Persistent minimap (Sprint minimap-realmap-seed-chest) ----------------
@@ -1767,10 +1809,22 @@ export default class UIScene extends Phaser.Scene {
     }
     if (this.ngPlusIndicator) this.ngPlusIndicator.setPosition(width / 2, 96 + st);
 
-    // TOP RIGHT — timer + mute + overtime (clear a right notch and the top bar).
-    if (this.timerText) this.timerText.setPosition(width - 40 - sr, 40 + st);
-    if (this.muteIndicator) this.muteIndicator.setPosition(width - 40 - sr, 112 + st);
-    if (this.overtimeText) this.overtimeText.setPosition(width - 40 - sr, 78 + st);
+    // TOP RIGHT — timer + mute + overtime (clear a right notch and the top bar). The
+    // desktop menu button (when present) sits in the corner, so the timer cluster keeps
+    // MENU_BTN_RESERVE clear on the right to avoid overlapping it in the forest.
+    const menuReserve = this.menuBtnRect ? MENU_BTN_RESERVE : 0;
+    if (this.timerText) this.timerText.setPosition(width - 40 - sr - menuReserve, 40 + st);
+    if (this.muteIndicator) this.muteIndicator.setPosition(width - 40 - sr - menuReserve, 112 + st);
+    if (this.overtimeText) this.overtimeText.setPosition(width - 40 - sr - menuReserve, 78 + st);
+
+    // TOP RIGHT (corner) — desktop pause/menu button (Sprint controls-access). Desktop
+    // only (menuBtnRect is undefined on mobile, so menuReserve above is 0 there).
+    if (this.menuBtnRect) {
+      const bx = width - sr - MENU_BTN_MARGIN - MENU_BTN_W / 2;
+      const by = st + MENU_BTN_MARGIN + MENU_BTN_H / 2;
+      this.menuBtnRect.setPosition(bx, by);
+      if (this.menuBtnText) this.menuBtnText.setPosition(bx, by);
+    }
 
     // BOTTOM — seed inventory strip (Sprint mobile-playability-2). A contained tray
     // backs the slot row so it reads as one clean strip. Mobile centres the row clear
