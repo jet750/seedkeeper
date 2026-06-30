@@ -9,9 +9,6 @@ import EventBus from '../core/EventBus.js';
 import { GARDEN_LEFT, GARDEN_RIGHT, GARDEN_TOP, GARDEN_BOTTOM } from '../core/Constants.js';
 import { spawnEnemyAlert } from './enemyIndicator.js';
 import { createLevelMarker, setMarkerLevel, positionLevelMarker } from './enemyLevelMarker.js';
-import Seed from './Seed.js';
-import PlantBundle from './PlantBundle.js';
-import { getRandomSeedDrop, getRandomBundleDrop } from '../systems/lootTable.js';
 
 // idle/chase → WIND_UP (squash tell, committed) → STRIKE (the leap) → RECOVER
 // (vulnerable). The wind-up is dodgeable: a dash clears the leap's path (Sprint 4).
@@ -54,9 +51,6 @@ const KNOCKBACK_VELOCITY = 200;
 const KNOCKBACK_MS = 300;
 const DAMAGE_TEXT_OFFSET = 20;
 const DEATH_FADE_MS = 400;
-const DROP_SCATTER = 30;
-const GREEN_SLIME_DROPS = 1;
-const DARK_SLIME_DROPS = 2;
 
 export default class Slime extends Phaser.Physics.Arcade.Sprite {
   // opts (Sprint 4) configures split children: { hpFactor, damageFactor,
@@ -593,17 +587,14 @@ export default class Slime extends Phaser.Physics.Arcade.Sprite {
     if (this.slimeType === 'dark_slime' && this.canSplit && this.scene.spawnDarkSlimeSplit) {
       this.scene.spawnDarkSlimeSplit(this.x, this.y, this.level);
     }
-    // Split children award no loot — they exist for pressure, not income, so the
-    // resource economy stays untouched (Sprint 4 hard rule).
-    if (!this.isSplitChild) {
-      this.dropBundle();
-      this.dropSeeds();
-    }
+    // All kill loot (coins + souls + the rare full-plant drop) is handled centrally in
+    // GameScene.onEnemyDied off this event; split children are flagged `light` there so
+    // they award nothing (pressure, not income — Sprint 4 hard rule).
     EventBus.emit('enemy:died', {
       type: this.slimeType,
       position: { x: this.x, y: this.y },
-      level: this.level, // souls drop scales type × level (Sprint magic-1)
-      light: this.isSplitChild // suppress the heavy dark-slime death flash for children
+      level: this.level, // coins + souls drop scales type × level
+      light: this.isSplitChild // split child: no loot + suppress the heavy death flash
     });
     const idx = this.scene.enemies.indexOf(this);
     if (idx > -1) this.scene.enemies.splice(idx, 1);
@@ -649,30 +640,6 @@ export default class Slime extends Phaser.Physics.Arcade.Sprite {
     this._isWanderPaused = false;
     this.pickNewWanderDirection();
     if (this.levelMarker) this.levelMarker.setVisible(true);
-  }
-
-  // Dark slimes have a chance to drop a pre-grown plant bundle (Sprint 7).
-  // Green slimes never do.
-  dropBundle() {
-    if (this.slimeType !== 'dark_slime') return;
-    const threshold = this.scene.gameData.enemies.dark_slime.bundleDropChance || 0;
-    if (Math.random() > threshold) return;
-    const plantType = getRandomBundleDrop(this.scene.gameData);
-    new PlantBundle(this.scene, this.x, this.y, plantType, this.scene.gameData);
-  }
-
-  dropSeeds() {
-    const drops = this.slimeType === 'dark_slime' ? DARK_SLIME_DROPS : GREEN_SLIME_DROPS;
-    for (let i = 0; i < drops; i++) {
-      const plantType = getRandomSeedDrop(this.scene.gameData);
-      new Seed(
-        this.scene,
-        this.x + (Math.random() - 0.5) * DROP_SCATTER,
-        this.y + (Math.random() - 0.5) * DROP_SCATTER,
-        plantType,
-        this.scene.gameData
-      );
-    }
   }
 
   // --- Day-timer expiry effects ---

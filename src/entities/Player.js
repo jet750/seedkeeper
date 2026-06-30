@@ -15,7 +15,10 @@ import {
   MANA_DEFAULT_MAX,
   MANA_REGEN_PER_SEC,
   MANA_REGEN_FROM_REGEN_NODE,
-  MANA_PER_SPELLPOWER
+  MANA_PER_SPELLPOWER,
+  HP_REGEN_BASE,
+  HP_REGEN_FROM_REGEN_NODE,
+  HP_REGEN_DELAY_MS
 } from '../core/Constants.js';
 import Seed from './Seed.js';
 
@@ -80,7 +83,6 @@ const DASH_BUFFER_MS = 100;
 // coefficients live in entities.json (upgrades[*].stat.perLevelBonus); these
 // bound the runtime effect so a maxed tree never trivialises the game.
 const DAMAGE_REDUCTION_CAP = 0.3; // defense tree caps incoming-damage reduction at 30%
-const REGEN_PAUSE_MS = 3000; // passive HP regen pauses this long after taking a hit
 const DASH_BONUS_CD_CAP = 0.5; // dash tree shaves at most 50% off the dash cooldown
 const DASH_BONUS_DIST_CAP = 0.25; // …and adds at most 25% dash distance
 
@@ -1081,8 +1083,8 @@ export default class Player extends Phaser.Physics.Arcade.Sprite {
     const amount = data.amount || 0;
     if (amount <= 0) return;
 
-    // Any hit stalls passive regen briefly (red_berry healthRegen tree).
-    this._regenPauseRemaining = REGEN_PAUSE_MS;
+    // Any hit stalls passive HP regen briefly (TUNE: HP_REGEN_DELAY_MS, dial to 0 to disable).
+    this._regenPauseRemaining = HP_REGEN_DELAY_MS;
 
     // Incoming damage is reduced by gear armor (Sprint 4) and the defense stat
     // tree (Sprint 10, sunflower → damageReduction, capped). The two stack
@@ -1108,15 +1110,17 @@ export default class Player extends Phaser.Physics.Arcade.Sprite {
     this.startInvincibility();
   }
 
-  // Passive regen tick (Sprint 10). Accumulates fractional HP at the current
-  // healthRegen rate (HP/sec) and heals in whole-HP steps; stalls while
-  // _regenPauseRemaining is counting down after a recent hit.
+  // Passive HP regen tick (Sprint 10; rebased Sprint survivability-drops). Mirrors
+  // tickManaRegen: a flat base rate (HP_REGEN_BASE) that heals EVERYONE out of combat,
+  // plus the red_berry healthRegen node on top (so the regen tree feeds both HP and
+  // mana). Accumulates fractional HP and heals in whole-HP steps; stalls while
+  // _regenPauseRemaining counts down after a recent hit.
   tickRegen(dtMs) {
     if (this._regenPauseRemaining > 0) {
       this._regenPauseRemaining = Math.max(0, this._regenPauseRemaining - dtMs);
       return;
     }
-    const rate = this.statBonuses.healthRegen || 0; // HP per second
+    const rate = HP_REGEN_BASE + HP_REGEN_FROM_REGEN_NODE * (this.statBonuses.healthRegen || 0); // HP/sec
     if (rate <= 0 || this.isDead || this.currentHP >= this.maxHP) {
       this._regenAccum = 0;
       return;

@@ -223,6 +223,16 @@ export const MANA_REGEN_FROM_REGEN_NODE = 2.5; // × red_berry healthRegen (HP/s
 export const MANA_PER_SPELLPOWER = 40; // × blue_flower spellPower → +max mana (≤ +20 at cap) // TUNE
 export const SPELL_CAST_COOLDOWN_MS = 320; // min interval between casts so mana isn't frame-drained // TUNE
 
+// --- Passive HP regen (Sprint survivability-drops) -------------------------
+// HP now regenerates out of combat for EVERYONE via a flat base, mirroring how mana
+// always trickles back (MANA_REGEN_PER_SEC). Previously HP only regenerated if you'd
+// invested in the red_berry regen node, so a fresh player never healed between fights.
+// The red_berry healthRegen node still feeds BOTH HP (here) and mana (above) per the
+// locked design — the regen tree covers both pools. base maxHP is 100.
+export const HP_REGEN_BASE = 1.5; // flat HP/sec out of combat → ~67s full refill at 0 stat // TUNE
+export const HP_REGEN_FROM_REGEN_NODE = 1.0; // × red_berry healthRegen (0..2.0 HP/s) on top → up to 3.5 HP/s at max // TUNE
+export const HP_REGEN_DELAY_MS = 3000; // passive HP regen pauses this long after a hit; dial to 0 to disable the stall // TUNE
+
 // --- Ember spell (Sprint magic-2) — the implemented template ---------------
 // A semi-homing single-target bolt with a procedural flame-teardrop silhouette + spark
 // trail (distinguishable by SHAPE + MOTION, not colour alone — so a future dark mirror
@@ -369,6 +379,23 @@ export const SOUL_DROP_BASE = {
   skeleton: 5 // the rarest, most-corrupted remains
 };
 export const SOUL_DROP_FALLBACK = 1; // any enemy type not listed above
+
+// --- Coin + plant drops on kill (Sprint survivability-drops) ----------------
+// Kills now pay COINS (banked at once via addCoins, BASE[type] × enemy level —
+// mirrors the souls faucet) plus a SMALL chance of a full-grown plant. This REPLACES
+// the old enemy seed drops: seeds now come only from the daily reroll, wild map
+// seeds, and growing. Split-children (`light`) award nothing, same as souls. All TUNE.
+export const COIN_DROP_BASE = {
+  green_slime: 2, // everyday trickle
+  dark_slime: 6, // heavier purse
+  skeleton: 12 // the big payout
+};
+export const COIN_DROP_FALLBACK = 2; // any enemy type not listed above
+// Chance any single kill also drops a full-grown plant (PlantBundle → straight to the
+// sellable plant bank). One small UNIVERSAL chance across every kill — supersedes the
+// old high per-enemy bundleDropChance (dark_slime 0.5 / skeleton 0.7, green none). The
+// plant pool + weighting live in lootTable.js bundleDropWeights (entities.json loot). // TUNE
+export const FULL_PLANT_DROP_CHANCE = 0.05;
 
 // Farmstand plant BUY markup (Sprint magic-1). Plants buy back at sellPrice × this —
 // a HEAVY markup so rebuying a crop to feed a different stat tree is real friction (a
