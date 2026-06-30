@@ -11,14 +11,18 @@
 
 // Per-kind glyph colour. // TUNE
 export const SPELL_GLYPH_COLORS = {
-  ranged: 0xf5efe6, // arrow — parchment
+  ranged: 0xf5efe6, // bow + arrow — parchment
   ember: 0xff8a3c, // flame — orange
   arc: 0xffe44f, // lightning — yellow
   frost: 0x9fe0ff, // snowflake — ice blue
   thornfield: 0x4f9e3a, // thorn — deep green
   bulwark: 0xa9c6e8, // shield — steel blue
   sprout_sentinel: 0x8ae66b, // sprout — leaf green
-  spell: 0xd8c98a // unknown spell — muted gold
+  spell: 0xd8c98a, // unknown spell — muted gold
+  // Non-spell action-button glyphs (Sprint control-polish): the melee SWORD (the old ⚔
+  // emoji read as an "X"). Dash uses a plain "D" text label, not a glyph, so it can never
+  // collide with Arc's lightning bolt.
+  sword: 0xf5efe6 // melee blade — parchment (reads on the red attack button)
 };
 
 // Draw a high-contrast, shape-distinct glyph for `kind` into Graphics `g`, centred on g's local
@@ -28,11 +32,32 @@ export function drawSpellGlyph(g, kind, color, s) {
   g.fillStyle(color, 1);
   g.lineStyle(Math.max(2, s * 0.26), color, 1);
   switch (kind) {
-    case 'ranged': // arrow pointing up (+ fletching)
-      g.lineBetween(0, s, 0, -s * 0.35);
-      g.fillTriangle(0, -s, -s * 0.5, -s * 0.2, s * 0.5, -s * 0.2);
-      g.lineBetween(0, s, -s * 0.45, s * 0.55);
-      g.lineBetween(0, s, s * 0.45, s * 0.55);
+    case 'ranged': { // bow (a curved limb + string) with a nocked arrow pointing right
+      // Bow limb: an arc bulging LEFT (away from the shot), approximated by stroked points so
+      // we need no Phaser import. Centre is pushed right so the string sits to the right of the
+      // curve and the arrow runs through it to the right — a readable "drawn bow" silhouette.
+      const bcx = s * 0.32;
+      const R = s * 0.98;
+      const pts = [];
+      for (let i = 0; i <= 8; i++) {
+        const a = ((180 - 66 + (132 * i) / 8) * Math.PI) / 180; // 114°..246° → left-bulging limb
+        pts.push({ x: bcx + Math.cos(a) * R, y: Math.sin(a) * R });
+      }
+      g.strokePoints(pts, false);
+      // Bowstring between the two limb tips.
+      const t0 = pts[0];
+      const t1 = pts[pts.length - 1];
+      g.lineBetween(t0.x, t0.y, t1.x, t1.y);
+      // Arrow: shaft drawn back through the string + a head pointing right (the aim line).
+      g.lineBetween(-s * 0.6, 0, s * 0.78, 0);
+      g.fillTriangle(s, 0, s * 0.58, -s * 0.24, s * 0.58, s * 0.24);
+      break;
+    }
+    case 'sword': // upright sword — blade + crossguard + pommel (clear melee mark, not an "X")
+      g.lineBetween(0, -s * 0.62, 0, s * 0.5); // blade + grip down the centre
+      g.fillTriangle(0, -s, -s * 0.2, -s * 0.58, s * 0.2, -s * 0.58); // blade tip
+      g.lineBetween(-s * 0.5, s * 0.34, s * 0.5, s * 0.34); // crossguard
+      g.fillCircle(0, s * 0.74, s * 0.16); // pommel
       break;
     case 'ember': // flame teardrop (pointed top, fat notched bottom)
       g.fillPoints(

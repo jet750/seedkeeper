@@ -34,7 +34,7 @@ const CONTROLS = [
   ['Q / L-click', 'Melee attack'],
   ['R / R-click', 'Fire ability'],
   ['SPACE', 'Dash'],
-  ['SHIFT', 'Strafe (lock facing)'],
+  ['SHIFT', 'Strafe toggle (lock facing)'],
   ['E', 'Interact / plant'],
   ['ESC', 'Pause / Close'],
   ['~', 'Dev menu (dev builds only)']

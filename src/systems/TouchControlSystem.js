@@ -85,6 +85,28 @@ export default class TouchControlSystem {
     // after constructing us (and on every Scale 'resize'), but doing it here keeps
     // the controls correct even if that initial pass is ever skipped.
     this.layout(this.scene.scale.width, this.scene.scale.height, this.safe);
+
+    // Exiting the pause menu must leave the stick centred (Sprint control-polish): the world's
+    // update loop is frozen while PAUSED, so a stale joystick vector / claimed pointer is re-
+    // applied on the first frame after resume and auto-walks the player. Re-centre on resume.
+    this._onBus('pause:resume', () => this.resetMovementInput());
+  }
+
+  // Release any claimed stick pointer and re-centre it. resetJoystick() emits touch:move
+  // {0,0}, so the Player's touchVelocity zeroes too — the player stands still on resume and
+  // responds normally on the next real touch. Also drops in-flight tap / ranged-press tracking
+  // so nothing stale fires on the first post-resume frame.
+  resetMovementInput() {
+    this.joystickPointer = null;
+    this.joystickActive = false;
+    this.resetJoystick();
+    this._tapDown = {};
+    if (this._rangedPressTimer) {
+      this._rangedPressTimer.remove(false);
+      this._rangedPressTimer = null;
+    }
+    this._rangedPointerId = null;
+    this._rangedRadialOpen = false;
   }
 
   // Raw CSS-pixel safe-area insets. Under the mobile RESIZE scale mode the control
@@ -173,6 +195,12 @@ export default class TouchControlSystem {
       // The strafe toggle sits in the left half by the joystick; a press on it must NOT
       // also grab the stick (Sprint mobile-overnight-batch, Phase 3).
       if (this._isOnStrafeButton(pointer.x, pointer.y)) return;
+      // A press in the top HUD band (the top-left pause button + readouts) must not claim the
+      // stick either (Sprint control-polish). The pause button lives in the joystick's left-half
+      // claim region, so without this a pause tap seeded a bogus movement vector pointing up at
+      // the button — which then stuck (the lift-to-reset is swallowed while PAUSED), auto-walking
+      // the player north on resume. resetMovementInput() also clears it; this stops it at source.
+      if (pointer.y <= this.safe.top + TOP_HUD_TAP_GUARD) return;
       if (pointer.x < this.scene.scale.width / 2 && this.joystickPointer === null) {
         this.joystickPointer = pointer.id;
         this.joystickActive = true;
@@ -384,10 +412,15 @@ export default class TouchControlSystem {
     // + TOUCH_DIAMOND_SPREAD via _diamondXY(); raise the spread to space the four apart with
     // no re-layout. The ranged button is the generic "Ranged-Magic" control — tap = fire the
     // loaded ability, long-press = radial select — always active; its icon reflects the load.
+    // Sprint control-polish: clearer, non-colliding glyphs. Melee draws a procedural SWORD
+    // (glyphKind 'sword') instead of the ⚔ emoji that read as an "X". Dash is a plain "D"
+    // text label (a dodge mark) — never a lightning bolt, so it can't be confused with Arc's
+    // lightning glyph when Arc is the loaded secondary. Ranged draws the active-spell glyph
+    // (now a bow+arrow for slot 1 — see spellGlyphs 'ranged').
     this._buttonDefs = [
       { id: 'interact', pos: 'top', color: 0x228822, label: 'E', event: 'touch:interact' },
-      { id: 'attack', pos: 'left', color: 0xcc2222, label: '⚔', event: 'touch:attack' },
-      { id: 'dash', pos: 'right', color: 0x2244cc, label: '⚡', event: 'touch:dash' },
+      { id: 'attack', pos: 'left', color: 0xcc2222, label: '', glyphKind: 'sword', event: 'touch:attack' },
+      { id: 'dash', pos: 'right', color: 0x2244cc, label: 'D', event: 'touch:dash' },
       // Ranged-Magic: no emoji label — a procedural active-spell glyph is drawn over it
       // (Phase 1, _drawRangedGlyph), reflecting the loaded secondary.
       { id: 'ranged', pos: 'bottom', color: 0xcc8822, label: '', event: 'touch:ranged' }
@@ -441,12 +474,14 @@ export default class TouchControlSystem {
       // Ranged-Magic active-spell glyph (Phase 1): a procedural Graphics glyph drawn over the
       // button, mirroring the radial's per-spell glyph for the loaded secondary. Drawn/seated
       // by _drawRangedGlyph (here + on every layout + on select/meta change).
+      // A procedural Graphics glyph: the ranged active-spell icon (dynamic) OR a fixed
+      // button glyph like the melee sword (glyphKind, drawn by _drawStaticButtonGlyphs).
       let glyph = null;
-      if (btn.id === 'ranged') {
+      if (btn.id === 'ranged' || btn.glyphKind) {
         glyph = this.scene.add.graphics().setScrollFactor(0).setDepth(102);
       }
 
-      const entry = { bg, ring, label, icon, iconBaseScale, glyph, hitZone, locked: !!btn.lockedInitially };
+      const entry = { bg, ring, label, icon, iconBaseScale, glyph, glyphKind: btn.glyphKind, hitZone, locked: !!btn.lockedInitially };
       this.touchButtons[btn.id] = entry;
 
       // A locked button renders dimmed and swallows taps until unlocked.
@@ -482,8 +517,10 @@ export default class TouchControlSystem {
       hitZone.on('pointerout', relax);
     });
 
-    // Seat the initial active-spell glyph on the ranged button (default slot 1 = arrow).
+    // Seat the initial active-spell glyph on the ranged button (default slot 1 = bow), plus
+    // the fixed button glyphs (the melee sword).
     this._drawRangedGlyph();
+    this._drawStaticButtonGlyphs();
 
     // Long-press radial tracking for the ranged button (Sprint control-scheme-combat-
     // input). The release can land OFF the button (thumb dragged to a radial option),
@@ -565,6 +602,21 @@ export default class TouchControlSystem {
     const color = SPELL_GLYPH_COLORS[kind] || SPELL_GLYPH_COLORS.spell;
     r.glyph.setPosition(r.bg.x, r.bg.y).setScale(1);
     drawSpellGlyph(r.glyph, kind, color, btnR * TOUCH_RANGED_GLYPH_FILL);
+  }
+
+  // Draw the FIXED (non-ranged) procedural button glyphs — currently just the melee SWORD on
+  // the attack button (Sprint control-polish: replaces the ⚔ emoji that read as an "X"). Unlike
+  // the ranged glyph these never change with game state, so they're drawn once at create() and
+  // only re-seated on layout(); each is centred on its button and sized to the button radius.
+  _drawStaticButtonGlyphs() {
+    const btnR = this.buttonRadius || TOUCH_BUTTON_RADIUS;
+    for (const id in this.touchButtons) {
+      const b = this.touchButtons[id];
+      if (!b || !b.glyph || !b.glyphKind) continue;
+      const color = SPELL_GLYPH_COLORS[b.glyphKind] || 0xffffff;
+      b.glyph.setPosition(b.bg.x, b.bg.y).setScale(1);
+      drawSpellGlyph(b.glyph, b.glyphKind, color, btnR * TOUCH_RANGED_GLYPH_FILL);
+    }
   }
 
   // Ranged-Magic press begins: start the long-press timer. A release before it elapses
@@ -753,8 +805,10 @@ export default class TouchControlSystem {
       }
     });
 
-    // Re-seat + re-size the ranged active-spell glyph to the (portrait-scaled) button (Phase 1).
+    // Re-seat + re-size the ranged active-spell glyph + the fixed button glyphs (melee sword)
+    // to the (portrait-scaled) buttons (Phase 1 / Sprint control-polish).
     this._drawRangedGlyph();
+    this._drawStaticButtonGlyphs();
 
     // MAP (right, BELOW the top bar to clear the clock — Phase 4) + pause (top-left).
     if (this.mapBtn) {

@@ -38,7 +38,7 @@ const DESKTOP_BINDINGS = [
   ['Fire ability', 'R  /  Right-click'],
   ['Select ability 1-5', '1  2  3  4  5'],
   ['Dash', 'Space'],
-  ['Strafe (lock facing)', 'Hold Shift'],
+  ['Strafe (lock facing)', 'Shift (toggle)'],
   ['Interact / plant', 'E   (F)'],
   ['Auto-target toggle', 'T'],
   ['Map', 'M'],
@@ -46,16 +46,17 @@ const DESKTOP_BINDINGS = [
   ['Dev menu', '`  (backtick)']
 ];
 
-// Mobile bindings — the on-screen control surface (TouchControlSystem.js:244-248). The
-// diamond cluster sits under the right thumb: interact (top), melee (inner/left), the
-// ranged-ability button (outer/right), dash (bottom).
+// Mobile bindings — the on-screen control surface (TouchControlSystem.js). The diamond
+// cluster sits under the right thumb: interact (top), melee/sword (left), dash/"D" (right),
+// the ranged/bow ability button (bottom — the radial hub).
 const MOBILE_BINDINGS = [
   ['Move', 'Left thumbstick'],
+  ['Strafe lock', '🔒 toggle — by the thumbstick'],
   ['Interact / plant', '🌱 button — diamond TOP'],
-  ['Melee attack', '⚔ button — diamond LEFT'],
-  ['Fire ability', '🏹 button — diamond RIGHT (tap)'],
-  ['Switch ability', 'Hold 🏹, drag to a slot, release'],
-  ['Dash', '⚡ button — diamond BOTTOM'],
+  ['Melee attack', 'Sword button — diamond LEFT'],
+  ['Fire ability', 'Bow button — diamond BOTTOM (tap)'],
+  ['Switch ability', 'Hold the Bow button, drag, release'],
+  ['Dash', '"D" button — diamond RIGHT'],
   ['Map', 'MAP button (top-right)'],
   ['Pause', '⏸ button (top-left)'],
   ['Auto-target', 'Always on'],

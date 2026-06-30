@@ -156,14 +156,17 @@ export default class Player extends Phaser.Physics.Arcade.Sprite {
     // A locked slot can't be selected (selectSecondary rejects it), so an un-purified
     // spell stays inert AND unreachable.
     this.unlockedSecondary = new Set([1]);
-    // Hold-to-strafe (Shift): while true, movement no longer rotates `facing`, so the
-    // player can move sideways while keeping their aim/swing direction. _strafeTarget is
-    // the specific enemy locked on the rising edge of Shift — facing re-points at its
-    // live position every frame while held (persistent tracking lock).
+    // Strafe (Shift): while true, movement no longer rotates `facing`, so the player can
+    // move sideways while keeping their aim/swing direction. _strafeTarget is the specific
+    // enemy locked when strafe latches — facing re-points at its live position every frame
+    // (persistent tracking lock). Sprint control-polish: desktop Shift is now a TOGGLE
+    // (_strafeToggleDesktop — press on / press off) instead of a hold, matching the mobile
+    // latch and easier on the hand. Flipped on the rising edge of Shift in update().
     this._strafing = false;
+    this._strafeToggleDesktop = false;
     this._strafeTarget = null;
     // Mobile strafe-lock (Sprint mobile-overnight-batch, Phase 3). A LEFT-thumb toggle
-    // (TouchControlSystem) that latches the same strafe lock the desktop Shift holds —
+    // (TouchControlSystem) that latches the same strafe lock the desktop Shift toggle does —
     // facing freezes while joystick movement continues. ORed into strafeDown in update().
     this._strafeLockMobile = false;
 
@@ -284,7 +287,7 @@ export default class Player extends Phaser.Physics.Arcade.Sprite {
 
     // --- Input (Sprint control-scheme-combat-input: rebound) ---
     // Q / left-click = melee · R / right-click = fire active secondary · Space = dash ·
-    // Shift = hold-to-strafe (lock facing) · 1-5 select the active secondary (handled in
+    // Shift = toggle strafe (lock facing) · 1-5 select the active secondary (handled in
     // GameScene so it can be gated against the plant/swap pickers' own number keys) · E
     // interact (F legacy alias) is owned by GameScene. Movement is WASD (arrows alt).
     this.keys = scene.input.keyboard.addKeys({
@@ -328,12 +331,23 @@ export default class Player extends Phaser.Physics.Arcade.Sprite {
     this._onStrafeLock = ({ on } = {}) => {
       this._strafeLockMobile = !!on;
     };
+    // Pause-resume input reset (Sprint control-polish): clear any held touch vector and stop
+    // the body so exiting the pause menu never auto-walks the player. The world's update loop
+    // is frozen while PAUSED, so without this the last joystick vector is re-applied on the
+    // first resumed frame. The mobile TouchControlSystem also re-centres the stick (emitting
+    // touch:move {0,0}); this is the cross-platform guard for when that emit is missed.
+    this._onResumeReset = () => {
+      this.touchVelocity.x = 0;
+      this.touchVelocity.y = 0;
+      if (this.body) this.setVelocity(0, 0);
+    };
     EventBus.on('touch:move', this._onTouchMove);
     EventBus.on('touch:attack', this._onTouchAttack);
     EventBus.on('touch:dash', this._onTouchDash);
     EventBus.on('touch:ranged', this._onTouchRanged);
     EventBus.on('secondary:select', this._onSecondarySelect);
     EventBus.on('touch:strafeLock', this._onStrafeLock);
+    EventBus.on('pause:resume', this._onResumeReset);
 
     // Clean up listeners when the scene tears down.
     scene.events.once('shutdown', this.cleanup, this);
@@ -401,18 +415,24 @@ export default class Player extends Phaser.Physics.Arcade.Sprite {
     // Passive mana regen (Sprint magic-2) — base rate + red_berry contribution.
     this.tickManaRegen(dtMs);
 
-    // Hold-to-strafe (Shift): persistent enemy-tracking lock (Sprint combat-input-mobile-
-    // consolidated). On the rising edge, lock the specific current/nearest enemy; while
-    // held, re-point facing at THAT same target's live position every frame so circling
-    // or walking past it keeps the aim on it. The lock holds until Shift release or the
-    // target's death — it never re-picks a different enemy mid-hold. updateFacing()
-    // early-returns while strafing, so movement can't rotate the aim out from under it.
-    // Desktop-only in practice: mobile has no Shift and uses forced auto-target instead.
-    // TUNE: strafe lock mode — this is a TARGET lock (tracks the enemy). For a fixed
-    // directional lock (freeze facing at press) instead, drop the acquire + per-frame
+    // Strafe (Shift toggle): persistent enemy-tracking lock (Sprint combat-input-mobile-
+    // consolidated; toggled in Sprint control-polish). When strafe latches on, lock the
+    // specific current/nearest enemy; while latched, re-point facing at THAT same target's
+    // live position every frame so circling or walking past it keeps the aim on it. The lock
+    // holds until Shift is toggled off or the target dies — it never re-picks a different enemy
+    // mid-latch. updateFacing() early-returns while strafing, so movement can't rotate the aim
+    // out from under it. Desktop-only in practice: mobile has no Shift and uses forced auto-
+    // target instead. TUNE: strafe lock mode — this is a TARGET lock (tracks the enemy). For a
+    // fixed directional lock (freeze facing at latch) instead, drop the acquire + per-frame
     // faceTowardAngle below and just hold _strafing.
-    // Desktop Shift (hold) OR the mobile strafe-lock toggle (latched) raises the lock.
-    const strafeDown = this.keys.strafe.isDown || this._strafeLockMobile;
+    // Desktop Shift is a TOGGLE now (Sprint control-polish): press to latch strafe on, press
+    // again to release — matches the mobile strafe latch and is easier on the hand than a hold.
+    // Flip on the rising edge; the latched flag (not the live key) then raises the lock.
+    if (Phaser.Input.Keyboard.JustDown(this.keys.strafe)) {
+      this._strafeToggleDesktop = !this._strafeToggleDesktop;
+    }
+    // Desktop Shift toggle OR the mobile strafe-lock toggle (latched) raises the lock.
+    const strafeDown = this._strafeToggleDesktop || this._strafeLockMobile;
     const strafeRising = strafeDown && !this._strafing;
     this._strafing = strafeDown;
     if (!strafeDown) {
@@ -430,8 +450,8 @@ export default class Player extends Phaser.Physics.Arcade.Sprite {
         );
       }
     } else {
-      // Desktop Shift — pick ONCE on the rising edge and hold; facing freezes on the
-      // target's death (the established desktop feel, unchanged this sprint).
+      // Desktop Shift toggle — pick ONCE when the latch flips on and hold; facing freezes on
+      // the target's death (the established desktop feel — lock-follows-target preserved).
       if (strafeRising) this._strafeTarget = this.acquireStrafeTarget();
       if (this._strafeTarget && this._strafeTarget.active && !this._strafeTarget.isDead) {
         this.faceTowardAngle(
@@ -524,7 +544,7 @@ export default class Player extends Phaser.Physics.Arcade.Sprite {
   }
 
   updateFacing(dx, dy) {
-    // Hold-to-strafe: keep the current facing/aim while moving (Shift held).
+    // Strafe latched: keep the current facing/aim while moving (Shift toggle / mobile latch).
     if (this._strafing) return;
     // Hysteresis (Sprint mobile-control-feel): only flip the cardinal facing when one
     // axis dominates the other by FACING_FLIP_RATIO. Near a diagonal the analog stick
@@ -564,8 +584,8 @@ export default class Player extends Phaser.Physics.Arcade.Sprite {
   }
 
   // The enemy a Shift-strafe locks onto: prefer the current reticle/auto target (so the
-  // lock matches what's highlighted), else the nearest live enemy. Picked ONCE on the
-  // rising edge of Shift — the hold never re-picks (see update()).
+  // lock matches what's highlighted), else the nearest live enemy. Picked ONCE when the
+  // strafe toggle latches on — the latch never re-picks (see update()).
   acquireStrafeTarget() {
     const scene = this.scene;
     const ts = scene.targetingSystem;
@@ -1282,6 +1302,10 @@ export default class Player extends Phaser.Physics.Arcade.Sprite {
     this.stopIdle();
     this.idleTimer = 0;
     this.stepTimer = 0;
+    // Drop any latched strafe (desktop toggle / mobile latch) so respawn faces forward freely.
+    this._strafeToggleDesktop = false;
+    this._strafing = false;
+    this._strafeTarget = null;
     this.setPosition(x, y);
     this.currentHP = this.maxHP;
     this.attackCooldownRemaining = 0;
@@ -1311,6 +1335,7 @@ export default class Player extends Phaser.Physics.Arcade.Sprite {
     EventBus.off('touch:ranged', this._onTouchRanged);
     EventBus.off('secondary:select', this._onSecondarySelect);
     EventBus.off('touch:strafeLock', this._onStrafeLock);
+    EventBus.off('pause:resume', this._onResumeReset);
     if (this._flashEvent) this._flashEvent.remove(false);
     if (this._invEndEvent) this._invEndEvent.remove(false);
   }
