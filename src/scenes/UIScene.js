@@ -76,6 +76,24 @@ const MINIMAP_BORDER = 0x4d4843; // frame border (matches UI dividers)
 const MINIMAP_HOME = 0xffd23f; // HOME marker (garden centre)
 const MINIMAP_YOU = 0x00ffff; // live YOU marker (player)
 
+// --- Radial spell glyphs (Sprint pre-merge fix) -----------------------------
+// Per-spell procedural glyphs for the mobile hold-to-switch radial (NO PNG — drawn with
+// Graphics). Shape-distinct AND hue-distinct (double-encoded so they read for colour-
+// blind players): arrow · flame · lightning · snowflake · thorn · shield · sprout. Keyed
+// by spell id (slot 1 = 'ranged'); 'spell' is the generic fallback. // TUNE (colours).
+const RADIAL_GLYPH_COLORS = {
+  ranged: 0xf5efe6,         // arrow — parchment
+  ember: 0xff8a3c,          // flame — orange
+  arc: 0xffe44f,            // lightning — yellow
+  frost: 0x9fe0ff,          // snowflake — ice blue
+  thornfield: 0x4f9e3a,     // thorn — deep green
+  bulwark: 0xa9c6e8,        // shield — steel blue
+  sprout_sentinel: 0x8ae66b,// sprout — leaf green
+  spell: 0xd8c98a           // unknown spell — muted gold
+};
+const RADIAL_GLYPH_SIZE = 12; // half-extent of a glyph at rest (px) // TUNE
+const RADIAL_FOCUS_SCALE = 1.35; // focused node enlargement (was 1.18) // TUNE
+
 function formatTime(ms) {
   const totalSec = Math.max(0, Math.ceil(ms / 1000));
   const m = Math.floor(totalSec / 60);
@@ -1483,6 +1501,86 @@ export default class UIScene extends Phaser.Scene {
   // to highlight a sector, and on release sets the active secondary. Slot 1 = ranged;
   // slots 2-5 are dimmed spell selectors (inert).
 
+  // Glyph kind for a slot (spell id, or 'ranged' for slot 1), from the live slot meta.
+  radialGlyphKind(slot) {
+    const m = this._slotMeta[slot];
+    if (m) {
+      if (m.type === 'ranged') return 'ranged';
+      if (m.id) return m.id;
+    }
+    return slot === 1 ? 'ranged' : 'spell';
+  }
+
+  // Display name for a slot (for the focused-selection label), from the live slot meta.
+  radialSlotName(slot) {
+    const m = this._slotMeta[slot];
+    if (m && m.name) return m.name;
+    return slot === 1 ? 'Ranged' : `Slot ${slot}`;
+  }
+
+  // Draw a simple, high-contrast, shape-distinct glyph for `kind` into Graphics `g`
+  // (centred on g's local origin so it scales about its own centre). Procedural only —
+  // no sprite/PNG. `s` is the glyph half-extent.
+  drawSpellGlyph(g, kind, color, s) {
+    g.clear();
+    g.fillStyle(color, 1);
+    g.lineStyle(Math.max(2, s * 0.26), color, 1);
+    switch (kind) {
+      case 'ranged': // arrow pointing up (+ fletching)
+        g.lineBetween(0, s, 0, -s * 0.35);
+        g.fillTriangle(0, -s, -s * 0.5, -s * 0.2, s * 0.5, -s * 0.2);
+        g.lineBetween(0, s, -s * 0.45, s * 0.55);
+        g.lineBetween(0, s, s * 0.45, s * 0.55);
+        break;
+      case 'ember': // flame teardrop (pointed top, fat notched bottom)
+        g.fillPoints(
+          [
+            { x: 0, y: -s }, { x: s * 0.62, y: s * 0.15 }, { x: s * 0.34, y: s * 0.8 },
+            { x: 0, y: s * 0.5 }, { x: -s * 0.34, y: s * 0.8 }, { x: -s * 0.62, y: s * 0.15 }
+          ],
+          true
+        );
+        break;
+      case 'arc': // lightning bolt zigzag
+        g.fillPoints(
+          [
+            { x: s * 0.2, y: -s }, { x: -s * 0.5, y: s * 0.12 }, { x: -s * 0.05, y: s * 0.12 },
+            { x: -s * 0.2, y: s }, { x: s * 0.55, y: -s * 0.18 }, { x: s * 0.08, y: -s * 0.18 }
+          ],
+          true
+        );
+        break;
+      case 'frost': // snowflake — 3 crossing spokes + a small hub
+        for (let k = 0; k < 3; k++) {
+          const a = (k / 3) * Math.PI;
+          g.lineBetween(-Math.cos(a) * s, -Math.sin(a) * s, Math.cos(a) * s, Math.sin(a) * s);
+        }
+        g.fillCircle(0, 0, s * 0.18);
+        break;
+      case 'thornfield': // thorny vine (diagonal stem + two thorns)
+        g.lineBetween(-s * 0.5, s, s * 0.45, -s);
+        g.fillTriangle(-s * 0.08, s * 0.25, -s * 0.6, s * 0.12, -s * 0.18, s * 0.6);
+        g.fillTriangle(s * 0.2, -s * 0.2, s * 0.65, -s * 0.05, s * 0.28, -s * 0.6);
+        break;
+      case 'bulwark': // shield (flat top, pointed bottom)
+        g.fillPoints(
+          [
+            { x: -s * 0.72, y: -s * 0.8 }, { x: s * 0.72, y: -s * 0.8 },
+            { x: s * 0.72, y: s * 0.15 }, { x: 0, y: s }, { x: -s * 0.72, y: s * 0.15 }
+          ],
+          true
+        );
+        break;
+      case 'sprout_sentinel': // sprout — stem + two leaves
+        g.lineBetween(0, s, 0, -s * 0.1);
+        g.fillTriangle(0, -s * 0.05, -s * 0.72, -s * 0.5, -s * 0.05, -s * 0.72);
+        g.fillTriangle(0, -s * 0.05, s * 0.72, -s * 0.5, s * 0.05, -s * 0.72);
+        break;
+      default: // generic spell — a 4-point diamond
+        g.fillPoints([{ x: 0, y: -s }, { x: s * 0.4, y: 0 }, { x: 0, y: s }, { x: -s * 0.4, y: 0 }], true);
+    }
+  }
+
   openRadial({ cx, cy } = {}) {
     this.closeRadial(true); // silent teardown of any prior radial
     const vp = this._vp();
@@ -1501,16 +1599,22 @@ export default class UIScene extends Phaser.Scene {
     this._radialObjects.push(
       this.add.circle(ccx, ccy, 26, 0x221e1b, 0.95).setStrokeStyle(2, 0xeac34f).setDepth(351)
     );
-    this._radialObjects.push(
-      this.add
-        .text(ccx, ccy, 'PICK', {
-          fontFamily: '"SproutLands", "Courier New", monospace',
-          fontSize: '12px',
-          color: '#EDD49A'
-        })
-        .setOrigin(0.5)
-        .setDepth(352)
-    );
+    // Focused-selection label at the hub — names the spell the thumb is currently over,
+    // so the choice is unambiguous even though idle nodes are small/icon-only. Stroked
+    // for legibility over the dim radial backdrop; updated live in highlightRadial.
+    this._radialNameText = this.add
+      .text(ccx, ccy, '', {
+        fontFamily: '"SproutLands", "Courier New", monospace',
+        fontSize: '15px',
+        fontStyle: 'bold',
+        color: '#EDD49A',
+        stroke: '#141210',
+        strokeThickness: 4,
+        align: 'center'
+      })
+      .setOrigin(0.5)
+      .setDepth(354);
+    this._radialObjects.push(this._radialNameText);
 
     const total = SECONDARY_SLOT_COUNT;
     for (let i = 0; i < total; i++) {
@@ -1527,14 +1631,12 @@ export default class UIScene extends Phaser.Scene {
         .circle(ox, oy, 28, 0x2d2926, locked ? 0.6 : 0.96)
         .setStrokeStyle(2, 0x57514b)
         .setDepth(351);
-      const glyph = this.add
-        .text(ox, oy, i === 0 ? '\u{1f3f9}' : '✦', {
-          fontFamily: '"SproutLands", "Courier New", monospace',
-          fontSize: '20px',
-          color: '#F5EFE6'
-        })
-        .setOrigin(0.5)
-        .setDepth(352);
+      // Procedural per-spell glyph (Sprint pre-merge fix) — distinct shape + hue per
+      // slot, replacing the old generic ✦. Drawn at the node centre so it scales about
+      // itself on focus; greyed when the slot is locked.
+      const kind = this.radialGlyphKind(i + 1);
+      const glyph = this.add.graphics({ x: ox, y: oy }).setDepth(352);
+      this.drawSpellGlyph(glyph, kind, RADIAL_GLYPH_COLORS[kind] || RADIAL_GLYPH_COLORS.spell, RADIAL_GLYPH_SIZE);
       if (locked) glyph.setAlpha(0.4);
       const num = this.add
         .text(ox, oy + 20, locked ? '🔒' : `${i + 1}`, {
@@ -1588,10 +1690,17 @@ export default class UIScene extends Phaser.Scene {
     if (!this._radialNodes) return;
     this._radialNodes.forEach((n, i) => {
       const active = i + 1 === this._radialSel;
-      n.box.setStrokeStyle(2, active ? 0xeac34f : 0x57514b);
-      n.box.setScale(active ? 1.18 : 1);
-      n.glyph.setScale(active ? 1.18 : 1);
+      n.box.setStrokeStyle(active ? 3 : 2, active ? 0xeac34f : 0x57514b);
+      n.box.setScale(active ? RADIAL_FOCUS_SCALE : 1);
+      // Keep a locked glyph dimmed even while focused; a focused unlocked glyph is full.
+      n.glyph.setScale(active ? RADIAL_FOCUS_SCALE : 1).setAlpha(n.locked ? 0.4 : 1);
     });
+    // Name the focused selection at the hub (greyed if that slot is locked).
+    if (this._radialNameText) {
+      const sel = this._radialSel;
+      const locked = !this._unlockedSlots.has(sel);
+      this._radialNameText.setText(this.radialSlotName(sel)).setColor(locked ? '#9B9389' : '#EDD49A');
+    }
   }
 
   closeRadial(silent) {

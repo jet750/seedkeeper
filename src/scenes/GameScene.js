@@ -236,12 +236,6 @@ const BEDS_PER_ROW = 4;
 const CHEST_X = 3340;
 const CHEST_Y = GARDEN_TOP + 660; // was 860
 
-// Seed storage chest (Sprint minimap-realmap-seed-chest). East-centre open patch of
-// the garden, clear of the bed grid, well, sleep bed, Workshop, signpost/book and the
-// southern shop row (verified >120px rendered from each). gardenScaled() tightens it
-// toward the centre like every other garden prop.
-const SEED_CHEST_X = 3480;
-const SEED_CHEST_Y = GARDEN_TOP + 500; // 3300 authored
 // Shop building row (Sprint magic-1 → shop-row fix). The three new shops line up as
 // ONE horizontal row along the SOUTHERN part of the compound — Farmstand · Blacksmith ·
 // Mage Mart, west→east — evenly spaced so neither the buildings nor their [E] interact
@@ -258,6 +252,23 @@ const SEED_CHEST_Y = GARDEN_TOP + 500; // 3300 authored
 const SHOP_ROW_Y = GARDEN_TOP + 850; // 3650 authored → ~y3470 rendered (south band)
 const SHOP_ROW_CENTER_X = GARDEN_CENTER_X + 120; // 3320 — east of the south gate column
 const SHOP_ROW_GAP = 300; // authored spacing between adjacent shops (~180px rendered)
+
+// Homestead row (Sprint pre-merge fix). The three homestead interactables — SLEEP bed ·
+// WORKBENCH · SEED CHEST, west→east — line up as one horizontal row in the open band
+// BETWEEN the bed grid (north, renders ~y3032–3122) and the shops row (south, ~y3470),
+// mirroring the shops row (same centre + gap, so the homestead columns sit directly over
+// the shop columns). Authored coords pass through gardenScaled() like every prop:
+//   • HOMESTEAD_ROW_Y (3250) renders ~y3230 — ~100px clear of both the beds and the
+//     signpost/book row (~y3356), and well north of the shops.
+//   • Aligning centre/gap with the shops keeps both [E]-labelled rows non-overlapping.
+// // TUNE — nudge the row (or its chest scale) without touching any interaction logic.
+const HOMESTEAD_ROW_Y = GARDEN_TOP + 450; // 3250 authored → ~y3230 rendered
+const HOMESTEAD_ROW_CENTER_X = SHOP_ROW_CENTER_X; // 3320 — same column centre as the shops
+const HOMESTEAD_ROW_GAP = SHOP_ROW_GAP; // 300 — same neighbour spacing as the shops
+// Seed-chest sprite draw scale (final setScale on obj_chest's 48px frame). The chest was
+// rendering "mini" (old 1.5×GARDEN_PROP_SCALE = 0.75 → ~36px) and overlapping the
+// workbench; ~2.5× that reads as a proper homestead building. // TUNE
+const SEED_CHEST_SPRITE_SCALE = 1.9;
 // obj_chest.png is a 48x48 sheet: row 0 is a closed→open progression.
 const CHEST_CLOSED_FRAME = 0;
 const CHEST_OPEN_FRAME = 4;
@@ -2432,9 +2443,9 @@ export default class GameScene extends Phaser.Scene {
 
     // Sleep bed — advance the day. Uses a bed slice from the Sprout Lands
     // Basic_Furniture sheet when present; the crop region is a best fit and can be
-    // nudged (x/y/w/h below) if it lands off the bed.
-    const SLEEP_Y = GARDEN_TOP + 280; // was 480
-    const sleepPos = this.gardenScaled(3520, SLEEP_Y); // Sprint 11 — tightened
+    // nudged (x/y/w/h below) if it lands off the bed. Sprint pre-merge fix: relocated
+    // to the WEST slot of the homestead row (was upper-right at 3520,3080).
+    const sleepPos = this.gardenScaled(HOMESTEAD_ROW_CENTER_X - HOMESTEAD_ROW_GAP, HOMESTEAD_ROW_Y);
     if (this.textures.exists('furniture_sheet')) {
       const furnTex = this.textures.get('furniture_sheet');
       if (!furnTex.has('bed')) furnTex.add('bed', 0, 0, 48, 64, 48);
@@ -2455,10 +2466,11 @@ export default class GameScene extends Phaser.Scene {
     // placeholder rect. The open animation is per-visual: the workbench/chest pop,
     // the placeholder does the Sprint 9 scaleY squash. `this.chest` stays the
     // handle every interaction path already uses, whichever art is shown.
-    // Snap to the authored `work_station` marker when loaded (Sprint 10); chestPos
-    // is the single handle every later reference uses (label + upgrade burst).
-    const chestRaw = this.markerXY('work_station', CHEST_X, CHEST_Y);
-    this.chestPos = this.gardenScaled(chestRaw.x, chestRaw.y); // Sprint 11 — tightened
+    // Sprint pre-merge fix: the workbench now anchors to the CENTRE slot of the
+    // homestead row (was snapped to the authored `work_station` marker / CHEST_X,Y at
+    // ~y3356). chestPos stays the single handle every later reference uses (label +
+    // upgrade burst).
+    this.chestPos = this.gardenScaled(HOMESTEAD_ROW_CENTER_X, HOMESTEAD_ROW_Y);
     this._stationIsWorkbench = this.textures.exists('work_station');
     this._chestIsSprite = !this._stationIsWorkbench && this.textures.exists('obj_chest');
     if (this._stationIsWorkbench) {
@@ -2522,20 +2534,22 @@ export default class GameScene extends Phaser.Scene {
     // Seed storage chest (Sprint minimap-realmap-seed-chest) — opens the deposit/
     // withdraw UI. Real obj_chest sprite (closed frame) when present, else a botanical-
     // toned placeholder so it never reads as nothing; the Workshop prefers work_station
-    // art, so obj_chest is free for this literal chest. East-centre, clear of all props.
-    const seedChestPos = this.gardenScaled(SEED_CHEST_X, SEED_CHEST_Y);
+    // art, so obj_chest is free for this literal chest. Sprint pre-merge fix: EAST slot of
+    // the homestead row, drawn ~2.5× bigger (SEED_CHEST_SPRITE_SCALE) so it no longer
+    // reads as a mini chest overlapping the workbench.
+    const seedChestPos = this.gardenScaled(HOMESTEAD_ROW_CENTER_X + HOMESTEAD_ROW_GAP, HOMESTEAD_ROW_Y);
     if (this.textures.exists('obj_chest')) {
       this.seedChestObj = this.add
         .sprite(seedChestPos.x, seedChestPos.y, 'obj_chest', CHEST_CLOSED_FRAME)
-        .setScale(1.5 * GARDEN_PROP_SCALE)
+        .setScale(SEED_CHEST_SPRITE_SCALE)
         .setDepth(2);
     } else {
       this.seedChestObj = this.add
-        .rectangle(seedChestPos.x, seedChestPos.y, 60 * GARDEN_PROP_SCALE, 44 * GARDEN_PROP_SCALE, 0x6a8a4a)
+        .rectangle(seedChestPos.x, seedChestPos.y, 80, 60, 0x6a8a4a)
         .setStrokeStyle(3, 0xb8d5b1)
         .setDepth(2);
     }
-    this.addStructureLabel(seedChestPos.x, seedChestPos.y, seedChestPos.x, seedChestPos.y - 36, 'SEED CHEST  [F]', '#B8D5B1');
+    this.addStructureLabel(seedChestPos.x, seedChestPos.y, seedChestPos.x, seedChestPos.y - 44, 'SEED CHEST  [F]', '#B8D5B1');
 
     // Solid garden props get a small static collider so the player routes around
     // them (Sprint 10c). Interaction stays distance-based, so this never blocks
@@ -2545,7 +2559,7 @@ export default class GameScene extends Phaser.Scene {
     this.addPropCollision(this.blacksmith, 56 * GARDEN_PROP_SCALE, 24 * GARDEN_PROP_SCALE);
     this.addPropCollision(this.mageMart, 56 * GARDEN_PROP_SCALE, 24 * GARDEN_PROP_SCALE);
     this.addPropCollision(this.farmstand, 56 * GARDEN_PROP_SCALE, 24 * GARDEN_PROP_SCALE);
-    this.addPropCollision(this.seedChestObj, 36 * GARDEN_PROP_SCALE, 22 * GARDEN_PROP_SCALE);
+    this.addPropCollision(this.seedChestObj, 44, 28); // wider — the chest sprite is now ~2.5×
   }
 
   // Draw a placeholder shop stall (counter base + body + awning) at a world point and
