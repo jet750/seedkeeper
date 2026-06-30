@@ -13,6 +13,10 @@ import Spell from './Spell.js';
 import { EMBER_TIERS, EMBER_BOLT_SPEED, EMBER_BOLT_RANGE } from '../../core/Constants.js';
 
 export default class EmberSpell extends Spell {
+  get targetingPolicy() {
+    return 'bolt'; // semi-homing single-target bolt → ride the nearest on-screen threat
+  }
+
   cast(system, ctx) {
     const { level, spellPower, x, y, angle, target } = ctx;
     const lvl = Math.max(1, Math.min(EMBER_TIERS.length, level)); // 1..4 (drives tier VFX)

@@ -18,16 +18,21 @@ import Spell from './Spell.js';
 import { THORNFIELD_TIERS, THORNFIELD_AHEAD_DIST } from '../../core/Constants.js';
 
 export default class ThornfieldSpell extends Spell {
+  get targetingPolicy() {
+    return 'blocking'; // ground denial → lay on the vector toward the pursuing mass (Phase 1 seam)
+  }
+
   cast(system, ctx) {
-    const { level, spellPower, x, y, angle, target } = ctx;
+    const { level, spellPower, x, y, angle, target, placement } = ctx;
     const lvl = Math.max(1, Math.min(THORNFIELD_TIERS.length, level)); // 1..4
     const tier = THORNFIELD_TIERS[lvl - 1];
     const power = 1 + (spellPower || 0); // blue_flower magic node
 
-    // Auto-place: on the locked target, else on the ground ahead of the player.
+    // Auto-place: the Blocking placement (in the pursuing mass's path, or a hard lock);
+    // else the locked target; else on the ground ahead of the player along the aim.
     const locked = target && target.active && !target.isDead ? target : null;
-    const cx = locked ? locked.x : x + Math.cos(angle) * THORNFIELD_AHEAD_DIST;
-    const cy = locked ? locked.y : y + Math.sin(angle) * THORNFIELD_AHEAD_DIST;
+    const cx = placement ? placement.x : locked ? locked.x : x + Math.cos(angle) * THORNFIELD_AHEAD_DIST;
+    const cy = placement ? placement.y : locked ? locked.y : y + Math.sin(angle) * THORNFIELD_AHEAD_DIST;
 
     system.spawnField({
       x: cx,

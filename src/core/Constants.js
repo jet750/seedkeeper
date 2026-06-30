@@ -200,6 +200,19 @@ export const PROJECTILE_HOMING_RAD_PER_S = 3.5; // TUNE
 // on (strong / full-auto) regardless of this. Persisted per-save (save v5).
 export const AUTO_TARGET_DESKTOP_DEFAULT = false; // TUNE
 
+// --- Threat-weighted targeting (Sprint mobile-overnight-batch, Phase 1) --------
+// Replaces the mobile facing-CONE auto-target with a THREAT-weighted policy: the
+// nearest actively-pursuing (aggroed) ON-SCREEN enemy wins, with only a SOFT pull
+// toward the aim/run direction — so the reticle stays on the mass that is chasing
+// you, not an off-screen wanderer that happens to lie dead ahead. Desktop's cone+
+// cursor pick is untouched. Every weight below is a feel knob. // TUNE
+export const TARGETING_ACQUIRE_RANGE = 380;     // furthest an enemy can be and still be auto-acquired (px)
+export const TARGETING_OFFSCREEN_MARGIN = 24;   // px beyond the camera worldView still counted "on-screen"
+export const TARGETING_OFFSCREEN_PENALTY = 2.2; // score ×penalty for an off-screen candidate (higher = avoid harder)
+export const TARGETING_AGGRO_BIAS = 0.45;       // score ×bias for an aggroed/pursuing enemy (lower = prefer it)
+export const TARGETING_FACING_BIAS = 0.5;       // soft facing/run-direction weight (0 = ignore aim, higher = pull harder toward it)
+export const TARGETING_CLUSTER_RADIUS = 160;    // Zone (Frost) densest-visible-cluster neighbour radius (px)
+
 // Mobile radial secondary-select: hold the Ranged-Magic button this long (ms) to open
 // the radial; a shorter tap fires instead. While open the world runs in slow-motion
 // (timescale below) — NOT a hard pause.

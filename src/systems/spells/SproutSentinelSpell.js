@@ -17,6 +17,10 @@ import Spell from './Spell.js';
 import { SENTINEL_TIERS, SENTINEL_AHEAD_DIST } from '../../core/Constants.js';
 
 export default class SproutSentinelSpell extends Spell {
+  get targetingPolicy() {
+    return 'self'; // planted just ahead of the player along the aim — not an enemy placement
+  }
+
   cast(system, ctx) {
     const { level, spellPower, x, y, angle } = ctx;
     const lvl = Math.max(1, Math.min(SENTINEL_TIERS.length, level)); // 1..4

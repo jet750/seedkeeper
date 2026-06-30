@@ -16,6 +16,10 @@ import Spell from './Spell.js';
 import { ARC_TIERS, ARC_STRIKE_RANGE } from '../../core/Constants.js';
 
 export default class ArcSpell extends Spell {
+  get targetingPolicy() {
+    return 'bolt'; // first strike rides the nearest on-screen threat, then chains itself
+  }
+
   cast(system, ctx) {
     const { level, spellPower, x, y, target } = ctx;
     const lvl = Math.max(1, Math.min(ARC_TIERS.length, level)); // 1..4 (drives chain + VFX tier)

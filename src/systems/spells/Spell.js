@@ -24,7 +24,19 @@
 // ════════════════════════════════════════════════════════════════════════════
 
 export default class Spell {
-  // ctx: { level, spellPower, x, y, angle, target }
+  // Archetype targeting policy (Sprint mobile-overnight-batch, Phase 1). Drives the
+  // STRUCTURAL placement seam (TargetingSystem.resolvePlacement): the auto-aim a cast
+  // gets when there is no manual hard lock. One of:
+  //   'bolt'     → ride the nearest on-screen threat (the default);
+  //   'zone'     → centre on the densest visible cluster centroid;
+  //   'blocking' → lay on the vector toward the pursuing mass (behind a fleeing player);
+  //   'self'     → on the player (self-cast).
+  // SpellSystem.cast reads this and forwards the resolved point as ctx.placement.
+  get targetingPolicy() {
+    return 'bolt';
+  }
+
+  // ctx: { level, spellPower, x, y, angle, target, placement }
   // `system` is the SpellSystem (bolt pool + AoE + VFX helpers).
   cast(/* system, ctx */) {
     throw new Error('Spell.cast() must be implemented by the subclass');

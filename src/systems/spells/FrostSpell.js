@@ -19,8 +19,12 @@ import Spell from './Spell.js';
 import { FROST_TIERS, ARC_STRIKE_RANGE } from '../../core/Constants.js';
 
 export default class FrostSpell extends Spell {
+  get targetingPolicy() {
+    return 'zone'; // AoE freeze → centre on the densest visible cluster (Phase 1 seam)
+  }
+
   cast(system, ctx) {
-    const { level, spellPower, x, y, target } = ctx;
+    const { level, spellPower, x, y, target, placement } = ctx;
     const lvl = Math.max(1, Math.min(FROST_TIERS.length, level)); // 1..4
     const tier = FROST_TIERS[lvl - 1];
     const power = 1 + (spellPower || 0); // blue_flower magic node
@@ -29,7 +33,8 @@ export default class FrostSpell extends Spell {
     const locked = target && target.active && !target.isDead ? target : null;
 
     if (tier.novaRadius <= 0) {
-      // L1 — single-target slow+root (+minor damage). Auto-lock the nearest enemy.
+      // L1 — single-target slow+root (+minor damage). Slow the nearest threat (the auto
+      // target), else auto-lock the nearest enemy. (The zone centroid is for L2+ AoE.)
       const enemy = locked || system.nearestEnemy(x, y, ARC_STRIKE_RANGE);
       if (enemy) {
         enemy.takeDamage(damage, { x, y });
@@ -41,9 +46,10 @@ export default class FrostSpell extends Spell {
       return;
     }
 
-    // L2+ — centre the nova/field on the locked target, else on the player (self-centred).
-    const cx = locked ? locked.x : x;
-    const cy = locked ? locked.y : y;
+    // L2+ — centre the nova/field on the Zone placement (densest visible cluster, or a
+    // hard lock); else the locked target; else the player (self-centred fallback).
+    const cx = placement ? placement.x : locked ? locked.x : x;
+    const cy = placement ? placement.y : locked ? locked.y : y;
     const novaR = Math.round(tier.novaRadius * power);
 
     // Freeze nova: damage + slow everything caught in it.

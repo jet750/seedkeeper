@@ -71,13 +71,19 @@ export default class SpellSystem {
     const p = this.scene.player;
     const aim = this.scene.resolveAim(p.x, p.y);
     if (p.faceTowardAngle) p.faceTowardAngle(aim.angle); // sprite faces the cast
+    // Per-archetype auto-placement (Sprint mobile-overnight-batch, Phase 1). null →
+    // the spell keeps its own existing default centre (desktop-with-assist-off path).
+    const placement = this.scene.targetingSystem
+      ? this.scene.targetingSystem.resolvePlacement(behavior.targetingPolicy, aim)
+      : null;
     behavior.cast(this, {
       level,
       spellPower: (p.statBonuses && p.statBonuses.spellPower) || 0,
       x: p.x,
       y: p.y,
       angle: aim.angle,
-      target: aim.target
+      target: aim.target,
+      placement
     });
     return true;
   }

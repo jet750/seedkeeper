@@ -16,11 +16,20 @@
 // communicates nothing over EventBus — it's a polled helper read by GameScene.
 
 import Phaser from 'phaser';
-import { AUTO_TARGET_CONE_DEG } from '../core/Constants.js';
+import {
+  AUTO_TARGET_CONE_DEG,
+  TARGETING_ACQUIRE_RANGE,
+  TARGETING_OFFSCREEN_MARGIN,
+  TARGETING_OFFSCREEN_PENALTY,
+  TARGETING_AGGRO_BIAS,
+  TARGETING_FACING_BIAS,
+  TARGETING_CLUSTER_RADIUS,
+  THORNFIELD_AHEAD_DIST
+} from '../core/Constants.js';
 
 // Furthest an enemy can be and still be acquired (px). Keeps the reticle on near
-// threats, not something across the map. // TUNE
-const ACQUIRE_RANGE = 380;
+// threats, not something across the map. // TUNE → Constants.TARGETING_ACQUIRE_RANGE
+const ACQUIRE_RANGE = TARGETING_ACQUIRE_RANGE;
 const RETICLE_COLOR = 0xff5a3c; // red-orange brackets on the current target
 const RETICLE_RADIUS = 15; // base ring radius (source px)
 // Steady pulse (NOT a flash) — accessibility requirement. Smooth sine scale/alpha.
@@ -121,19 +130,22 @@ export default class TargetingSystem {
     return t;
   }
 
-  // Choose the active target. Both modes require the enemy inside the facing cone +
-  // acquire range; mobile picks the cone-best (distance + angular bias), desktop picks
-  // the in-cone enemy nearest the cursor (mouse-led).
+  // Choose the active target. Mobile uses the THREAT-weighted policy (nearestThreat);
+  // desktop keeps the cone + mouse-led pick (unchanged this sprint).
   pickTarget() {
+    return this._mobile ? this.nearestThreat() : this._pickDesktopTarget();
+  }
+
+  // Desktop weak/mouse-led pick (Sprint control-scheme-combat-input — UNCHANGED). The
+  // in-cone enemy nearest the cursor, within acquire range. Only runs with the desktop
+  // auto-target preference ON.
+  _pickDesktopTarget() {
     const scene = this.scene;
     const player = scene.player;
     if (!player || player.isDead || !scene.enemies || scene.enemies.length === 0) return null;
 
     const facing = FACING_ANGLE[player.facing] ?? 0;
     const halfCone = Phaser.Math.DegToRad(AUTO_TARGET_CONE_DEG / 2);
-
-    // Mouse-led aim point (desktop). activePointer.worldX/Y are resolved against the
-    // main world camera, so they're already in world space.
     const ptr = scene.input ? scene.input.activePointer : null;
     const aimX = ptr ? ptr.worldX : player.x;
     const aimY = ptr ? ptr.worldY : player.y;
@@ -147,21 +159,172 @@ export default class TargetingSystem {
       const ang = Phaser.Math.Angle.Between(player.x, player.y, e.x, e.y);
       const dev = Math.abs(Phaser.Math.Angle.Wrap(ang - facing));
       if (dev > halfCone) continue; // outside the facing cone
-
-      let score;
-      if (this._mobile) {
-        // Strong/full-auto: nearest in cone, lightly biased toward dead-ahead.
-        score = dist * (1 + dev * 0.5);
-      } else {
-        // Weak/mouse-led: the in-cone enemy closest to the cursor.
-        score = Phaser.Math.Distance.Between(aimX, aimY, e.x, e.y);
-      }
+      const score = Phaser.Math.Distance.Between(aimX, aimY, e.x, e.y);
       if (score < bestScore) {
         bestScore = score;
         best = e;
       }
     }
     return best;
+  }
+
+  // ════════════════════════════════════════════════════════════════════════
+  // Threat-weighted policy (Sprint mobile-overnight-batch, Phase 1)
+  // ════════════════════════════════════════════════════════════════════════
+
+  // The mobile auto-target AND the Bolt archetype's pick: the nearest actively-
+  // pursuing ON-SCREEN enemy, with only a soft pull toward the aim/run direction.
+  // Candidates = within acquire range OR on-screen; an off-screen candidate pays a
+  // penalty and an aggroed one gets a bonus, so the chasing mass beats an off-screen
+  // wanderer that happens to lie dead ahead. Returns null when nothing qualifies.
+  nearestThreat() {
+    const scene = this.scene;
+    const player = scene.player;
+    if (!player || player.isDead || !scene.enemies || scene.enemies.length === 0) return null;
+    const view = this._worldView();
+    const biasAngle = this._biasAngle(player);
+
+    let best = null;
+    let bestScore = Infinity;
+    for (const e of scene.enemies) {
+      if (!e || e.isDead || !e.active) continue;
+      const dist = Phaser.Math.Distance.Between(player.x, player.y, e.x, e.y);
+      const onScreen = this._onScreen(e, view);
+      if (dist > ACQUIRE_RANGE && !onScreen) continue; // far AND off-screen → never the threat
+
+      const ang = Phaser.Math.Angle.Between(player.x, player.y, e.x, e.y);
+      const dev = Math.abs(Phaser.Math.Angle.Wrap(ang - biasAngle)); // 0..π off the aim/run dir
+      const devFactor = 1 + (dev / Math.PI) * TARGETING_FACING_BIAS; // soft directional pull
+      const aggroFactor = this._isThreat(e) ? TARGETING_AGGRO_BIAS : 1; // pursuers win
+      const screenFactor = onScreen ? 1 : TARGETING_OFFSCREEN_PENALTY; // avoid off-screen
+      const score = dist * devFactor * aggroFactor * screenFactor;
+      if (score < bestScore) {
+        bestScore = score;
+        best = e;
+      }
+    }
+    return best;
+  }
+
+  // Per-archetype placement seam (STRUCTURAL — Sprint mobile-overnight-batch, Phase 1).
+  // A manual hard lock (tap/click-to-target) ALWAYS wins for every archetype. Otherwise,
+  // only when the assist is live (mobile always; desktop only with auto-target ON), each
+  // archetype gets its own auto-placement:
+  //   • 'zone'     → the densest visible cluster centroid (drop the AoE on the pack);
+  //   • 'blocking' → a point on the vector toward the pursuing mass (lay the field in
+  //                  their path, behind a fleeing player);
+  //   • 'bolt'/'self'/anything else → no positional override (the bolt rides the auto
+  //                  threat-target; a self-cast sits on the player).
+  // Returns { x, y, target } or null (→ the spell keeps its own existing default, which
+  // is how desktop-with-assist-off stays byte-for-byte unchanged).
+  resolvePlacement(policy, aim) {
+    const hard =
+      this.hardTarget && this.hardTarget.active && !this.hardTarget.isDead ? this.hardTarget : null;
+    if (hard) return { x: hard.x, y: hard.y, target: hard };
+    if (!this.isActive()) return null;
+    if (policy === 'zone') {
+      const c = this.densestClusterCentroid();
+      return c ? { x: c.x, y: c.y, target: null } : null;
+    }
+    if (policy === 'blocking') {
+      const b = this.blockingPoint(aim ? aim.angle : 0);
+      return b ? { x: b.x, y: b.y, target: null } : null;
+    }
+    return null;
+  }
+
+  // Zone archetype: the centroid of the densest on-screen cluster. Pick the visible
+  // enemy with the most neighbours within TARGETING_CLUSTER_RADIUS, then return the
+  // average position of it + those neighbours. Null when no enemy is visible.
+  densestClusterCentroid() {
+    const view = this._worldView();
+    const r2 = TARGETING_CLUSTER_RADIUS * TARGETING_CLUSTER_RADIUS;
+    const visible = [];
+    for (const e of this.scene.enemies || []) {
+      if (!e || e.isDead || !e.active) continue;
+      if (this._onScreen(e, view)) visible.push(e);
+    }
+    if (!visible.length) return null;
+    let bestCount = -1;
+    let bestX = visible[0].x;
+    let bestY = visible[0].y;
+    for (const a of visible) {
+      let count = 0;
+      let sx = 0;
+      let sy = 0;
+      for (const b of visible) {
+        const dx = b.x - a.x;
+        const dy = b.y - a.y;
+        if (dx * dx + dy * dy <= r2) {
+          count++;
+          sx += b.x;
+          sy += b.y;
+        }
+      }
+      if (count > bestCount) {
+        bestCount = count;
+        bestX = sx / count;
+        bestY = sy / count;
+      }
+    }
+    return { x: bestX, y: bestY };
+  }
+
+  // Blocking archetype: a point a fixed distance from the player TOWARD the centroid of
+  // the pursuing (aggroed) on-screen mass — i.e. in their path, behind a fleeing player.
+  // No pursuers → fall back to the aim direction (ahead of the player). The fixed reach
+  // is the Thornfield ahead-distance (shared so the field lands at its usual range).
+  blockingPoint(aimAngle) {
+    const player = this.scene.player;
+    if (!player) return null;
+    const view = this._worldView();
+    let n = 0;
+    let sx = 0;
+    let sy = 0;
+    for (const e of this.scene.enemies || []) {
+      if (!e || e.isDead || !e.active) continue;
+      if (!this._isThreat(e) || !this._onScreen(e, view)) continue;
+      n++;
+      sx += e.x;
+      sy += e.y;
+    }
+    const dir = n > 0 ? Math.atan2(sy / n - player.y, sx / n - player.x) : aimAngle;
+    return {
+      x: player.x + Math.cos(dir) * THORNFIELD_AHEAD_DIST,
+      y: player.y + Math.sin(dir) * THORNFIELD_AHEAD_DIST
+    };
+  }
+
+  // --- threat-policy helpers ------------------------------------------------
+
+  // The camera's world-space view rect (or null pre-camera). Used for the on-screen test.
+  _worldView() {
+    return this.scene.cameras && this.scene.cameras.main ? this.scene.cameras.main.worldView : null;
+  }
+
+  // Is this enemy within the camera view (expanded by the margin)? True when there is no
+  // camera yet, so targeting still works before the world view is established.
+  _onScreen(e, view) {
+    if (!view) return true;
+    const m = TARGETING_OFFSCREEN_MARGIN;
+    return (
+      e.x >= view.x - m && e.x <= view.right + m && e.y >= view.y - m && e.y <= view.bottom + m
+    );
+  }
+
+  // Is this enemy actively pursuing the player? Both enemy types expose isAggro()
+  // (true outside their idle PATROL/WANDER state); anything else counts as not a threat.
+  _isThreat(e) {
+    return typeof e.isAggro === 'function' ? e.isAggro() : false;
+  }
+
+  // The soft-bias direction: the player's RUN direction while moving, else their facing.
+  _biasAngle(player) {
+    const b = player.body;
+    if (b && (Math.abs(b.velocity.x) > 4 || Math.abs(b.velocity.y) > 4)) {
+      return Math.atan2(b.velocity.y, b.velocity.x);
+    }
+    return FACING_ANGLE[player.facing] ?? 0;
   }
 
   cleanup() {

@@ -17,6 +17,10 @@ import Spell from './Spell.js';
 import { BULWARK_TIERS } from '../../core/Constants.js';
 
 export default class BulwarkSpell extends Spell {
+  get targetingPolicy() {
+    return 'self'; // dome/guard always sits on the player — no enemy placement
+  }
+
   cast(system, ctx) {
     const lvl = Math.max(1, Math.min(BULWARK_TIERS.length, ctx.level)); // 1..4
     const tier = BULWARK_TIERS[lvl - 1];
