@@ -18,7 +18,14 @@ import {
   GARDEN_CENTER_Y,
   WORLD_MAP_TEXTURE_KEY,
   THREAT_ARROW_MARGIN,
-  THREAT_ARROW_SIZE
+  THREAT_ARROW_SIZE,
+  HUD_TOP_BAR_H,
+  SEED_TRAY_ALPHA_IDLE,
+  SEED_TRAY_ALPHA_ACTIVE,
+  RADIAL_RING_RADIUS,
+  RADIAL_NODE_RADIUS,
+  RADIAL_FAN_ARC_DEG,
+  RADIAL_FAN_MIN_OFFSET
 } from '../core/Constants.js';
 import MobileDetect from '../core/MobileDetect.js';
 import TouchControlSystem from '../systems/TouchControlSystem.js';
@@ -113,6 +120,10 @@ const MENU_BTN_W = 116; // // TUNE — button width
 const MENU_BTN_H = 36; // // TUNE — button height
 const MENU_BTN_MARGIN = 18; // // TUNE — gap from the top-right screen corner
 const MENU_BTN_RESERVE = MENU_BTN_W + MENU_BTN_MARGIN + 8; // right-side space the timer keeps clear
+
+// Gap between the coin and soul readouts when grouped as a horizontal pair in the right
+// top-bar zone (Sprint mobile-overnight-batch, Phase 4). // TUNE
+const TOP_CURRENCY_GAP = 12;
 
 function formatTime(ms) {
   const totalSec = Math.max(0, Math.ceil(ms / 1000));
@@ -435,8 +446,11 @@ export default class UIScene extends Phaser.Scene {
     this._slotGap = 12;
     this._slotBaseX = pad;
     this._slotBaseY = VIRTUAL_HEIGHT - 48;
+    // Translucent at rest, near-solid only while the seed-swap menu is open / interactable
+    // (Sprint mobile-overnight-batch, Phase 4) — so the resting tray reads as a quiet
+    // inventory strip and only asserts itself when you're actually choosing a seed.
     this.seedTray = this.add
-      .rectangle(0, 0, 10, 10, 0x000000, 0.42)
+      .rectangle(0, 0, 10, 10, 0x000000, SEED_TRAY_ALPHA_IDLE)
       .setOrigin(0.5, 0.5)
       .setDepth(-1);
     this.slotCount = entitiesData.player.seedSlots;
@@ -1338,6 +1352,7 @@ export default class UIScene extends Phaser.Scene {
     });
     if (filled.length === 0) return;
     this._swapOpen = true;
+    this._setSeedTrayActive(true); // the tray is now interactable — go solid (Phase 4)
     if (this.interactPrompt) this.interactPrompt.setAlpha(0);
 
     const newName = entitiesData.plants[newPlantType]
@@ -1368,6 +1383,15 @@ export default class UIScene extends Phaser.Scene {
     this._swapObjects.forEach((o) => o.destroy());
     this._swapObjects = [];
     this._swapOpen = false;
+    this._setSeedTrayActive(false); // back to translucent at rest (Phase 4)
+  }
+
+  // Seed tray opacity (Phase 4): near-solid while the seed-swap menu is interactable,
+  // translucent otherwise. Toggled by openSwapPicker / closeSwapPicker.
+  _setSeedTrayActive(active) {
+    if (this.seedTray) {
+      this.seedTray.setFillStyle(0x000000, active ? SEED_TRAY_ALPHA_ACTIVE : SEED_TRAY_ALPHA_IDLE);
+    }
   }
 
   onSwapKey(e) {
@@ -1694,8 +1718,12 @@ export default class UIScene extends Phaser.Scene {
   openRadial({ cx, cy } = {}) {
     this.closeRadial(true); // silent teardown of any prior radial
     const vp = this._vp();
-    const R = 92; // ring radius from the hub to each option
-    const margin = 76; // keep the whole ring clear of the screen edges / insets
+    const R = RADIAL_RING_RADIUS; // ring radius from the hub to each option
+    // Containment clamp (Sprint mobile-overnight-batch, Phase 4): the margin now covers the
+    // WHOLE ring (R + a node's radius + its label band), so NO option ever clips off-screen
+    // on any aspect — previously the margin was smaller than the ring and corner-opened
+    // nodes poked off the bottom-right.
+    const margin = R + RADIAL_NODE_RADIUS;
     const ccx = Phaser.Math.Clamp(cx != null ? cx : vp.cx, vp.safe.left + margin, vp.w - vp.safe.right - margin);
     const ccy = Phaser.Math.Clamp(cy != null ? cy : vp.cy, vp.safe.top + margin, vp.h - vp.safe.bottom - margin);
     this._radialCenter = { x: ccx, y: ccy };
@@ -1726,9 +1754,20 @@ export default class UIScene extends Phaser.Scene {
       .setDepth(354);
     this._radialObjects.push(this._radialNameText);
 
+    // Fan direction (Sprint mobile-overnight-batch, Phase 4): when the hub is meaningfully
+    // off-centre (it is, opened from the bottom/inboard ability button), fan the options
+    // across an arc toward the screen INTERIOR (up-and-left from a bottom-right hub) instead
+    // of a full ring — so the spread leans into open space. Near the centre, keep the full
+    // even ring (no preferred lean).
+    const toCenter = Math.atan2(vp.cy - ccy, vp.cx - ccx);
+    const offset = Math.hypot(vp.cx - ccx, vp.cy - ccy);
+    const fan = offset >= RADIAL_FAN_MIN_OFFSET;
+    const arc = Phaser.Math.DegToRad(RADIAL_FAN_ARC_DEG);
     const total = SECONDARY_SLOT_COUNT;
     for (let i = 0; i < total; i++) {
-      const ang = -Math.PI / 2 + (i / total) * Math.PI * 2; // start at top, clockwise
+      const ang = fan
+        ? toCenter - arc / 2 + (total === 1 ? arc / 2 : (i / (total - 1)) * arc) // arc fanned toward the interior
+        : -Math.PI / 2 + (i / total) * Math.PI * 2; // full ring from the top, clockwise
       const ox = ccx + Math.cos(ang) * R;
       const oy = ccy + Math.sin(ang) * R;
       // A spell slot is LOCKED until purified at the Mage Mart (Sprint magic-1): render
@@ -1863,8 +1902,7 @@ export default class UIScene extends Phaser.Scene {
     if (this.manaFill) this.manaFill.setPosition(pad + sl, 80 + st);
     if (this.manaBorder) this.manaBorder.setPosition(pad + sl, 80 + st);
     if (this.waterIndicator) this.waterIndicator.setPosition(pad + sl, (this._manaUnlocked ? 100 : 92) + st);
-    if (this.coinText) this.coinText.setPosition(300 + sl, 40 + st);
-    if (this.soulsText) this.soulsText.setPosition(300 + sl, 64 + st);
+    // Currencies (coins/souls) now live in the RIGHT zone with the timer — see below.
 
     // TOP CENTER — day + zone + weather + NG+ (drop below the top inset).
     if (this.dayText) this.dayText.setPosition(width / 2, 30 + st);
@@ -1877,13 +1915,19 @@ export default class UIScene extends Phaser.Scene {
     }
     if (this.ngPlusIndicator) this.ngPlusIndicator.setPosition(width / 2, 96 + st);
 
-    // TOP RIGHT — timer + mute + overtime (clear a right notch and the top bar). The
-    // desktop menu button (when present) sits in the corner, so the timer cluster keeps
-    // MENU_BTN_RESERVE clear on the right to avoid overlapping it in the forest.
+    // TOP RIGHT ZONE — currencies + timer (Sprint mobile-overnight-batch, Phase 4). The
+    // coin/soul pair moved here from the old left-of-centre spot so the right zone owns all
+    // of "what I have + how long I have it". Everything is right-aligned at the zone edge
+    // (clear of a right notch, the top bar, and the desktop corner menu button), and the
+    // currencies sit on one row just below the clock so the whole zone fits the bar height.
     const menuReserve = this.menuBtnRect ? MENU_BTN_RESERVE : 0;
-    if (this.timerText) this.timerText.setPosition(width - 40 - sr - menuReserve, 40 + st);
-    if (this.muteIndicator) this.muteIndicator.setPosition(width - 40 - sr - menuReserve, 112 + st);
-    if (this.overtimeText) this.overtimeText.setPosition(width - 40 - sr - menuReserve, 78 + st);
+    const rightEdge = width - 40 - sr - menuReserve;
+    if (this.timerText) this.timerText.setPosition(rightEdge, 30 + st);
+    if (this.overtimeText) this.overtimeText.setPosition(rightEdge, 96 + st);
+    if (this.muteIndicator) this.muteIndicator.setPosition(rightEdge, 120 + st);
+    this._currencyAnchorX = rightEdge;
+    this._currencyY = 62 + st;
+    this._layoutCurrencies();
 
     // TOP RIGHT (corner) — desktop pause/menu button (Sprint controls-access). Desktop
     // only (menuBtnRect is undefined on mobile, so menuReserve above is 0 there).
@@ -2013,10 +2057,27 @@ export default class UIScene extends Phaser.Scene {
 
   refreshCoins(coins) {
     this.coinText.setText(`🪙 ${coins || 0}`);
+    this._layoutCurrencies(); // width changed — re-tuck behind souls (Phase 4)
   }
 
   refreshSouls(souls) {
     if (this.soulsText) this.soulsText.setText(`👻 ${souls || 0}`);
+    this._layoutCurrencies(); // width changed — re-anchor the pair (Phase 4)
+  }
+
+  // Right-align the coin + soul readouts as one horizontal pair anchored at the right top-
+  // bar zone's edge (Phase 4). Souls sits at the edge; coins tucks to its left by the soul
+  // readout's current width + a gap. Called on layout and whenever either value changes (a
+  // changed digit count shifts the widths). No-op until layoutHUD has set the anchor.
+  _layoutCurrencies() {
+    if (this._currencyAnchorX == null) return;
+    const x = this._currencyAnchorX;
+    const y = this._currencyY;
+    if (this.soulsText) this.soulsText.setOrigin(1, 0.5).setPosition(x, y);
+    if (this.coinText) {
+      const soulW = this.soulsText ? this.soulsText.width : 0;
+      this.coinText.setOrigin(1, 0.5).setPosition(x - soulW - TOP_CURRENCY_GAP, y);
+    }
   }
 
   // --- Refreshers -----------------------------------------------------------

@@ -239,6 +239,19 @@ export const THREAT_ARROW_MAX = 6;                 // most off-screen threat arr
 export const THREAT_ARROW_MARGIN = 20;             // px inset of the arrow track from the screen / safe-area edge
 export const THREAT_ARROW_SIZE = 13;               // arrowhead half-length (px) on the HUD
 
+// --- HUD responsive / safe-area refactor (Phase 4) ----------------------------
+// Top bar splits into three env(safe-area)-padded zones (left HP/mana · centre day/zone ·
+// right currencies+timer); the MAP toggle drops below the bar to clear the clock; the
+// seed tray is translucent at rest and only goes solid while the seed-swap menu is open. // TUNE
+export const HUD_TOP_BAR_H = 80;                   // height of the top HUD backing bar (px)
+export const HUD_MAP_BTN_BELOW_BAR = 8;            // gap below the top bar for the mobile MAP toggle (clears the clock)
+export const SEED_TRAY_ALPHA_IDLE = 0.28;          // translucent seed tray at rest
+export const SEED_TRAY_ALPHA_ACTIVE = 0.92;        // near-solid while the seed-swap menu is interactable
+export const RADIAL_RING_RADIUS = 92;              // hub→option ring radius (px) — kept here so the containment clamp matches it
+export const RADIAL_NODE_RADIUS = 30;              // option node radius incl. its label band (px), for the clamp
+export const RADIAL_FAN_ARC_DEG = 250;             // when the hub is off-centre, fan the options across this arc toward the interior
+export const RADIAL_FAN_MIN_OFFSET = 60;           // hub must be at least this far from screen centre to fan directionally (else full ring)
+
 // Mobile radial secondary-select: hold the Ranged-Magic button this long (ms) to open
 // the radial; a shorter tap fires instead. While open the world runs in slow-motion
 // (timescale below) — NOT a hard pause.

@@ -27,7 +27,9 @@ import {
   TOUCH_STRAFE_BTN_RADIUS_SCALE,
   TOUCH_STRAFE_BTN_GAP,
   TOUCH_TAP_MAX_MS,
-  TOUCH_TAP_MAX_DIST
+  TOUCH_TAP_MAX_DIST,
+  HUD_TOP_BAR_H,
+  HUD_MAP_BTN_BELOW_BAR
 } from '../core/Constants.js';
 
 // Bow glyph (ranged) vs spell glyph — the diamond's ability button swaps between these
@@ -370,18 +372,20 @@ export default class TouchControlSystem {
     // Diamond face-button cluster (Sprint combat-input-mobile-consolidated). The old 2x2
     // grid's POSITIONS were rotated 45° into a diamond (the icons are NOT rotated) so the
     // right thumb falls onto a console-style face cross:
-    //   TOP = interact · MIDDLE-LEFT (inner) = melee · MIDDLE-RIGHT (outer) = ranged/
-    //   ability (long-press → radial) · BOTTOM = dash.
-    // Each button's screen position is derived from the cluster centre + TOUCH_DIAMOND_
-    // SPREAD via _diamondXY(); raise the spread tunable to space the four apart with no
-    // re-layout. The ranged button is the generic "Ranged-Magic" control — tap = fire the
-    // loaded ability, long-press = radial select — and is ALWAYS active (firing no-ops
-    // until something castable is loaded); its icon reflects the loaded ability.
+    //   TOP = interact · MIDDLE-LEFT (inner) = melee · MIDDLE-RIGHT (outer) = dash ·
+    //   BOTTOM (inboard) = ranged/ability (long-press → radial).
+    // Sprint mobile-overnight-batch, Phase 4: dash and ranged SWAPPED so the radial hub
+    // (the ranged button) sits at the diamond's BOTTOM/inboard corner — the radial then
+    // fans up-and-left into the screen interior (openRadial) instead of clipping off the
+    // bottom-right corner. Each button's screen position is derived from the cluster centre
+    // + TOUCH_DIAMOND_SPREAD via _diamondXY(); raise the spread to space the four apart with
+    // no re-layout. The ranged button is the generic "Ranged-Magic" control — tap = fire the
+    // loaded ability, long-press = radial select — always active; its icon reflects the load.
     this._buttonDefs = [
       { id: 'interact', pos: 'top', color: 0x228822, label: 'E', event: 'touch:interact' },
       { id: 'attack', pos: 'left', color: 0xcc2222, label: '⚔', event: 'touch:attack' },
-      { id: 'ranged', pos: 'right', color: 0xcc8822, label: RANGED_GLYPH, event: 'touch:ranged' },
-      { id: 'dash', pos: 'bottom', color: 0x2244cc, label: '⚡', event: 'touch:dash' }
+      { id: 'dash', pos: 'right', color: 0x2244cc, label: '⚡', event: 'touch:dash' },
+      { id: 'ranged', pos: 'bottom', color: 0xcc8822, label: RANGED_GLYPH, event: 'touch:ranged' }
     ];
 
     this.touchButtons = {};
@@ -570,8 +574,11 @@ export default class TouchControlSystem {
     const safeRight = this.safe.right;
     const safeLeft = this.safe.left;
 
+    // MAP toggle drops BELOW the top bar (Sprint mobile-overnight-batch, Phase 4) so it
+    // no longer shares the top-right row with the clock/timer. layout() re-seats it.
+    const mapY = safeTop + HUD_TOP_BAR_H + HUD_MAP_BTN_BELOW_BAR;
     const mapBtn = this.scene.add
-      .text(this.scene.scale.width - 20 - safeRight, safeTop + 18, 'MAP', {
+      .text(this.scene.scale.width - 20 - safeRight, mapY, 'MAP', {
         fontFamily: '"SproutLands", "Courier New", monospace',
         fontSize: '16px',
         color: '#ffffff',
@@ -694,8 +701,10 @@ export default class TouchControlSystem {
       }
     });
 
-    // MAP (top-right) + pause (top-left) buttons.
-    if (this.mapBtn) this.mapBtn.setPosition(width - 20 - safe.right, safe.top + 18);
+    // MAP (right, BELOW the top bar to clear the clock — Phase 4) + pause (top-left).
+    if (this.mapBtn) {
+      this.mapBtn.setPosition(width - 20 - safe.right, safe.top + HUD_TOP_BAR_H + HUD_MAP_BTN_BELOW_BAR);
+    }
     if (this.pauseBtn) this.pauseBtn.setPosition(20 + safe.left, safe.top + 18);
   }
 
