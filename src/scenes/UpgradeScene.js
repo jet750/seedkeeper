@@ -1,45 +1,46 @@
 // UpgradeScene.js
 //
-// The Seedkeeper Workshop — a full-screen overlay launched on top of GameScene
-// (which keeps rendering frozen behind it). v2: shows plant STAT trees only (gear
-// + capacity moved to the coin economy / marketplace). Spends plant resources and
-// asks GameScene to apply effects + auto-save via purchaseUpgrade(). Reads live
-// state from GameScene (plantBank, upgradeLevels, gameData); never mutates directly.
+// The Seedkeeper Workshop — a full-screen overlay launched over a frozen GameScene
+// (which keeps rendering behind it). Shows plant STAT trees only (gear + capacity live
+// in the coin economy / shops). Spends plant resources and asks GameScene to apply the
+// effect + auto-save via purchaseUpgrade(); reads live state from GameScene (plantBank,
+// upgradeLevels, gameData) and never mutates directly.
 //
-// Sprint 10: the reconciled catalog has 10 stat trees (one plant each) — too many
-// for one screen, so the trees are split across 2 pages with ◀ ▶ arrows and page
-// dots. Sprint 14: page split is 6 + 4 (page 1 reads as a full 3-row grid, page 2
-// as overflow) rather than 5 + 5. Page-scoped objects are torn down on each switch.
+// Sprint menu-unification: ported off its old fixed 1600x900 two-column grid onto the
+// shared PaginatedMenu controller (src/ui/PaginatedMenu.js) — the SAME component the
+// three shops + the seed chest use — so it now reflows to the live viewport, paginates
+// from the available height, and reads identically on desktop + phone. Content and
+// economy are unchanged: same catalog (one stat tree per plant), same costs, same
+// BUY → confirm (✓ Spend / ✗) purchase flow. Each tree is one row; rows paginate.
 
 import Phaser from 'phaser';
-import { fitCameraToVirtual } from '../core/ViewportFit.js';
 import EventBus from '../core/EventBus.js';
 import MobileDetect from '../core/MobileDetect.js';
-import { VIRTUAL_WIDTH, VIRTUAL_HEIGHT } from '../core/Constants.js';
+import PaginatedMenu from '../ui/PaginatedMenu.js';
 import entitiesData from '../data/entities.json';
 
-// One stat tree per plant, derived from the upgrades catalog (10 entries → 2 pages).
-// PAGE_SIZE 6 yields a 6 + 4 split (page 1 a full 3×2 grid, page 2 the 4-tree
-// overflow) instead of two half-empty 5-tree pages (Sprint 14).
+const FONT = '"SproutLands", "Courier New", monospace';
+
+// One stat tree per plant, in catalog order. Pagination is now viewport-driven (the
+// controller slices this list per page from the available height), not a fixed split.
 const PLANT_ORDER = Object.keys(entitiesData.upgrades);
-const PAGE_SIZE = 6;
-const PAGE_COUNT = Math.ceil(PLANT_ORDER.length / PAGE_SIZE);
 
-const PANEL_W = 700;
-const PANEL_H = 190;
-const COL_STRIDE = 740;
-const ROW_STRIDE = 210;
-const GRID_X = 80;
-const GRID_Y = 150;
-
-const COLOR_AFFORD = 0x3a7d44;
-const COLOR_DISABLED = 0x444039;
+const COLOR_PAGE = 0x141210;
+const COLOR_PANEL = 0x221e1b;
+const COLOR_AFFORD = 0x3a7d44; // affordable BUY (green)
+const COLOR_DISABLED = 0x444039; // un-affordable / inert
 const COLOR_CONFIRM_YES = 0x3a7d44;
 const COLOR_CONFIRM_NO = 0x8a3a3a;
-const COLOR_PANEL = 0x221e1b;
 const COLOR_CLOSE = 0x36322e;
 const COLOR_ARROW = 0x2d2926;
 const COLOR_ARROW_DISABLED = 0x201d1a;
+
+const MENU_MARGIN = 20;
+const HEADER_H = 56; // title + subtitle (no tabs — single list)
+const FOOTER_H = 78;
+const ROW_H = 80;
+const ROW_GAP = 12;
+const RIGHT_RESERVE = 214; // space kept clear on the right for the action cluster
 
 function hexToNum(hex) {
   return parseInt(hex.replace('#', ''), 16);
@@ -51,366 +52,222 @@ export default class UpgradeScene extends Phaser.Scene {
   }
 
   create() {
-    fitCameraToVirtual(this);
     this.gameScene = this.scene.get('GameScene');
     this.gameData = this.gameScene.gameData;
 
     this.page = 0;
-    this._pending = null; // { plantType, track } awaiting confirm
-    this.panelRefs = {};
-    this.actionObjs = {}; // key `${plantType}_${track}` -> [gameobjects]
-    this.summaryRefs = {};
-    this._pageObjs = []; // every object that belongs to the current page (destroyed on switch)
+    this._pending = null; // { plantType } awaiting a ✓/✗ confirm
 
-    // Dim, click-swallowing backdrop.
-    this.add
-      .rectangle(0, 0, VIRTUAL_WIDTH, VIRTUAL_HEIGHT, 0x000000, 0.85)
-      .setOrigin(0, 0)
-      .setDepth(100)
-      .setInteractive();
-
-    // Title plate — Sprout Lands dialog box behind the header, nine-sliced so the
-    // 176x48 art scales without distorting its border. The cream fill wants dark
-    // text, so the title only goes brown when the plate is actually present.
-    const hasPlate = this.textures.exists('ui_dialog_big');
-    if (hasPlate) {
-      this.add
-        .nineslice(266, 52, 'ui_dialog_big', undefined, 470, 64, 18, 18, 16, 16)
-        .setDepth(100);
-    }
-    this.add
-      .text(60, 36, 'SEEDKEEPER WORKSHOP', {
-        fontFamily: '"SproutLands", "Courier New", monospace',
-        fontSize: '34px',
-        fontStyle: 'bold',
-        color: hasPlate ? '#4a3520' : '#EDD49A'
-      })
-      .setDepth(101);
-
-    // Close button (static across pages).
-    this.makeButton(
-      VIRTUAL_WIDTH / 2,
-      VIRTUAL_HEIGHT - 42,
-      220,
-      42,
-      '[ Close ]   Esc',
-      COLOR_CLOSE,
-      true,
-      () => this.close(),
-      '#F5EFE6'
-    );
-
-    // Paging chrome — prev/next arrows flanking the close button, plus page dots.
-    this.buildPagingChrome();
-
-    this.buildPage();
-
-    this.input.keyboard.on('keydown-ESC', () => this.close());
-    this.input.keyboard.on('keydown-LEFT', () => this.switchPage(this.page - 1));
-    this.input.keyboard.on('keydown-RIGHT', () => this.switchPage(this.page + 1));
-
-    // Keep displays live if the bank changes (it does on each purchase).
-    this._onBank = () => {
-      this.refreshSummary();
-      this.pagePlants().forEach((pt) => this.refreshPanel(pt));
-    };
-    EventBus.on('bank:updated', this._onBank);
-    this.events.once('shutdown', () => EventBus.off('bank:updated', this._onBank));
-
-    // Mobile: the BUY/Close buttons already take touch (pointerup), but there's no
-    // Esc key — add a swipe-down gesture to dismiss, plus a hint. The horizontal
-    // guard keeps it from firing on a sideways drag across buttons.
-    if (MobileDetect.isMobile()) {
-      let startY = 0;
-      let startX = 0;
-      this.input.on('pointerdown', (p) => {
-        startY = p.y;
-        startX = p.x;
-      });
-      this.input.on('pointerup', (p) => {
-        if (p.y - startY > 120 && Math.abs(p.x - startX) < 90) this.close();
-      });
-      this.add
-        .text(VIRTUAL_WIDTH / 2, VIRTUAL_HEIGHT - 76, 'swipe to change page · swipe down to close', {
-          fontFamily: '"SproutLands", "Courier New", monospace',
-          fontSize: '14px',
-          color: '#9B9389'
-        })
-        .setOrigin(0.5)
-        .setDepth(101);
-      // Horizontal swipe pages between the two screens of trees.
-      this.input.on('pointerup', (p) => {
-        const dx = p.x - startX;
-        if (Math.abs(dx) > 120 && Math.abs(p.y - startY) < 90) {
-          this.switchPage(this.page + (dx < 0 ? 1 : -1));
+    this.menu = new PaginatedMenu(this, {
+      margin: MENU_MARGIN,
+      headerH: HEADER_H,
+      footerH: FOOTER_H,
+      depth: 100,
+      backdropColor: COLOR_PAGE,
+      backdropAlpha: 0.97,
+      closeW: 220,
+      closeColor: COLOR_CLOSE,
+      closeLabelMobile: 'Close',
+      closeLabelDesktop: 'Close   ·   Esc',
+      arrowW: 52,
+      arrowColor: COLOR_ARROW,
+      arrowDisabledColor: COLOR_ARROW_DISABLED,
+      arrowOffsetMax: 200,
+      arrowOffsetPad: 40,
+      dotGap: 24,
+      closeOnEsc: true,
+      dismissOnSwipeDown: true,
+      swipeEnabled: () => MobileDetect.isMobile(),
+      onClose: () => this.close(),
+      getPageIndex: () => this.page,
+      // Clear any half-made purchase only on a REAL page change. render() also calls
+      // setPage(currentPage) to clamp, so guarding on a value change keeps a freshly-set
+      // _pending alive long enough to draw its confirm buttons.
+      setPageIndex: (n) => {
+        if (n !== this.page) {
+          this.page = n;
+          this._pending = null;
         }
-      });
-    }
-  }
-
-  // --- Paging ---------------------------------------------------------------
-
-  pagePlants() {
-    return PLANT_ORDER.slice(this.page * PAGE_SIZE, this.page * PAGE_SIZE + PAGE_SIZE);
-  }
-
-  buildPagingChrome() {
-    const cy = VIRTUAL_HEIGHT - 42;
-    this._prevArrow = this.makeButton(VIRTUAL_WIDTH / 2 - 200, cy, 56, 42, '◀', COLOR_ARROW, true, () =>
-      this.switchPage(this.page - 1), '#F5EFE6'
-    );
-    this._nextArrow = this.makeButton(VIRTUAL_WIDTH / 2 + 200, cy, 56, 42, '▶', COLOR_ARROW, true, () =>
-      this.switchPage(this.page + 1), '#F5EFE6'
-    );
-
-    // Page dots, centred above the close button.
-    this._dots = [];
-    const dotGap = 26;
-    const startX = VIRTUAL_WIDTH / 2 - (dotGap * (PAGE_COUNT - 1)) / 2;
-    for (let i = 0; i < PAGE_COUNT; i++) {
-      this._dots.push(this.add.circle(startX + i * dotGap, VIRTUAL_HEIGHT - 92, 7, 0x4d4843).setDepth(101));
-    }
-  }
-
-  switchPage(next) {
-    const clamped = Phaser.Math.Clamp(next, 0, PAGE_COUNT - 1);
-    if (clamped === this.page) return;
-    this.page = clamped;
-    this._pending = null;
-    this.buildPage();
-  }
-
-  buildPage() {
-    // Tear down the previous page's objects.
-    this._pageObjs.forEach((o) => o.destroy());
-    this._pageObjs = [];
-    this.panelRefs = {};
-    this.summaryRefs = {};
-    this.actionObjs = {};
-
-    const plants = this.pagePlants();
-    this.buildResourceSummary(plants);
-    plants.forEach((pt, i) => {
-      const col = i % 2;
-      const row = Math.floor(i / 2);
-      this.buildPanel(pt, GRID_X + col * COL_STRIDE, GRID_Y + row * ROW_STRIDE);
+      },
+      getPages: (frame) => this.buildPages(frame),
+      renderHeader: (frame) => this.renderHeader(frame),
+      renderBody: (frame, items) => this.renderBody(frame, items),
+      button: (cx, cy, w, h, label, fill, onClick, enabled, textColor) =>
+        this.track(this.makeButton(cx, cy, w, h, label, fill, enabled, onClick, textColor))
     });
-    plants.forEach((pt) => this.refreshPanel(pt));
-    this.refreshSummary();
+    this.menu.attachInput();
+    this.menu.render();
 
-    // Arrow availability + dot highlight.
-    this.setArrowEnabled(this._prevArrow, this.page > 0);
-    this.setArrowEnabled(this._nextArrow, this.page < PAGE_COUNT - 1);
-    this._dots.forEach((d, i) => d.setFillStyle(i === this.page ? 0xeac34f : 0x4d4843));
+    this.scale.on('resize', this.onResize, this);
+    // Each purchase emits 'bank:updated'; the world is frozen while this is open, so that
+    // is the only state that moves — one subscription rebuilds the menu live.
+    this._refresh = () => this.menu.render();
+    EventBus.on('bank:updated', this._refresh);
+    this.events.once('shutdown', () => {
+      this.scale.off('resize', this.onResize, this);
+      EventBus.off('bank:updated', this._refresh);
+      this.menu.destroy();
+    });
   }
 
-  setArrowEnabled([bg], enabled) {
-    bg.setAlpha(enabled ? 1 : 0.4);
-    if (this.textures.exists('ui_btn_square')) bg.setTint(enabled ? COLOR_ARROW : COLOR_ARROW_DISABLED);
-    else bg.setFillStyle(enabled ? COLOR_ARROW : COLOR_ARROW_DISABLED);
+  onResize() {
+    this.menu.render();
   }
 
   track(objs) {
-    (Array.isArray(objs) ? objs : [objs]).forEach((o) => this._pageObjs.push(o));
+    this.menu.track(...(Array.isArray(objs) ? objs : [objs]));
     return objs;
   }
 
-  // --- Header resource summary (current page's plants) ----------------------
+  // --- Pages -----------------------------------------------------------------
 
-  buildResourceSummary(plants) {
-    plants.forEach((pt, i) => {
-      const x = 660 + i * 156;
-      const color = hexToNum(this.gameData.plants[pt].color);
-      this.track(this.add.circle(x, 56, 11, color).setDepth(101));
-      this.summaryRefs[pt] = this.add
-        .text(x + 18, 56, '0', {
-          fontFamily: '"SproutLands", "Courier New", monospace',
-          fontSize: '20px',
-          color: '#F5EFE6'
-        })
-        .setOrigin(0, 0.5)
-        .setDepth(101);
-      this.track(this.summaryRefs[pt]);
-    });
+  buildPages(frame) {
+    const rowsPerPage = Math.max(1, Math.floor((frame.bandH + ROW_GAP) / (ROW_H + ROW_GAP)));
+    const pages = [];
+    for (let i = 0; i < PLANT_ORDER.length; i += rowsPerPage) {
+      pages.push(PLANT_ORDER.slice(i, i + rowsPerPage));
+    }
+    return pages.length ? pages : [[]];
   }
 
-  refreshSummary() {
-    this.pagePlants().forEach((pt) => {
-      if (this.summaryRefs[pt]) this.summaryRefs[pt].setText(`${this.bank(pt)}`);
-    });
-  }
+  // --- Header: title + subtitle ----------------------------------------------
 
-  // --- Panels ---------------------------------------------------------------
-
-  buildPanel(pt, px, py) {
-    const plant = this.gameData.plants[pt];
-
+  renderHeader(frame) {
+    const { left, headerTop } = frame;
     this.track(
       this.add
-        .rectangle(px, py, PANEL_W, PANEL_H, COLOR_PANEL)
+        .text(left, headerTop, 'SEEDKEEPER WORKSHOP', { fontFamily: FONT, fontSize: '30px', fontStyle: 'bold', color: '#EDD49A' })
         .setOrigin(0, 0)
-        .setStrokeStyle(2, 0x4d4843)
-        .setDepth(100)
-    );
-
-    this.track(this.add.circle(px + 34, py + 34, 16, hexToNum(plant.color)).setDepth(101));
-
-    this.track(
-      this.add
-        .text(px + 62, py + 22, plant.name, {
-          fontFamily: '"SproutLands", "Courier New", monospace',
-          fontSize: '22px',
-          fontStyle: 'bold',
-          color: '#F5EFE6'
-        })
         .setDepth(101)
     );
-
-    const resourceText = this.add
-      .text(px + PANEL_W - 20, py + 24, '', {
-        fontFamily: '"SproutLands", "Courier New", monospace',
-        fontSize: '20px',
-        color: '#EDD49A'
-      })
-      .setOrigin(1, 0)
-      .setDepth(101);
-    this.track(resourceText);
-
-    const statLabel = this.add
-      .text(px + 24, py + 78, '', {
-        fontFamily: '"SproutLands", "Courier New", monospace',
-        fontSize: '15px',
-        color: '#D1CCC6',
-        lineSpacing: 4
-      })
-      .setDepth(101);
-    this.track(statLabel);
-
-    this.panelRefs[pt] = { px, py, resourceText, statLabel };
-  }
-
-  refreshPanel(pt) {
-    const ref = this.panelRefs[pt];
-    if (!ref) return;
-    ref.resourceText.setText(`× ${this.bank(pt)}`);
-    ref.statLabel.setText(this.statLabelText(pt));
-    this.rebuildAction(pt, 'stat');
-  }
-
-  statLabelText(pt) {
-    const s = this.gameData.upgrades[pt].stat;
-    const lv = this.levels(pt).stat;
-    if (lv >= s.levels) return `STAT · ${s.name}\nLv ${lv}/${s.levels} · MAXED`;
-    return `STAT · ${s.name}   Lv ${lv}/${s.levels}\nNext: ${this.statEffectText(pt)}`;
-  }
-
-  statEffectText(pt) {
-    const s = this.gameData.upgrades[pt].stat;
-    const b = s.perLevelBonus;
-    if (s.statKey === 'healthRegen') return `+${b} HP/sec`;
-    return `+${Math.round(b * 100)}% ${s.name}`;
-  }
-
-  // --- Action buttons (rebuilt on every refresh) ----------------------------
-
-  rebuildAction(pt, track) {
-    const key = `${pt}_${track}`;
-    if (this.actionObjs[key]) {
-      this.actionObjs[key].forEach((o) => o.destroy());
-    }
-    this.actionObjs[key] = [];
-
-    const ref = this.panelRefs[pt];
-    if (!ref) return;
-    const rowY = ref.py + 92;
-    const rightX = ref.px + PANEL_W - 20;
-
-    // Confirm prompt for the pending row.
-    if (this._pending && this._pending.plantType === pt && this._pending.track === track) {
-      const cost = this.nextCost(pt);
-      const yes = this.makeButton(
-        rightX - 150,
-        rowY,
-        150,
-        34,
-        `✓ Spend ${cost}`,
-        COLOR_CONFIRM_YES,
-        true,
-        () => this.onConfirm(pt, track),
-        '#FFFFFF'
-      );
-      const no = this.makeButton(
-        rightX - 36,
-        rowY,
-        40,
-        34,
-        '✗',
-        COLOR_CONFIRM_NO,
-        true,
-        () => this.onCancel(pt, track),
-        '#FFFFFF'
-      );
-      this.actionObjs[key] = [...yes, ...no];
-      this.track(this.actionObjs[key]);
-      return;
-    }
-
-    // Maxed → static label, no button.
-    if (this.isMaxed(pt)) {
-      const t = this.add
-        .text(rightX, rowY, 'MAXED', {
-          fontFamily: '"SproutLands", "Courier New", monospace',
-          fontSize: '16px',
-          fontStyle: 'bold',
-          color: '#8AB87E'
+    this.track(
+      this.add
+        .text(left, headerTop + 34, 'Spend harvested plants to raise stats', {
+          fontFamily: FONT,
+          fontSize: '15px',
+          color: '#9B9389'
         })
-        .setOrigin(1, 0.5)
-        .setDepth(102);
-      this.actionObjs[key] = [t];
-      this.track(t);
+        .setOrigin(0, 0)
+        .setDepth(101)
+    );
+  }
+
+  renderBody(frame, items) {
+    const { left, innerW, contentTop } = frame;
+    if (!items.length) {
+      this.track(
+        this.add
+          .text(left + innerW / 2, contentTop + 30, 'No upgrades available.', { fontFamily: FONT, fontSize: '18px', color: '#9B9389' })
+          .setOrigin(0.5, 0)
+          .setDepth(102)
+      );
+      return;
+    }
+    items.forEach((pt, i) => {
+      const y = contentTop + i * (ROW_H + ROW_GAP);
+      this.buildRow(pt, left, y, innerW, ROW_H);
+    });
+  }
+
+  // --- Row: one plant stat tree ----------------------------------------------
+
+  buildRow(pt, x, y, w, h) {
+    const plant = this.gameData.plants[pt];
+    const cy = y + h / 2;
+
+    this.track(this.add.rectangle(x, y, w, h, COLOR_PANEL).setOrigin(0, 0).setStrokeStyle(2, 0x4d4843).setDepth(101));
+    this.track(this.add.circle(x + 30, cy, 15, hexToNum(plant.color)).setDepth(102));
+
+    const textLeft = x + 52;
+    const textW = Math.max(90, x + w - RIGHT_RESERVE - textLeft);
+    this.track(
+      this.add
+        .text(textLeft, y + 13, plant.name, {
+          fontFamily: FONT,
+          fontSize: '22px',
+          fontStyle: 'bold',
+          color: '#F5EFE6',
+          wordWrap: { width: textW }
+        })
+        .setDepth(102)
+    );
+    this.track(
+      this.add
+        .text(textLeft, y + h - 26, this.statLine(pt), {
+          fontFamily: FONT,
+          fontSize: '15px',
+          color: '#9B9389',
+          wordWrap: { width: textW }
+        })
+        .setDepth(102)
+    );
+
+    this.buildRowAction(pt, x, cy, w);
+  }
+
+  // Right-aligned action cluster: pending confirm (✓ Spend / ✗), MAXED label, or BUY.
+  buildRowAction(pt, x, cy, w) {
+    const rightEdge = x + w - 14;
+
+    if (this._pending && this._pending.plantType === pt) {
+      const cost = this.nextCost(pt);
+      const noW = 42;
+      const yesW = 152;
+      const gap = 10;
+      const noX = rightEdge - noW / 2;
+      const yesX = noX - noW / 2 - gap - yesW / 2;
+      this.track(this.makeButton(yesX, cy, yesW, 42, `✓ Spend ${cost}`, COLOR_CONFIRM_YES, true, () => this.onConfirm(pt), '#FFFFFF'));
+      this.track(this.makeButton(noX, cy, noW, 42, '✗', COLOR_CONFIRM_NO, true, () => this.onCancel(pt), '#FFFFFF'));
       return;
     }
 
-    // Normal BUY button — green if affordable, grey/disabled otherwise.
+    if (this.isMaxed(pt)) {
+      this.track(
+        this.add
+          .text(rightEdge, cy, 'MAXED', { fontFamily: FONT, fontSize: '16px', fontStyle: 'bold', color: '#8AB87E' })
+          .setOrigin(1, 0.5)
+          .setDepth(102)
+      );
+      return;
+    }
+
     const cost = this.nextCost(pt);
     const affordable = this.bank(pt) >= cost;
-    this.actionObjs[key] = this.makeButton(
-      rightX - 70,
-      rowY,
-      140,
-      34,
-      `BUY  ${cost}`,
-      affordable ? COLOR_AFFORD : COLOR_DISABLED,
-      affordable,
-      () => this.onBuyClicked(pt, track),
-      affordable ? '#141210' : '#7a746c'
+    const btnW = 150;
+    this.track(
+      this.makeButton(
+        rightEdge - btnW / 2,
+        cy,
+        btnW,
+        42,
+        `BUY  ${cost}`,
+        affordable ? COLOR_AFFORD : COLOR_DISABLED,
+        affordable,
+        () => this.onBuyClicked(pt),
+        affordable ? '#141210' : '#7a746c'
+      )
     );
-    this.track(this.actionObjs[key]);
   }
 
-  // --- Purchase flow --------------------------------------------------------
+  // --- Purchase flow (unchanged economy) -------------------------------------
 
-  onBuyClicked(pt, track) {
-    this._pending = { plantType: pt, track };
-    // Cancel any other pending confirm so only one is active at a time.
-    this.pagePlants().forEach((p) => this.rebuildAction(p, 'stat'));
+  onBuyClicked(pt) {
+    this._pending = { plantType: pt };
+    this.menu.render();
   }
 
-  onConfirm(pt, track) {
+  onConfirm(pt) {
     this._pending = null;
-    this.gameScene.purchaseUpgrade(pt, track);
-    // purchase emits bank:updated → _onBank refreshes everything; refresh now too
-    // so the change is instant even if the event order ever shifts.
-    this.refreshSummary();
-    this.pagePlants().forEach((p) => this.refreshPanel(p));
+    this.gameScene.purchaseUpgrade(pt, 'stat'); // emits 'bank:updated' → _refresh re-renders
+    this.menu.render(); // instant, even if the event order ever shifts
   }
 
-  onCancel(pt, track) {
+  onCancel() {
     this._pending = null;
-    this.rebuildAction(pt, track);
+    this.menu.render();
   }
 
-  // --- Small helpers --------------------------------------------------------
+  // --- Catalog reads ---------------------------------------------------------
 
   bank(pt) {
     return this.gameScene.plantBank[pt] || 0;
@@ -428,47 +285,50 @@ export default class UpgradeScene extends Phaser.Scene {
     return this.gameData.upgrades[pt].stat.costs[this.levels(pt).stat];
   }
 
-  // Button background uses the Sprout Lands square-button art (nine-sliced from a
-  // neutral cream frame so it scales to any width without distortion, then tinted
-  // to keep the affordable/disabled/confirm colour coding). Falls back to a plain
-  // rectangle when the sheet is absent, so the purchase flow never depends on art.
+  statEffectText(pt) {
+    const s = this.gameData.upgrades[pt].stat;
+    const b = s.perLevelBonus;
+    if (s.statKey === 'healthRegen') return `+${b} HP/sec`;
+    return `+${Math.round(b * 100)}% ${s.name}`;
+  }
+
+  // Compact one-line tree summary: current level, next effect (or maxed), stock on hand.
+  statLine(pt) {
+    const s = this.gameData.upgrades[pt].stat;
+    const lv = this.levels(pt).stat;
+    const have = this.bank(pt);
+    if (lv >= s.levels) return `${s.name} maxed · Lv ${lv}/${s.levels}   ·   ${have} on hand`;
+    return `Lv ${lv}/${s.levels}   ·   Next: ${this.statEffectText(pt)}   ·   ${have} on hand`;
+  }
+
+  // --- Shared button (Sprout Lands square-button art, tinted; rect fallback) --
+
   makeButton(cx, cy, w, h, label, baseColor, enabled, onClick, textColor) {
     const isSprite = this.textures.exists('ui_btn_square');
     let bg;
     if (isSprite) {
-      bg = this.add
-        .nineslice(cx, cy, 'ui_btn_square', 2, w, h, 10, 10, 10, 10)
-        .setTint(baseColor)
-        .setDepth(101);
+      bg = this.add.nineslice(cx, cy, 'ui_btn_square', 2, w, h, 10, 10, 10, 10).setTint(baseColor).setDepth(101);
     } else {
-      bg = this.add
-        .rectangle(cx, cy, w, h, baseColor)
-        .setStrokeStyle(2, 0x000000)
-        .setDepth(101);
+      bg = this.add.rectangle(cx, cy, w, h, baseColor).setStrokeStyle(2, 0x000000).setDepth(101);
     }
+    bg._baseColor = baseColor;
     const text = this.add
-      .text(cx, cy, label, {
-        fontFamily: '"SproutLands", "Courier New", monospace',
-        fontSize: '15px',
-        fontStyle: 'bold',
-        color: textColor || '#141210'
-      })
+      .text(cx, cy, label, { fontFamily: FONT, fontSize: '15px', fontStyle: 'bold', color: textColor || '#141210', align: 'center' })
       .setOrigin(0.5)
       .setDepth(102);
 
     if (enabled) {
       bg.setInteractive({ useHandCursor: true });
       if (isSprite) {
-        // Hover brightens the button to its natural cream; out restores the tint.
         bg.on('pointerover', () => bg.setTint(0xffffff));
-        bg.on('pointerout', () => bg.setTint(baseColor));
+        bg.on('pointerout', () => bg.setTint(bg._baseColor));
       } else {
         bg.on('pointerover', () => bg.setStrokeStyle(2, 0xeac34f));
         bg.on('pointerout', () => bg.setStrokeStyle(2, 0x000000));
       }
       bg.on('pointerup', onClick);
     } else {
-      bg.setAlpha(0.55);
+      bg.setAlpha(0.6);
     }
     return [bg, text];
   }

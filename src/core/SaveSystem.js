@@ -16,7 +16,10 @@
 // v6 (Sprint magic-1): added the corrupted-souls currency (`souls`) + spell
 // purification state (`spellUnlocks`, `spellUpgrades`). v5 slots wipe to a fresh v6
 // default (the existing "save reset" notice fires).
-const SAVE_VERSION = 6;
+// v7 (Sprint minimap-realmap-seed-chest): added the seed storage chest (`seedChest`,
+// a { plantType: count } map of seeds stored beyond the carry satchel). v6 slots wipe
+// to a fresh v7 default (the existing "save reset" notice fires).
+const SAVE_VERSION = 7;
 const SAVE_KEY_PREFIX = 'seedkeeper_save_';
 const SETTINGS_KEY = 'seedkeeper_settings'; // global audio settings (Sprint 12)
 
@@ -61,6 +64,9 @@ const SaveSystem = {
       souls: 0,
       spellUnlocks: {},
       spellUpgrades: {},
+      // Seed storage chest (v7) — { plantType: count } of seeds stowed beyond the
+      // carry satchel. Empty on a fresh game; mutated via GameScene deposit/withdraw.
+      seedChest: {},
       upgrades: freshUpgrades(),
       // Coin-funded gear. Start with NO weapon (base unarmed attack). wateringCan
       // is the default basic can (cans are no longer purchasable in v2).

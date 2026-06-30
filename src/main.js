@@ -17,6 +17,7 @@ import UpgradeScene from './scenes/UpgradeScene.js';
 import BlacksmithScene from './scenes/BlacksmithScene.js';
 import FarmstandScene from './scenes/FarmstandScene.js';
 import MageMartScene from './scenes/MageMartScene.js';
+import ChestScene from './scenes/ChestScene.js';
 import WinScene from './scenes/WinScene.js';
 import SignpostScene from './scenes/SignpostScene.js';
 import SeedDictScene from './scenes/SeedDictScene.js';
@@ -91,6 +92,7 @@ const config = {
     BlacksmithScene,
     FarmstandScene,
     MageMartScene,
+    ChestScene,
     WinScene,
     SignpostScene,
     SeedDictScene,

@@ -27,7 +27,8 @@ import {
   FONT_FAMILY,
   UI_BACKDROP_COLOR,
   UI_BACKDROP_ALPHA,
-  UI_BORDER_COLOR
+  UI_BORDER_COLOR,
+  WORLD_MAP_TEXTURE_KEY
 } from '../core/Constants.js';
 
 const MAP_MARGIN = 28; // gap from the screen edges (added to the safe insets)
@@ -119,20 +120,35 @@ export default class MapScene extends Phaser.Scene {
       this.add.rectangle(mapX, mapY, mapSize, mapSize, 0x000000, 0.6).setOrigin(0, 0).setDepth(301)
     );
 
-    // Sampled zone + river, batched into one Graphics.
-    const g = this.add.graphics().setDepth(301);
-    for (let mx = 0; mx < mapSize; mx += MAP_SAMPLE) {
-      for (let my = 0; my < mapSize; my += MAP_SAMPLE) {
-        const wx = mx / scaleX;
-        const wy = my / scaleY;
-        const color = this.worldZoneSystem.isNearRiver(wx, wy, RIVER_MARGIN)
-          ? this.worldZoneSystem.getZoneColor('river')
-          : this.worldZoneSystem.getZoneColor(this.worldZoneSystem.getZoneAt(wx, wy));
-        g.fillStyle(color, 0.9);
-        g.fillRect(mapX + mx, mapY + my, MAP_SAMPLE, MAP_SAMPLE);
+    // Draw the REAL world (Sprint minimap-realmap-seed-chest): GameScene caches a
+    // downscaled snapshot of the actual world to a global texture; stretch that one
+    // image to fill the map square. It maps world→pixel uniformly, so the HOME / YOU
+    // markers below (computed from world coords × the same scale) land correctly on it.
+    if (this.textures.exists(WORLD_MAP_TEXTURE_KEY)) {
+      this._objs.push(
+        this.add
+          .image(mapX, mapY, WORLD_MAP_TEXTURE_KEY)
+          .setOrigin(0, 0)
+          .setDisplaySize(mapSize, mapSize)
+          .setDepth(301)
+      );
+    } else {
+      // Fallback (texture not built — e.g. a procedural-world edge case): the prior
+      // sampled zone/river render, batched into one Graphics, so the map never blanks.
+      const g = this.add.graphics().setDepth(301);
+      for (let mx = 0; mx < mapSize; mx += MAP_SAMPLE) {
+        for (let my = 0; my < mapSize; my += MAP_SAMPLE) {
+          const wx = mx / scaleX;
+          const wy = my / scaleY;
+          const color = this.worldZoneSystem.isNearRiver(wx, wy, RIVER_MARGIN)
+            ? this.worldZoneSystem.getZoneColor('river')
+            : this.worldZoneSystem.getZoneColor(this.worldZoneSystem.getZoneAt(wx, wy));
+          g.fillStyle(color, 0.9);
+          g.fillRect(mapX + mx, mapY + my, MAP_SAMPLE, MAP_SAMPLE);
+        }
       }
+      this._objs.push(g);
     }
-    this._objs.push(g);
 
     this._objs.push(
       this.add
